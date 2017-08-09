@@ -128,6 +128,8 @@ if (NOT PROPER) # AND (NOT Boost_FOUND OR SYSTEM_NOT_UP_TO_SNUFF) )
 		#-- Download Step ----------
 		 DOWNLOAD_DIR ${BOOST_STAGE}/dl
 		 URL ${EXTERNALS_SOURCE_URL}/${BOOST_FILENAME}.tar.gz
+		#--Patch step ----------
+		 PATCH_COMMAND patch -N -p0 -i ${CMAKE_CURRENT_SOURCE_DIR}/numpy.patch
 		#--Configure step ----------
 		 CONFIGURE_COMMAND ${BOOTSTRAP} --prefix=${BOOST_INSTALL_LOC} ${BOOTSTRAP_PYTHON_OPTION} ${CMD_TERM} echo "Configure complete"
 		#--Build Step ----------
