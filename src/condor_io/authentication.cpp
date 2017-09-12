@@ -264,12 +264,15 @@ int Authentication::authenticate_continue( CondorError* errstack, bool non_block
 				m_method_name = "FS_REMOTE";
 				break;
 
+#endif /* !defined(WIN32) */
+
+#if defined(HAVE_EXT_MUNGE)
 			case CAUTH_MUNGE:
 				m_auth = new Condor_Auth_MUNGE(mySock);
 				m_method_name = "MUNGE";
 				break;
+#endif
  
-#endif /* !defined(WIN32) */
 			case CAUTH_CLAIMTOBE:
 				m_auth = new Condor_Auth_Claim(mySock);
 				m_method_name = "CLAIMTOBE";

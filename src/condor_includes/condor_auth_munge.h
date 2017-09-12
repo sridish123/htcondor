@@ -21,7 +21,7 @@
 #ifndef CONDOR_AUTHENTICATOR_MUNGE
 #define CONDOR_AUTHENTICATOR_MUNGE
 
-#if !defined(SKIP_AUTHENTICATION)
+#if !defined(SKIP_AUTHENTICATION) && defined(HAVE_EXT_MUNGE)
 
 #include "condor_auth.h"        // Condor_Auth_Base class is defined here
 

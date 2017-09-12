@@ -18,7 +18,7 @@
  ***************************************************************/
 
 
-#if !defined(SKIP_AUTHENTICATION) && !defined(WIN32)
+#if !defined(SKIP_AUTHENTICATION) && defined(HAVE_EXT_MUNGE)
 #include <stdlib.h>
 #include <munge.h>
 #include "condor_auth_munge.h"
