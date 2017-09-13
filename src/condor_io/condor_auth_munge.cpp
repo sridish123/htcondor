@@ -57,39 +57,50 @@ int Condor_Auth_MUNGE::authenticate(const char * /* remoteHost */, CondorError* 
 		// For tools and daemons not started as root, this
 		// is a no-op.
 		priv_state saved_priv = set_condor_priv();
-
 		err = munge_encode (&munge_token, NULL, NULL, 0);
-      		if ( err != EMUNGE_SUCCESS ) {
-          		dprintf(D_SECURITY, "AUTHENTICATE_MUNGE: %s\n", munge_strerror (err));
-			return fail;
-      		}
+		set_priv(saved_priv);
+
+		if ( err != EMUNGE_SUCCESS ) {
+			dprintf(D_ALWAYS, "AUTHENTICATE_MUNGE: Client error: %i: %s\n", err, munge_strerror (err));
+			errstack->pushf("MUNGE", 1000,  "Client error: %i: %s", err, munge_strerror (err));
+
+			// send the text of the error as the token so we stay sync in on
+			// the wire protocol and the other side can print out a reason.
+			munge_token = strdup(munge_strerror(err));
+			client_result = -1;
+		} else {
+			// success on client side
+			dprintf(D_SECURITY, "AUTHENTICATE_MUNGE: Client succeeded.\n");
+			client_result = 0;
+		}
+
+		dprintf (D_SECURITY | D_FULLDEBUG, "AUTHENTICATE_MUNGE: sending client_result %i, munge_token %s\n", client_result, munge_token);
 
 		// send over result as a success/failure indicator (-1 == failure)
 		mySock_->encode();
-		client_result = 0;
 		if (!mySock_->code( client_result ) || !mySock_->code( munge_token ) || !mySock_->end_of_message()) {
-			dprintf(D_SECURITY, "Protocol failure at %s, %d!\n",
-				__FUNCTION__, __LINE__);
-				free( munge_token );
-			set_priv(saved_priv);
-			return fail; 
+			dprintf(D_ALWAYS, "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			errstack->pushf("MUNGE", 1001,  "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			client_result = -1;
 		}
 
+		// whether this was a real token or an error string we are finished with it now.
 		free(munge_token);
+
+		// abort protocol now if we sent client failure or had protocol failure
+		if(client_result==-1) {
+			return fail;
+		}
 
 		// now let the server verify
 		mySock_->decode();
 		if (!mySock_->code( server_result ) || !mySock_->end_of_message()) { 
-			dprintf(D_SECURITY, "Protocol failure at %s, %d!\n",
-				__FUNCTION__, __LINE__);
-			set_priv(saved_priv);
+			dprintf(D_ALWAYS, "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			errstack->pushf("MUNGE", 1002,  "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
 			return fail; 
 		}
 
-		set_priv(saved_priv);
-
-		dprintf( D_SECURITY, "AUTHENTICATE_MUNGE:  status: %d\n",
-				(server_result == 0) );
+		dprintf( D_SECURITY, "AUTHENTICATE_MUNGE:  Server sent: %d\n", server_result);
 
 		// this function returns TRUE on success, FALSE on failure,
 		// which is just the opposite of server_result.
@@ -103,26 +114,45 @@ int Condor_Auth_MUNGE::authenticate(const char * /* remoteHost */, CondorError* 
 		setRemoteUser( NULL );
 
 		mySock_->decode();
-		if (!mySock_->code( client_result ) || !mySock_->code( munge_token ) || !mySock_->end_of_message() || client_result != 0 ) {
-			dprintf(D_SECURITY, "Protocol failure at %s, %d!\n",
-				__FUNCTION__, __LINE__);
+		if (!mySock_->code( client_result ) || !mySock_->code( munge_token ) || !mySock_->end_of_message()) {
+			dprintf(D_ALWAYS, "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			errstack->pushf("MUNGE", 1003,  "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			if(munge_token) {
+				free(munge_token);
+			}
 			return fail;
 		}
 
+		dprintf (D_SECURITY | D_FULLDEBUG, "AUTHENTICATE_MUNGE: received client_result %i, munge_token %s\n", client_result, munge_token);
+
+		if (client_result != 0) {
+			// in this case the token is actually the error message client encountered.
+			dprintf(D_ALWAYS, "AUTHENTICATE_MUNGE: Client had error: %s, aborting.\n", munge_token);
+			errstack->pushf("MUNGE", 1004, "Client had error: %s", munge_token);
+			free(munge_token);
+			return fail;
+		} else {
+			dprintf(D_SECURITY, "AUTHENTICATE_MUNGE: Client succeeded.\n");
+		}
+
 		err = munge_decode (munge_token, NULL, NULL, NULL, &uid, &gid);
+		free(munge_token);
 
 		if (err != EMUNGE_SUCCESS) {
-			mySock_->encode();
+			dprintf(D_ALWAYS, "AUTHENTICATE_MUNGE: Server error: %i: %s.\n", err, munge_strerror(err));
+			errstack->pushf("MUNGE", 1005, "Server error: %i: %s", err, munge_strerror(err));
 			server_result = -1;
 		} else {
 			char *tmpOwner = my_username( uid );
 			if (!tmpOwner) {
 				// this could happen if, for instance,
 				// getpwuid() failed.
+				dprintf(D_ALWAYS, "AUTHENTICATE_MUNGE: Unable to lookup uid %i\n", uid);
 				server_result = -1;
 				errstack->pushf("MUNGE", 1006,
 						"Unable to lookup uid %i", uid);
 			} else {
+				dprintf(D_SECURITY, "AUTHENTICATE_MUNGE: Server believes client is uid %i (%s).\n", uid, tmpOwner);
 				server_result = 0;	// 0 means success here. sigh.
 				setRemoteUser( tmpOwner );
 				setAuthenticatedName( tmpOwner );
@@ -133,10 +163,15 @@ int Condor_Auth_MUNGE::authenticate(const char * /* remoteHost */, CondorError* 
 
 		mySock_->encode();
 		if (!mySock_->code( server_result ) || !mySock_->end_of_message()) {
-			dprintf(D_SECURITY, "Protocol failure at %s, %d!\n",
-				__FUNCTION__, __LINE__);
+			dprintf(D_ALWAYS, "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
+			errstack->pushf("MUNGE", 1007,  "Protocol failure at %s, %d!\n", __FUNCTION__, __LINE__);
 			return fail;
 		}
+
+		dprintf(D_SECURITY, "AUTHENTICATE_MUNGE: Server sent final result to client: %i\n", server_result);
+
+		// this function returns TRUE on success, FALSE on failure,
+		// which is just the opposite of server_result.
 		return server_result == 0;
 	}
 }
