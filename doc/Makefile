@@ -48,7 +48,7 @@ ref.html : ref.tex $(FIGURES)
 	@rm -fr ref.html
 	@mv ref ref.html
 
-HTLATEX_OPTIONS=html,3,sec-filenames
+HTLATEX_OPTIONS=html,3,sec-filenames,next
 HTLATEX_PREAMBLE=\makeatletter\def\HCode{\futurelet\HCode\HChar}\def\HChar{\ifx"\HCode\def\HCode"\#\#1"{\Link\#\#1}\expandafter\HCode\else\expandafter\Link\fi}\def\Link\#1.a.b.c.{\g@addto@macro\@documentclasshook{\RequirePackage[\#1,html]{tex4ht}}\let\HCode\documentstyle\def\documentstyle{\let\documentstyle\HCode\expandafter\def\csname tex4ht\endcsname{\#1,html}\def\HCode\#\#\#\#1{\documentstyle[tex4ht,}\@ifnextchar[{\HCode}{\documentstyle[tex4ht]}}}\makeatother\HCode
 HTLATEX_POSTAMBLE=.a.b.c.\input
 HTLATEX_ARGS='$(HTLATEX_PREAMBLE) $(HTLATEX_OPTIONS)$(HTLATEX_POSTAMBLE) ref.tex'
