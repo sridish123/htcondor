@@ -84,10 +84,10 @@ figures-clean :
 	@rm -f $(FIGURES)
 
 tex-clean :
-	@rm -f *.log *.aux *.toc *.ind *.idx *.ilg *.out
+	@rm -f ref.log ref.aux ref.toc ref.ind ref.idx ref.ilg ref.out
 
 pdf-clean :
-	@rm -f *.pdf
+	@rm -f ref.pdf
 
 html-clean :
 	@rm -fr ref
