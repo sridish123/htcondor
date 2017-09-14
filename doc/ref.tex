@@ -1,6 +1,5 @@
 \documentclass[titlepage,oneside,bookmarks,bookmarksnumbered,plainpages=false,pdfpagelabels]{book}
 \usepackage{longtable}
-\usepackage{html}
 
 %begin{latexonly}
 \input{font.pdf.tex}
@@ -9,7 +8,6 @@
 %
 %  For use with latex2html
 %
-\usepackage{html}
 \usepackage{graphicx}
 \usepackage{makeidx}
 \usepackage{upquote}
@@ -44,15 +42,6 @@
 %  Bring in HTCondor macros
 %
 \input{condor-macros.tex}
-
-\begin{htmlonly}
-\input{fontsize.html.tex}
-\end{htmlonly}
-
-%begin{latexonly}
-\input{fontsize.pdf.tex}
-%end{latexonly}
-
 \input{man-macros.tex}
 
 % hyphenation of our terms
@@ -61,12 +50,12 @@
 %
 %  Fix the headers and footers
 %
-\latex{
-	\usepackage{fancyhdr}
-	\pagestyle{fancy}
-	\fancyhf{}
-	\renewcommand{\sectionmark}[1]{\markright{\thesection.\ #1}}
-	\renewcommand{\subsectionmark}[1]{\markright{\thesubsection.\ #1}}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\sectionmark}[1]{\markright{\thesection.\ #1}}
+\renewcommand{\subsectionmark}[1]{\markright{\thesubsection.\ #1}}
+
 \if@twoside
 	\fancyhead[LE,RO]{\thepage}
 	\fancyhead[RE]{\leftmark}
@@ -76,13 +65,10 @@
 	\fancyhead[L]{\rightmark}
 \fi
 
-	\fancyfoot[C]{HTCondor \VersionNotice\ Manual}
-	\renewcommand{\headrulewidth}{0.4pt}
-	\renewcommand{\footrulewidth}{0.4pt}
-	\addtolength{\headwidth}{\oddsidemargin}
-
-}
-
+\fancyfoot[C]{HTCondor \VersionNotice\ Manual}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\addtolength{\headwidth}{\oddsidemargin}
 
 % generate index
 \makeindex
