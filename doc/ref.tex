@@ -2,18 +2,16 @@
 \usepackage{longtable}
 
 %begin{latexonly}
-\input{font.pdf.tex}
+\usepackage{times}
+\usepackage{hyperref}
 %end{latexonly}
 
-%
-%  For use with latex2html
-%
 \usepackage{graphicx}
 \usepackage{makeidx}
 \usepackage{upquote}
 \usepackage[T1]{fontenc}
 \usepackage{microtype}
-
+\usepackage{tikz-dependency}
 
 %
 %  Set the size of the margins and text area
@@ -33,9 +31,11 @@
 %
 %  Let the figures take up more than half of the page
 %
-
 %begin{latexonly}
-\input{figuresizing.pdf.tex}
+\renewcommand\floatpagefraction{.9}
+\renewcommand\topfraction{.9}
+\renewcommand\bottomfraction{.9}
+\renewcommand\textfraction{.1}
 %end{latexonly}
 
 %
