@@ -60,7 +60,7 @@ htlatex : ref.tex $(FIGURES)
 	@latex $(HTLATEX_ARGS)
 	@tex4ht ref.tex
 	@t4ht ref.tex -m 644
-	@mkdir ref && cd ref && mv ../ref.css ../*.html ../*.png . && cd .. && mv ref ref.html
+	@mkdir ref && cd ref && mv ../ref.css ../*.html ../*.png . && cd .. && rm -fr ref.html && mv ref ref.html
 
 just-man-pages : just-man-pages.tex
 	@cd makeman ; make clean makeman

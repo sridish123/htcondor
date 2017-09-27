@@ -1,17 +1,21 @@
 \documentclass[titlepage,oneside,bookmarks,bookmarksnumbered,plainpages=false,pdfpagelabels]{book}
 \usepackage{longtable}
-
-%begin{latexonly}
-\usepackage{times}
 \usepackage{hyperref}
-%end{latexonly}
+\usepackage{ifpdf}
+
+\ifpdf
+\usepackage{times}
+\fi
 
 \usepackage{graphicx}
 \usepackage{makeidx}
 \usepackage{upquote}
 \usepackage[T1]{fontenc}
 \usepackage{microtype}
-\usepackage{tikz-dependency}
+
+\ifpdf
+\usepackage{tikz}
+\fi
 
 %
 %  Set the size of the margins and text area
@@ -31,12 +35,12 @@
 %
 %  Let the figures take up more than half of the page
 %
-%begin{latexonly}
+\ifpdf
 \renewcommand\floatpagefraction{.9}
 \renewcommand\topfraction{.9}
 \renewcommand\bottomfraction{.9}
 \renewcommand\textfraction{.1}
-%end{latexonly}
+\fi
 
 %
 %  Bring in HTCondor macros
@@ -179,12 +183,17 @@
 \input{misc/numbers.tex}
 
 
-% the index goes at the end of the documentation
+% All this does is turn off chapter numbers.
 \backmatter
-% Fix the TOC link.
+
+\ifpdf
+% Required for the TOC link produced below to actually end up on the right page.
 \phantomsection
+% Force the index to have line in the table of contents; this may not be 
+% necessary if we fix the manpage madness.
 \addcontentsline{toc}{chapter}{Index}
-\label{index}
+\fi
+
 \printindex
 
 \end{document}

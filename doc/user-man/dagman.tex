@@ -37,7 +37,7 @@ Figure~\ref{fig:dagman-node} illustrates the elements of a node.
 
 \begin{figure}[hbt]
 \centering
-
+\ifpdf
 \tikzstyle{Part} = [shape = rectangle, minimum width = 8ex, draw]
 \tikzstyle{BigCircle} = [thick, shape = circle, minimum width = 40ex, draw]
 \tikzstyle{Dependency} = [->]
@@ -51,6 +51,9 @@ Figure~\ref{fig:dagman-node} illustrates the elements of a node.
     \path[Dependency] (PRE) edge (JOB);
     \path[Dependency] (JOB) edge (POST);
 \end{tikzpicture}
+\else
+\includegraphics{user-man/dagman-node}
+\fi
 \caption{\label{fig:dagman-node}One Node within a DAG}
 \end{figure}
 
@@ -110,7 +113,7 @@ This DAG contains 4 nodes.
 
 \begin{figure}[hbt]
 \centering
-
+\ifpdf
 \usetikzlibrary{shapes}
 \tikzstyle{Job} = [shape = ellipse, minimum width = 8ex, draw]
 \tikzstyle{Dependency} = [->]
@@ -126,7 +129,9 @@ This DAG contains 4 nodes.
     \path[Dependency] (B) edge (D);
     \path[Dependency] (C) edge (D);
 \end{tikzpicture}
-
+\else
+\includegraphics{user-man/dagman-diamond}
+\fi
 \caption{\label{fig:dagman-diamond}Diamond DAG}
 \end{figure}
 
