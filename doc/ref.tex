@@ -1,4 +1,6 @@
 \documentclass[titlepage,oneside,bookmarks,bookmarksnumbered,plainpages=false,pdfpagelabels]{book}
+\usepackage[section]{placeins}
+\usepackage{appendix}
 \usepackage{longtable}
 \usepackage{hyperref}
 \usepackage{ifpdf}
@@ -29,8 +31,7 @@
 \setlength{\marginparwidth}{1in}
 \setlength{\marginparsep}{0in}
 \setlength{\footskip}{0.75in}
-\newcommand{\ResetParaSpacing}{\setlength{\parskip}{.8em}}
-\ResetParaSpacing
+\setlength{\parskip}{.8em}
 
 %
 %  Let the figures take up more than half of the page
@@ -152,38 +153,36 @@
 \label{Version-History}
 \input{version-history/history.tex}
 
+% Turn off section numbering.
+\newcounter{original}
+\setcounter{original}{\value{secnumdepth}}
+\setcounter{secnumdepth}{0}
+
+\begingroup
 \chapter{Command Reference Manual (man pages)}
+\setlength{\parindent}{0em}
+\renewcommand{\sectionmark}[1]{\markright{#1}}
+\renewcommand{\subsectionmark}[1]{\markright{#1}}
 \label{sec:command-reference}
 \input{man-pages/man.tex}
+\endgroup
 
+% Turn on section numbering.
+\setcounter{secnumdepth}{\theoriginal}
 
-%
-%  The fancy header package gets confused (stuck inserting the last man page's
-%  command name in the header) after the man pages, so reset the header
-%  and footer style.
-%
-\if@twoside
-	\fancyhead[LE,RO]{\thepage}
-	\fancyhead[RE]{\leftmark}
-	\fancyhead[LO]{\rightmark}
-\else
-	\fancyhead[R]{\thepage}
-	\fancyhead[L]{\rightmark}
-\fi
-\fancyfoot[C]{HTCondor \VersionNotice\ Reference Manual}
-
+\appendix
 
 % an appendix for all the various kinds and ClassAd attributes
-\chapter{Appendix A:  ClassAd Attributes}
+\chapter{ClassAd Attributes}
 \label{sec:ClassAd-Attributes}
 \input{misc/attributes.tex}
+
 % an appendix for tables of values, like error numbers
-\chapter{Appendix B:  Codes and Other Needed Values}
+\chapter{Codes and Other Needed Values}
 \label{sec:Magic-Numbers}
 \input{misc/numbers.tex}
 
-
-% All this does is turn off chapter numbers.
+% Turns off chapter numbering entirely.
 \backmatter
 
 \ifpdf
