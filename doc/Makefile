@@ -64,8 +64,8 @@ htlatex : ref.tex $(FIGURES)
 	@mkdir ref && cd ref && mv ../ref.css ../*.html ../*.png . && cd .. && mv ref ref.html
 
 just-man-pages : just-man-pages.tex
-	@cd makeman ; make clean makeman
-	@latex2html -split 4 -link 2 -show_section_numbers -antialias -tmp /tmp -long_titles 3 -toc_depth 2 -local_icons just-man-pages.tex
+	@cd makeman ; make clean && make makeman
+	@latex2html -split 4 -link 2 -antialias -tmp /tmp -long_titles 3 -toc_depth 2 -local_icons just-man-pages.tex
 	@for html in $(MANPAGES); do \
 		thisfile=just-man-pages/$$html; \
 		makeman/makeman -v -i $$thisfile -s 1; \
