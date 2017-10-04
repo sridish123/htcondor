@@ -33,6 +33,7 @@
 #include "secure_file.h"
 #include "condor_base64.h"
 #include "zkm_base64.h"
+#include "subsystem_info.h"
 
 static int code_store_cred(Stream *socket, char* &user, char* &pw, int &mode);
 
@@ -631,6 +632,13 @@ get_cred_handler(void *, int /*i*/, Stream *s)
 	if( !result ) {
 		dprintf(D_ALWAYS, "get_passwd_handler: Failed to recv user.\n");
 		goto bail_out;
+	}
+
+	// if we are the shadow, we should ignore the user sent over the socket
+	// and use the one supplied by the owner of the job being run.
+	if (get_mySubSystem()->isType(SUBSYSTEM_TYPE_SHADOW)) {
+		free(user);
+		user = strdup(get_user_loginname());
 	}
 
 	result = sock->code(domain);

@@ -21,6 +21,7 @@
 #include "condor_common.h"
 #include "condor_debug.h"
 #include "condor_version.h"
+#include "subsystem_info.h"
 
 #include "starter.h"
 #include "jic_shadow.h"
@@ -2526,8 +2527,16 @@ JICShadow::initUserCredentials() {
 	}
 
 
-	// get username
-	MyString user = get_user_loginname();
+	// For now, just use job Owner,
+	// not the username running the job (could be nobody, slot1, etc.)
+	//
+	// Ultimately, we'll want namespaces (uid domain, schedd name, etc.)
+	std::string user;
+	if ( ! job_ad->EvaluateAttrString("Owner", user) ) {
+		dprintf( D_FAILURE, "JICShadow::initUserCredentials(): "
+				 "Unable to get Owner attribute from jobid\n");
+		return false;
+	}
 	MyString domain = "DOMAIN";
 
 	// remove mark on update for "mark and sweep"
@@ -2671,8 +2680,16 @@ JICShadow::refreshSandboxCredentials()
 	char  *ccbuf = 0;
 	size_t cclen = 0;
 
-	// get username
-	MyString user = get_user_loginname();
+	// For now, just use job Owner,
+	// not the username running the job (could be nobody, slot1, etc.)
+	//
+	// Ultimately, we'll want namespaces (uid domain, schedd name, etc.)
+	std::string user;
+	if ( ! job_ad->EvaluateAttrString("Owner", user) ) {
+		dprintf( D_FAILURE, "JICShadow::refreshSandboxCredentials(): "
+				 "Unable to get Owner attribute from jobid\n");
+		return false;
+	}
 
 	// declaring at top since we use goto for error handling
 	priv_state priv;
