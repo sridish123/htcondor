@@ -2858,7 +2858,7 @@ JICShadow::initMatchSecuritySession()
 	}
 	else if( reconnect_session_id.Length() ) {
 		rc = daemonCore->getSecMan()->CreateNonNegotiatedSecuritySession(
-			WRITE,
+			DAEMON,
 			reconnect_session_id.Value(),
 			reconnect_session_key.Value(),
 			reconnect_session_info.Value(),
@@ -2875,6 +2875,25 @@ JICShadow::initMatchSecuritySession()
 			m_reconnect_sec_session = strdup(reconnect_session_id.Value());
 		}
 	}
+
+	// if this is the starter, add a mapping to the new session so it will
+	// get used for the CREDD_GET_PASSWD command that may follow.  there may
+	// be other commands in the future that should also use this, so a more
+	// general mechanism should be devised. (or switch to syscall socket)
+	if (get_mySubSystem()->isType(SUBSYSTEM_TYPE_STARTER)) {
+		MyString mapent;
+		mapent.formatstr("{%s,<%i>}", shadow->addr(), CREDD_GET_PASSWD);
+		// NOTE: HashTable returns ZERO on SUCCESS!!!
+		if (daemonCore->getSecMan()->command_map.insert(mapent, reconnect_session_id.Value()) == 0) {
+			// success
+			if (IsDebugVerbose(D_SECURITY)) {
+				dprintf (D_SECURITY, "SECMAN: explicitly mapped command %s to session %s.\n", mapent.Value(), reconnect_session_id.Value());
+			}
+		} else {
+			dprintf (D_ALWAYS, "SECMAN: WARNING: unable to map command %s (insert failed!)\n", mapent.Value());
+		}
+	}
+
 
 	IpVerify* ipv = daemonCore->getIpVerify();
 	ipv->PunchHole( DAEMON, SUBMIT_SIDE_MATCHSESSION_FQU );
