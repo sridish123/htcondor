@@ -2692,9 +2692,9 @@ JICShadow::refreshSandboxCredentials()
 	dprintf(D_ALWAYS, "SCITOKENS: renamed %s to %s\n", sandboxcctmpfilename, sandboxccfilename);
 
 	// only need to do this once
-	if(getKRB5CCNAME() == NULL) {
-		dprintf(D_ALWAYS, "SCITOKENS: configuring job to use KRB5CCNAME %s\n", sandboxccfilename);
-		setKRB5CCNAME(sandboxccfilename);
+	if(get_credential_file() == NULL) {
+		dprintf(D_ALWAYS, "SCITOKENS: configuring job to use credential %s\n", sandboxccfilename);
+		set_credential_file(sandboxccfilename);
 	}
 
 	// if we made it here, we succeeded!

@@ -3201,14 +3201,28 @@ CStarter::PublishToEnv( Env* proc_env )
 		}
 	}
 
-		// kerberos credential cache (in sandbox)
-	const char* krb5ccname = jic->getKRB5CCNAME();
-	if( krb5ccname && (krb5ccname[0] != '\0') ) {
-		// using env_name as env_value
-		env_name = "FILE:";
-		env_name += krb5ccname;
-		proc_env->SetEnv( "KRB5CCNAME", env_name );
+	// if there's a job credential, point to it in the environment.
+	// krb5 is a special case for how the value is constructed.
+	MyString cred_env_name;
+	param(cred_env_name, "SEC_CREDENTIAL_ENVIRONMENT_NAME");
+
+	if(cred_env_name == "KRB5CCNAME") {
+			// kerberos credential cache (in sandbox)
+		const char* krb5ccname = jic->get_credential_file();
+		if( krb5ccname && (krb5ccname[0] != '\0') ) {
+			// using env_name as env_value
+			env_name = "FILE:";
+			env_name += krb5ccname;
+			proc_env->SetEnv( "KRB5CCNAME", env_name );
+		}
+	} else {
+		// just copy the path into the named variable
+		const char* cred_file = jic->get_credential_file();
+		if( cred_file && (cred_file[0] != '\0') ) {
+			proc_env->SetEnv( cred_env_name.c_str(), cred_file );
+		}
 	}
+
 
 		// path to the output ad, if any
 	const char* output_ad = jic->getOutputAdFile();

@@ -1283,6 +1283,12 @@ default=false
 type=bool
 tags=daemon_core
 
+[SEC_CREDENTIAL_ENVIRONMENT_NAME]
+default=AUTHTOKEN
+type=string
+description=What env variable to set to point to job credential
+tags=security
+
 [SEC_CREDENTIAL_REFRESH_INTERVAL]
 default=-1
 type=int
