@@ -1,3 +1,7 @@
+# This TeXLive installation (on ingwe) has the TikZ fix.
+TEX_DIR = /scratch/tlmiller/install/texlive/2017/bin/x86_64-linux/
+export PATH := $(TEX_DIR):$(PATH)
+
 # The .fig sources are stored in git.
 FIG_FIGS =		user-man/dagman-node.eps \
 				user-man/dagman-diamond.eps \
@@ -48,20 +52,15 @@ ref.pdf : ref.tex $(FIGURES)
 	@pdflatex $(LATEX_ARGS) ref.tex
 	@pdflatex $(LATEX_ARGS) ref.tex
 
-ref.html : ref.tex $(FIGURES)
-	@latex2html -split 4 -link 2 -show_section_numbers -antialias -tmp /tmp -long_titles 3 -toc_depth 2 -local_icons ref.tex
-	@rm -fr ref.html
-	@mv ref ref.html
-
 HTLATEX_OPTIONS=ref,3,sec-filenames,next,info
-htlatex : ref.tex $(FIGURES)
+ref.html : ref.tex $(FIGURES)
 	@make tex-clean
 	@rm -fr ref.html
 	@htlatex ref.tex $(HTLATEX_OPTIONS)
 	@tex '\def\filename{{ref}{idx}{4dx}{ind}} \input idxmake.4ht'
 	@makeindex -o ref.ind ref.4dx
 	@htlatex ref.tex $(HTLATEX_OPTIONS)
-	@mkdir ref && cd ref && mv ../ref.css ../*.html ../*.png . && cd .. && mv ref ref.html
+	@mkdir ref && cd ref && mv ../ref.css ../*.html ../*.svg ../*.png . && cd .. && mv ref ref.html
 
 just-man-pages : just-man-pages.tex
 	@cd makeman ; make clean && make makeman
