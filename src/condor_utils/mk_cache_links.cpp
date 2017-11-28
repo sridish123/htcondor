@@ -127,7 +127,7 @@ static bool MakeLink(const char* srcFilePath, const string &newLink) {
 	// If it does not exist, carry on. We'll create it before exiting.
 	
 	priv_state original_priv = set_root_priv();
-	FileLock *accessFileLock = NULL;
+	FileLock *accessFileLock = NULL; // needs to be freed
 	
 	if(access(accessFilePath.c_str(), F_OK) == 0) {
 		accessFileLock = new FileLock(accessFilePath.c_str(), true, false);
@@ -139,6 +139,7 @@ static bool MakeLink(const char* srcFilePath, const string &newLink) {
 			dprintf(D_ALWAYS, "MakeLink: Failed to obtain lock on access file with"
 				" error code %d (%s).\n", errno, strerror(errno));
 			set_priv(original_priv);
+			delete accessFileLock;
 			return (false);
 		}
 	}
@@ -160,6 +161,7 @@ static bool MakeLink(const char* srcFilePath, const string &newLink) {
 		dprintf(D_ALWAYS, "MakeLink: Cannot transfer -- public input file not "
 			"readable by user: %s\n", srcFilePath);
 		set_priv(original_priv);
+		delete accessFileLock;
 		return (false);
 	}
 	fclose(srcFile);
@@ -258,8 +260,9 @@ static bool MakeLink(const char* srcFilePath, const string &newLink) {
 			" error code %d (%s).\n", errno, strerror(errno));
 	}
 
-	// Free the target link path
+	// Free up dynamically allocated objects
 	delete [] targetLinkPath;
+	delete accessFileLock;
 
 	// Reset priv state
 	set_priv(original_priv);
