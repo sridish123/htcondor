@@ -165,7 +165,7 @@ StartdNamedClassAdList::Publish( ClassAd *merged_ad, unsigned r_id )
 		const char * match_attr = NULL;
 		if( sad->InSlotList( r_id ) && sad->ShouldMergeInto( merged_ad, & match_attr ) ) {
 			dprintf( D_FULLDEBUG, "Aggregating ClassAd '%s' for slot %d.\n", sad->GetName(), r_id );
-			StartdNamedClassAd::Aggregate( & accumulator, sad->GetAd() );
+			sad->AggregateInto( & accumulator );
 			dprintf( D_FULLDEBUG, "Accumulator ad is now:\n" );
 			dPrintAd( D_FULLDEBUG, accumulator );
 		}

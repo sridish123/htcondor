@@ -27,6 +27,8 @@
 class StartdCronJobParams : public ClassAdCronJobParams
 {
   public:
+  	typedef std::set< std::string > Metrics;
+
 	StartdCronJobParams( const char			*job_name,
 						 const CronJobMgr	&mgr );
 	~StartdCronJobParams( void ) { };
@@ -35,13 +37,16 @@ class StartdCronJobParams : public ClassAdCronJobParams
 	bool Initialize( void );
 	bool InSlotList( unsigned slot ) const;
 
-	void setResourceMonitor( bool b ) { m_isResourceMonitor = b; }
-	bool isResourceMonitor( void ) { return m_isResourceMonitor; }
+	bool addMetric( const char * metricType, const char * attributeName );
+	bool isSumMetric( const std::string & attributeName ) const { return sumMetrics.find( attributeName ) != sumMetrics.end(); }
+	bool isPeakMetric( const std::string & attributeName ) const { return peakMetrics.find( attributeName ) != peakMetrics.end(); }
+	bool isResourceMonitor( void ) const { return (sumMetrics.size() + peakMetrics.size()) > 0; }
 
   private:
-	std::list<unsigned>	m_slots;
+  	Metrics sumMetrics;
+  	Metrics peakMetrics;
 
-	bool m_isResourceMonitor;
+	std::list<unsigned>	m_slots;
 };
 
 #endif /* _STARTD_CRON_JOB_PARAMS_H */

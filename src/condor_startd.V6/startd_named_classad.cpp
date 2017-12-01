@@ -127,32 +127,37 @@ StartdNamedClassAd::Merge( ClassAd * to, ClassAd * from ) {
 	return cMerged > 0;
 }
 
-bool
-wouldAggregate( const std::string & n, ExprTree * e, double & d ) {
-	// return n != "LastUpdate" && e->Evaluate( v ) && v.IsRealValue( d );
-	return n != "LastUpdate" && ExprTreeIsLiteralNumber( e, d );
-}
-
 void
 StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 	if ( ! to || ! from ) { return; }
 
+	const StartdCronJobParams & params = m_job.Params();
 	for( auto i = from->begin(); i != from->end(); ++i ) {
 		std::string name = i->first;
 		ExprTree * expr = i->second;
-		ExprTree * copy = expr->Copy();
 
-		double oldValue, newValue;
-		if( wouldAggregate( name, expr, newValue ) ) {
+		if( params.isSumMetric( name ) ) {
+			double newValue;
+			classad::Value v;
+			expr->Evaluate( v );
+			if(! v.IsRealValue( newValue )) {
+				dprintf( D_ALWAYS, "Metric %s in job %s is not a real value.  Ignoring, but you probably shouldn't.\n", name.c_str(), params.GetName() );
+				continue;
+			}
+
+			double oldValue;
 			if( to->EvaluateAttrReal( name, oldValue ) ) {
-				dprintf( D_FULLDEBUG, "AggregateAd(): %s is %.6f = %.6f + %.6f\n", name.c_str(), oldValue + newValue, oldValue, newValue );
+				dprintf( D_FULLDEBUG, "Aggregate(): %s is %.6f = %.6f + %.6f\n", name.c_str(), oldValue + newValue, oldValue, newValue );
 				to->InsertAttr( name, oldValue + newValue );
 			} else {
-				dprintf( D_FULLDEBUG, "AggregateAd(): %s = %.6f\n", name.c_str(), newValue );
+				dprintf( D_FULLDEBUG, "Aggregate(): %s = %.6f\n", name.c_str(), newValue );
 				to->InsertAttr( name, newValue );
 			}
+		} else if( params.isPeakMetric( name ) ) {
+			// FIXME
 		} else {
 			dprintf( D_FULLDEBUG, "AggregateAd(): copying '%s'.\n", name.c_str() );
+			ExprTree * copy = expr->Copy();
 			if(! to->Insert( name, copy )) {
 				dprintf( D_ALWAYS, "Failed to copy attribute while aggregating ad.  Ignoring, but you probably shouldn't.\n" );
 			}
@@ -170,6 +175,17 @@ StartdNamedClassAd::AggregateFrom(ClassAd *from)
 	}
 }
 
+bool
+StartdNamedClassAd::AggregateInto(ClassAd *into)
+{
+	if( isResourceMonitor() ) {
+		Aggregate( into, this->GetAd() );
+		return true;
+	} else {
+		return this->GetAd() ? into->CopyFrom( * this->GetAd() ) : true;
+	}
+}
+
 void
 StartdNamedClassAd::reset_monitor() {
 	if(! isResourceMonitor()) {
@@ -180,18 +196,24 @@ StartdNamedClassAd::reset_monitor() {
 	ClassAd * from = this->GetAd();
 	if( from == NULL ) { return; }
 
+	const StartdCronJobParams & params = m_job.Params();
 	for( auto i = from->begin(); i != from->end(); ++i ) {
 		std::string name = i->first;
 		ExprTree * expr = i->second;
 
-		double d;
-		if( wouldAggregate( name, expr, d ) ) {
-			// This looks and is clumsy, but has the great advantage that
-			// StartOfJob* will aggregate correctly across multiple resources.
+		if( params.isSumMetric( name ) || params.isPeakMetric( name ) ) {
+			double initialValue;
+			classad::Value v;
+			expr->Evaluate( v );
+			if(! v.IsRealValue( initialValue )) {
+				dprintf( D_ALWAYS, "Metric %s in job %s is not a real value.  Ignoring, but you probably shouldn't.\n", name.c_str(), params.GetName() );
+				continue;
+			}
+
 			std::string jobAttributeName;
 			formatstr( jobAttributeName, "StartOfJob%s", name.c_str() );
-			dprintf( D_ALWAYS, "reset_monitor(): recording %s = %.6f\n", jobAttributeName.c_str(), d );
-			from->InsertAttr( jobAttributeName.c_str(), d );
+			dprintf( D_ALWAYS, "reset_monitor(): recording %s = %.6f\n", jobAttributeName.c_str(), initialValue );
+			from->InsertAttr( jobAttributeName.c_str(), initialValue );
 		}
 	}
 }

@@ -120,25 +120,33 @@ StartdCronJobMgr::CreateJobParams( const char *job_name )
 StartdCronJob *
 StartdCronJobMgr::CreateJob( CronJobParams *job_params )
 {
+	const char * jobName = job_params->GetName();
+
 	dprintf( D_FULLDEBUG,
 			 "*** Creating Startd Cron job '%s'***\n",
-			 job_params->GetName() );
+			 jobName );
 	StartdCronJobParams *params =
 		dynamic_cast<StartdCronJobParams *>( job_params );
 	ASSERT( params );
 
-	// If the job is named in MONITORS_MACHINE_RESOURCE, treat the output
-	// differently (automatically generate aggregatation expressions for
-	// each slot that has an ad merged).
-	const char * jobName = params->GetName();
-	std::string mrmList;
-	param( mrmList, "MONITORS_MACHINE_RESOURCE" );
-	if(! mrmList.empty()) {
-		StringList sl( mrmList.c_str() );
-		if( sl.contains( jobName ) ) {
-			dprintf( D_FULLDEBUG, "'%s' declared a machine resource monitor.\n", jobName );
-			params->setResourceMonitor( true );
+	char * metricString = params->Lookup( "METRICS" );
+	if( metricString != NULL && metricString[0] != '\0' ) {
+		StringList pairs( metricString );
+		for( char * pair = pairs.first(); pair != NULL; pair = pairs.next() ) {
+			StringList tn( pair, ":" );
+			char * metricType = tn.first();
+			char * attributeName = tn.next();
+			if(! params->addMetric( metricType, attributeName )) {
+				dprintf( 	D_ALWAYS, "Unknown metric type '%s' for attribute "
+							"'%s' in monitor '%s', ignoring.\n", metricType,
+							attributeName, jobName );
+			} else {
+				dprintf(	D_FULLDEBUG, "Added %s as %s metric for %s job\n",
+							attributeName, metricType, jobName );
+			}
 		}
+
+		free( metricString );
 	}
 
 	return new StartdCronJob( params, *this );

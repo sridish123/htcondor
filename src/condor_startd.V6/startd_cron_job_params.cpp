@@ -96,3 +96,15 @@ StartdCronJobParams::InSlotList( unsigned slot ) const
 	}
 	return false;
 }
+
+bool
+StartdCronJobParams::addMetric( const char * metricType, const char * attributeName ) {
+	if( strncasecmp( "SUM", metricType, 3 ) == 0 ) {
+		sumMetrics.insert( attributeName );
+	} else if( strncasecmp( "PEAK", metricType, 4 ) == 0 ) {
+		peakMetrics.insert( attributeName );
+	} else {
+		return false;
+	}
+	return true;
+}
