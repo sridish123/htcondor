@@ -27,7 +27,19 @@
 class StartdCronJobParams : public ClassAdCronJobParams
 {
   public:
-  	typedef std::set< std::string > Metrics;
+	class Metric {
+		public:
+			typedef double (*Operator)(double a, double b);
+
+			Metric() : _o(NULL), _t(NULL) { }
+			Metric( Operator o, const char * t ) : _o(o), _t(t) { }
+			double operator()( double a, double b ) { return (*_o)(a, b); }
+			const char * c_str() { return _t; }
+		private:
+			Operator _o;
+			const char * _t;
+	};
+  	typedef std::map< std::string, Metric > Metrics;
 
 	StartdCronJobParams( const char			*job_name,
 						 const CronJobMgr	&mgr );
@@ -37,14 +49,20 @@ class StartdCronJobParams : public ClassAdCronJobParams
 	bool Initialize( void );
 	bool InSlotList( unsigned slot ) const;
 
+	bool isMetric( const std::string & attributeName ) const {
+		return metrics.find( attributeName ) != metrics.end();
+	}
 	bool addMetric( const char * metricType, const char * attributeName );
-	bool isSumMetric( const std::string & attributeName ) const { return sumMetrics.find( attributeName ) != sumMetrics.end(); }
-	bool isPeakMetric( const std::string & attributeName ) const { return peakMetrics.find( attributeName ) != peakMetrics.end(); }
-	bool isResourceMonitor( void ) const { return (sumMetrics.size() + peakMetrics.size()) > 0; }
+	bool getMetric( const std::string & attributeName, Metric & m ) const {
+		auto i = metrics.find( attributeName );
+		if( i == metrics.end() ) { return false; }
+		m = i->second;
+		return true;
+	}
+	bool isResourceMonitor( void ) const { return metrics.size() > 0; }
 
   private:
-  	Metrics sumMetrics;
-  	Metrics peakMetrics;
+  	Metrics metrics;
 
 	std::list<unsigned>	m_slots;
 };
