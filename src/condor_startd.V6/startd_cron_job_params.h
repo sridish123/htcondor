@@ -35,8 +35,13 @@ class StartdCronJobParams : public ClassAdCronJobParams
 	bool Initialize( void );
 	bool InSlotList( unsigned slot ) const;
 
+	void setResourceMonitor( bool b ) { m_isResourceMonitor = b; }
+	bool isResourceMonitor( void ) { return m_isResourceMonitor; }
+
   private:
 	std::list<unsigned>	m_slots;
+
+	bool m_isResourceMonitor;
 };
 
 #endif /* _STARTD_CRON_JOB_PARAMS_H */

@@ -803,6 +803,7 @@ Claim::beginActivation( time_t now )
 			break;
 	}
 
+	resmgr->adlist_reset_monitors( c_rip->r_id, c_rip->r_classad );
 	resmgr->startd_stats.total_job_starts += 1;
 }
 

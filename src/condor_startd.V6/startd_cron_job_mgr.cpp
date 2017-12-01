@@ -126,6 +126,21 @@ StartdCronJobMgr::CreateJob( CronJobParams *job_params )
 	StartdCronJobParams *params =
 		dynamic_cast<StartdCronJobParams *>( job_params );
 	ASSERT( params );
+
+	// If the job is named in MONITORS_MACHINE_RESOURCE, treat the output
+	// differently (automatically generate aggregatation expressions for
+	// each slot that has an ad merged).
+	const char * jobName = params->GetName();
+	std::string mrmList;
+	param( mrmList, "MONITORS_MACHINE_RESOURCE" );
+	if(! mrmList.empty()) {
+		StringList sl( mrmList.c_str() );
+		if( sl.contains( jobName ) ) {
+			dprintf( D_FULLDEBUG, "'%s' declared a machine resource monitor.\n", jobName );
+			params->setResourceMonitor( true );
+		}
+	}
+
 	return new StartdCronJob( params, *this );
 }
 

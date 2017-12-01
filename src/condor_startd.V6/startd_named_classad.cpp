@@ -109,10 +109,89 @@ StartdNamedClassAd::ShouldMergeInto(ClassAd * merge_into, const char ** pattr_us
 bool
 StartdNamedClassAd::MergeInto(ClassAd *merge_into)
 {
-	ClassAd * merge_from = this->GetAd();
-	if ( ! merge_into || ! merge_from)
-		return false;
+	return StartdNamedClassAd::Merge( merge_into, this->GetAd() );
+}
 
-	int cMerged = MergeClassAdsIgnoring(merge_into, merge_from, this->dont_merge_attrs);
+bool
+StartdNamedClassAd::isResourceMonitor() {
+	return m_job.isResourceMonitor();
+}
+
+bool
+StartdNamedClassAd::Merge( ClassAd * to, ClassAd * from ) {
+	if ( ! to || ! from ) {
+		return false;
+	}
+
+	int cMerged = MergeClassAdsIgnoring(to, from, dont_merge_attrs);
 	return cMerged > 0;
+}
+
+bool
+wouldAggregate( const std::string & n, ExprTree * e, double & d ) {
+	// return n != "LastUpdate" && e->Evaluate( v ) && v.IsRealValue( d );
+	return n != "LastUpdate" && ExprTreeIsLiteralNumber( e, d );
+}
+
+void
+StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
+	if ( ! to || ! from ) { return; }
+
+	for( auto i = from->begin(); i != from->end(); ++i ) {
+		std::string name = i->first;
+		ExprTree * expr = i->second;
+		ExprTree * copy = expr->Copy();
+
+		double oldValue, newValue;
+		if( wouldAggregate( name, expr, newValue ) ) {
+			if( to->EvaluateAttrReal( name, oldValue ) ) {
+				dprintf( D_FULLDEBUG, "AggregateAd(): %s is %.6f = %.6f + %.6f\n", name.c_str(), oldValue + newValue, oldValue, newValue );
+				to->InsertAttr( name, oldValue + newValue );
+			} else {
+				dprintf( D_FULLDEBUG, "AggregateAd(): %s = %.6f\n", name.c_str(), newValue );
+				to->InsertAttr( name, newValue );
+			}
+		} else {
+			dprintf( D_FULLDEBUG, "AggregateAd(): copying '%s'.\n", name.c_str() );
+			if(! to->Insert( name, copy )) {
+				dprintf( D_ALWAYS, "Failed to copy attribute while aggregating ad.  Ignoring, but you probably shouldn't.\n" );
+			}
+		}
+	}
+}
+
+void
+StartdNamedClassAd::AggregateFrom(ClassAd *from)
+{
+	if( isResourceMonitor() ) {
+		Aggregate( this->GetAd(), from );
+	} else {
+		ReplaceAd( from );
+	}
+}
+
+void
+StartdNamedClassAd::reset_monitor() {
+	if(! isResourceMonitor()) {
+		dprintf( D_ALWAYS, "StartdNamedClassAd::reset_monitor(): ignoring request to reset monitor of non-monitor.\n" );
+		return;
+	}
+
+	ClassAd * from = this->GetAd();
+	if( from == NULL ) { return; }
+
+	for( auto i = from->begin(); i != from->end(); ++i ) {
+		std::string name = i->first;
+		ExprTree * expr = i->second;
+
+		double d;
+		if( wouldAggregate( name, expr, d ) ) {
+			// This looks and is clumsy, but has the great advantage that
+			// StartOfJob* will aggregate correctly across multiple resources.
+			std::string jobAttributeName;
+			formatstr( jobAttributeName, "StartOfJob%s", name.c_str() );
+			dprintf( D_ALWAYS, "reset_monitor(): recording %s = %.6f\n", jobAttributeName.c_str(), d );
+			from->InsertAttr( jobAttributeName.c_str(), d );
+		}
+	}
 }
