@@ -136,7 +136,8 @@ StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 		std::string name = i->first;
 		ExprTree * expr = i->second;
 
-		if( params.isSumMetric( name ) ) {
+		StartdCronJobParams::Metric metric;
+		if( params.getMetric( name, metric ) ) {
 			double newValue;
 			classad::Value v;
 			expr->Evaluate( v );
@@ -147,14 +148,12 @@ StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 
 			double oldValue;
 			if( to->EvaluateAttrReal( name, oldValue ) ) {
-				dprintf( D_FULLDEBUG, "Aggregate(): %s is %.6f = %.6f + %.6f\n", name.c_str(), oldValue + newValue, oldValue, newValue );
-				to->InsertAttr( name, oldValue + newValue );
+				dprintf( D_FULLDEBUG, "Aggregate(): %s is %.6f = %.6f %s %.6f\n", name.c_str(), metric(oldValue, newValue), oldValue, metric.c_str(), newValue );
+				to->InsertAttr( name, metric(oldValue, newValue) );
 			} else {
 				dprintf( D_FULLDEBUG, "Aggregate(): %s = %.6f\n", name.c_str(), newValue );
 				to->InsertAttr( name, newValue );
 			}
-		} else if( params.isPeakMetric( name ) ) {
-			// FIXME
 		} else {
 			dprintf( D_FULLDEBUG, "AggregateAd(): copying '%s'.\n", name.c_str() );
 			ExprTree * copy = expr->Copy();
@@ -201,7 +200,7 @@ StartdNamedClassAd::reset_monitor() {
 		std::string name = i->first;
 		ExprTree * expr = i->second;
 
-		if( params.isSumMetric( name ) || params.isPeakMetric( name ) ) {
+		if( params.isMetric( name ) ) {
 			double initialValue;
 			classad::Value v;
 			expr->Evaluate( v );

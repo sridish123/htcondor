@@ -97,12 +97,15 @@ StartdCronJobParams::InSlotList( unsigned slot ) const
 	return false;
 }
 
+double sumOfTwoDoubles( double a, double b ) { return a + b; }
+double maxOfTwoDoubles( double a, double b ) { return a > b ? a : b; }
+
 bool
 StartdCronJobParams::addMetric( const char * metricType, const char * attributeName ) {
 	if( strncasecmp( "SUM", metricType, 3 ) == 0 ) {
-		sumMetrics.insert( attributeName );
+		metrics.insert( make_pair( attributeName, Metric( sumOfTwoDoubles, "+" ) ) );
 	} else if( strncasecmp( "PEAK", metricType, 4 ) == 0 ) {
-		peakMetrics.insert( attributeName );
+		metrics.insert( make_pair( attributeName, Metric( maxOfTwoDoubles, ">" ) ) );
 	} else {
 		return false;
 	}
