@@ -284,8 +284,8 @@ class FileTransfer: public Service {
 
 	void setTransferQueueContactInfo(char const *contact);
 
-	void InsertPluginMappings(MyString methods, MyString p);
-	MyString DeterminePluginMethods( CondorError &e, const char* path );
+	void InsertPluginMethodMappings(MyString methods, MyString plugin);
+	void SetPluginMappings( CondorError &error, const char* path );
 	int InitializePlugins(CondorError &e);
 	int InvokeFileTransferPlugin(CondorError &e, const char* URL, const char* dest, ClassAd* plugin_stats, const char* proxy_filename = NULL);
     int OutputFileTransferStats( ClassAd &stats );
@@ -403,7 +403,8 @@ class FileTransfer: public Service {
 	Service* ClientCallbackClass;
 	bool ClientCallbackWantsStatusUpdates;
 	FileTransferInfo Info;
-	PluginHashTable* plugin_table;
+	PluginHashTable* plugin_method_table;
+	PluginHashTable* plugin_version_table;
 	bool I_support_filetransfer_plugins;
 #ifdef WIN32
 	perm* perm_obj;

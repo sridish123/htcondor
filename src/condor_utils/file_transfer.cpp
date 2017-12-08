@@ -188,7 +188,8 @@ FileTransfer::FileTransfer()
 	m_use_file_catalog = true;
 	m_sec_session_id = NULL;
 	I_support_filetransfer_plugins = false;
-	plugin_table = NULL;
+	plugin_method_table = NULL;
+	plugin_version_table = NULL;
 	MaxUploadBytes = -1;  // no limit by default
 	MaxDownloadBytes = -1;
 }
@@ -246,7 +247,8 @@ FileTransfer::~FileTransfer()
 	if (perm_obj) delete perm_obj;
 #endif
 	free(m_sec_session_id);
-	delete plugin_table;
+	delete plugin_method_table;
+	delete plugin_version_table;
 }
 
 int
@@ -615,7 +617,6 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 
 	CondorError e;
 	I_support_filetransfer_plugins = false;
-	plugin_table = NULL;
 	InitializePlugins(e);
 
 	int spool_completion_time = 0;
@@ -1899,6 +1900,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		SpooledJobFiles::createJobSpoolDirectory(&jobAd,desired_priv_state);
 	}
 
+	// Start the main download loop. Reads reply codes and filenames off a
+	// socket wire, s, then handles downloads according to the reply code.
+	// We also gather a list of files to be transfered using a third party file
+	// transfer plugin; wait until after this loop to actually do the transfers.
 	for (;;) {
 		if( !s->code(reply) ) {
 			dprintf(D_FULLDEBUG,"DoDownload: exiting at %d\n",__LINE__);
@@ -2213,9 +2218,14 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 				return_and_resetpriv( -1 );
 			}
 
-			dprintf( D_FULLDEBUG, "DoDownload: doing a URL transfer: (%s) to (%s)\n", URL.Value(), fullname.Value());
+			dprintf( D_FULLDEBUG, "DoDownload: preparing a URL transfer: (%s) "
+				"to (%s)\n", URL.Value(), fullname.Value());
 
 			rc = InvokeFileTransferPlugin(errstack, URL.Value(), fullname.Value(), &pluginStatsAd, LocalProxyName.Value());
+			
+			// Do not call the file transfer plugin now. Add the transfer details
+			// to a list; we'll wait until the main download loop is done, then
+			// group all third party transfers into the same operation.
 
 
 		} else if ( reply == 4 ) {
@@ -2435,7 +2445,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		// Hopefully the compiler can just prune out the emitted code.
 		if (delegation_method) {}
 		if (elapsed) {}
-	}
+	} // end of the main download loop
+
+	// Now that we've completed the main file transfer loop, it's time to 
+	// transfer all files that needed a third party plugin.
 
 	// go back to the state we were in before file transfer
 	s->set_crypto_mode(socket_default_crypto);
@@ -4248,7 +4261,7 @@ void FileTransfer::setSecuritySession(char const *session_id) {
 
 int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, const char* dest, ClassAd* plugin_stats, const char* proxy_filename) {
 
-	if (plugin_table == NULL) {
+	if (plugin_method_table == NULL) {
 		dprintf(D_FULLDEBUG, "FILETRANSFER: No plugin table defined! (request was %s)\n", source);
 		e.pushf("FILETRANSFER", 1, "No plugin table defined (request was %s)", source);
 		return GET_FILE_PLUGIN_FAILED;
@@ -4289,7 +4302,7 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 	MyString plugin;
 
 	// hashtable returns zero if found.
-	if (plugin_table->lookup((MyString)method, plugin)) {
+	if (plugin_method_table->lookup((MyString)method, plugin)) {
 		// no plugin for this type!!!
 		e.pushf("FILETRANSFER", 1, "FILETRANSFER: plugin for type %s not found!", method);
 		dprintf (D_FULLDEBUG, "FILETRANSFER: plugin for type %s not found!\n", method);
@@ -4448,13 +4461,13 @@ int FileTransfer::OutputFileTransferStats( ClassAd &stats ) {
 MyString FileTransfer::GetSupportedMethods() {
 	MyString method_list;
 
-	// iterate plugin_table if it existssrc
-	if (plugin_table) {
+	// Iterate plugin_table if it exists
+	if (plugin_method_table) {
 		MyString junk;
 		MyString method;
 
-		plugin_table->startIterations();
-		while(plugin_table->iterate(method, junk)) {
+		plugin_method_table->startIterations();
+		while(plugin_method_table->iterate(method, junk)) {
 			// add comma if needed
 			if (!(method_list.IsEmpty())) {
 				method_list += ",";
@@ -4466,37 +4479,41 @@ MyString FileTransfer::GetSupportedMethods() {
 }
 
 
-int FileTransfer::InitializePlugins(CondorError &e) {
+int FileTransfer::InitializePlugins( CondorError &error ) {
 
-	// see if this is explicitly disabled
-	if (!param_boolean("ENABLE_URL_TRANSFERS", true)) {
+	// See if this is explicitly disabled
+	if ( !param_boolean( "ENABLE_URL_TRANSFERS", true ) ) {
 		I_support_filetransfer_plugins = false;
 		return 0;
 	}
 
-	char* plugin_list_string = param("FILETRANSFER_PLUGINS");
-	if (!plugin_list_string) {
+	char* plugin_list_string = param( "FILETRANSFER_PLUGINS" );
+	if ( !plugin_list_string ) {
 		I_support_filetransfer_plugins = false;
 		return 0;
 	}
 
-	// plugin_table is a member variable
-	plugin_table = new PluginHashTable(7, compute_filename_hash);
+	// plugin_method_table and plugin_version_table are member variables
+	plugin_method_table = new PluginHashTable( 7, compute_filename_hash );
+	plugin_version_table = new PluginHashTable( 7, compute_filename_hash );
 
-	StringList plugin_list (plugin_list_string);
+	StringList plugin_list( plugin_list_string );
 	plugin_list.rewind();
 
-	char *p;
-	while ((p = plugin_list.next())) {
+	// Iterate over all the available plugins. For each one call
+	// SetPluginAttributes, which will set appropriate mappings in the 
+	// plugin_method_table and plugin_version_table hashtables.
+	char *plugin;
+	while ( ( plugin = plugin_list.next() ) ) {
 		// TODO: plugin must be an absolute path (win and unix)
-
-		MyString methods = DeterminePluginMethods(e, p);
-		if (!methods.IsEmpty()) {
-			// we support at least one plugin type
+		SetPluginMappings( error, plugin );
+		// Now verify that the plugin supports at least one transfer method.
+		if ( plugin_method_table->exists( plugin ) == 0 ) {
 			I_support_filetransfer_plugins = true;
-			InsertPluginMappings(methods, p);
-		} else {
-			dprintf(D_ALWAYS, "FILETRANSFER: failed to add plugin \"%s\" because: %s\n", p, e.getFullText().c_str());
+		} 
+		else {
+			dprintf( D_ALWAYS, "FILETRANSFER output of \"%s -classad\" does not contain SupportedMethods, ignoring plugin\n", plugin );
+			error.pushf( "FILETRANSFER", 1, "\"%s -classad\" does not support any methods, ignoring", plugin );
 		}
 	}
 
@@ -4505,77 +4522,79 @@ int FileTransfer::InitializePlugins(CondorError &e) {
 }
 
 
-MyString
-FileTransfer::DeterminePluginMethods( CondorError &e, const char* path )
+void
+FileTransfer::SetPluginMappings( CondorError &error, const char* path )
 {
-    FILE* fp;
-    const char *args[] = { path, "-classad", NULL};
-    char buf[1024];
+	FILE* fp;
+	const char *args[] = { path, "-classad", NULL };
+	char buf[1024];
 
-        // first, try to execute the given path with a "-classad"
-        // option, and grab the output as a ClassAd
-    fp = my_popenv( args, "r", FALSE );
+	// First, try to execute the given path with a "-classad" option, and 
+	// grab the output as a ClassAd
+	fp = my_popenv( args, "r", FALSE );
+	if( ! fp ) {
+		dprintf( D_ALWAYS, "FILETRANSFER: Failed to execute %s, ignoring\n", path );
+		error.pushf("FILETRANSFER", 1, "Failed to execute %s, ignoring", path );
+		return;
+	}
 
-    if( ! fp ) {
-        dprintf( D_ALWAYS, "FILETRANSFER: Failed to execute %s, ignoring\n", path );
-		e.pushf("FILETRANSFER", 1, "Failed to execute %s, ignoring", path );
-        return "";
-    }
-    ClassAd* ad = new ClassAd;
-    bool read_something = false;
-    while( fgets(buf, 1024, fp) ) {
-        read_something = true;
-        if( ! ad->Insert(buf) ) {
-            dprintf( D_ALWAYS, "FILETRANSFER: Failed to insert \"%s\" into ClassAd, "
-                     "ignoring invalid plugin\n", buf );
-            delete( ad );
-            pclose( fp );
-			e.pushf("FILETRANSFER", 1, "Received invalid input '%s', ignoring", buf );
-            return "";
-        }
-    }
-    my_pclose( fp );
-    if( ! read_something ) {
-        dprintf( D_ALWAYS,
-                 "FILETRANSFER: \"%s -classad\" did not produce any output, ignoring\n",
-                 path );
-        delete( ad );
-		e.pushf("FILETRANSFER", 1, "\"%s -classad\" did not produce any output, ignoring", path );
-        return "";
-    }
+	ClassAd* ad = new ClassAd;
+	bool read_something = false;
+	while( fgets(buf, 1024, fp ) ) {
+		read_something = true;
+		if( ! ad->Insert( buf ) ) {
+			dprintf( D_ALWAYS, "FILETRANSFER: Failed to insert \"%s\" into ClassAd, "
+						"ignoring invalid plugin\n", buf );
+			delete( ad );
+			pclose( fp );
+			error.pushf( "FILETRANSFER", 1, "Received invalid input '%s', ignoring", buf );
+			return;
+		}
+	}
+	my_pclose( fp );
+	if( ! read_something ) {
+		dprintf( D_ALWAYS,"FILETRANSFER: \"%s -classad\" did not produce any "
+			"output, ignoring\n", path );
+		delete( ad );
+		error.pushf("FILETRANSFER", 1, "\"%s -classad\" did not produce any output, ignoring", path );
+		return;
+	}
 
 	// TODO: verify that plugin type is FileTransfer
 	// e.pushf("FILETRANSFER", 1, "\"%s -classad\" is not plugin type FileTransfer, ignoring", path );
 
-	// extract the info we care about
-	char* methods = NULL;
-	if (ad->LookupString( "SupportedMethods", &methods)) {
-		// free the memory, return a MyString
-		MyString m = methods;
-		free(methods);
-        delete( ad );
-		return m;
+	// Extract the info we care about, and add it to the appropriate hash tables
+	char* plugin_methods = NULL;
+	char* plugin_version = NULL;
+	if ( ad->LookupString( "SupportedMethods", &plugin_methods ) ) {
+		// Free the memory, return a MyString
+		MyString methods = plugin_methods;
+		free( plugin_methods );
+		InsertPluginMethodMappings( methods, path );
+	}
+	if ( ad->LookupString( "PluginVersion", &plugin_version ) ) {
+		MyString version = plugin_version;
+		free( plugin_version );
+		plugin_version_table->insert( version, path );
 	}
 
-	dprintf(D_ALWAYS, "FILETRANSFER output of \"%s -classad\" does not contain SupportedMethods, ignoring plugin\n", path );
-	e.pushf("FILETRANSFER", 1, "\"%s -classad\" does not support any methods, ignoring", path );
-
 	delete( ad );
-	return "";
+	return;
 }
 
 
 void
-FileTransfer::InsertPluginMappings(MyString methods, MyString p)
+FileTransfer::InsertPluginMethodMappings( MyString methods, MyString plugin )
 {
-	StringList method_list(methods.Value());
+	StringList method_list( methods.Value() );
 
-	char* m;
+	char* method;
 
 	method_list.rewind();
-	while((m = method_list.next())) {
-		dprintf(D_FULLDEBUG, "FILETRANSFER: protocol \"%s\" handled by \"%s\"\n", m, p.Value());
-		plugin_table->insert(m, p);
+	while( ( method = method_list.next() ) ) {
+		dprintf( D_FULLDEBUG, "FILETRANSFER: protocol \"%s\" handled by "
+			"\"%s\"\n", methods.Value(), plugin.Value() );
+		plugin_method_table->insert( method, plugin );
 	}
 }
 
