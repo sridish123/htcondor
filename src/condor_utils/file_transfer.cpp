@@ -1898,7 +1898,9 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 
 	if( !final_transfer && IsServer() ) {
 		SpooledJobFiles::createJobSpoolDirectory(&jobAd,desired_priv_state);
-	}
+    }
+
+
 
 	// Start the main download loop. Reads reply codes and filenames off a
 	// socket wire, s, then handles downloads according to the reply code.
@@ -2203,32 +2205,65 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 				
 				rc = 0;
 			}
-		} else if (reply == 5) {
-			// new filetransfer command.  5 means that the next file is a
-			// 3rd party transfer.  cedar will not send the file itself,
-			// and instead will send the URL over the wire.  the receiving
-			// side must then retreive the URL using one of the configured
-			// filetransfer plugins.
+		} 
+		
+		// Reply code 5 means that the next file is a third party transfer.  
+		// Cedar does not send the file itself, instead it sends the URL over 
+		// the wire. The receiving side must then retreive the URL using one of 
+		// the configured filetransfer plugins.
+		else if ( reply == 5 ) {
 
+			// Receive the URL from the wire
 			MyString URL;
-			// receive the URL from the wire
-
-			if (!s->code(URL)) {
-				dprintf(D_FULLDEBUG,"DoDownload: exiting at %d\n",__LINE__);
+			if ( !s->code( URL ) ) {
+				dprintf( D_FULLDEBUG,"DoDownload: exiting at %d\n", __LINE__ );
 				return_and_resetpriv( -1 );
 			}
 
-			dprintf( D_FULLDEBUG, "DoDownload: preparing a URL transfer: (%s) "
-				"to (%s)\n", URL.Value(), fullname.Value());
+			// Determine which plugin to invoke, and which version is available
+			MyString plugin_path = DetermineFileTransferPlugin( errstack, URL.Value(), fullname.Value() );
+			MyString plugin_version;
+			if ( plugin_version_table->lookup( plugin_path, plugin_version ) ) {
+				dprintf ( D_FULLDEBUG, "FILETRANSFER: Could not look up version "
+					"for plugin %s. Something is very wrong here! Aborting.\n", 
+					plugin_path.Value() );
+				return_and_resetpriv( -1 );
+			}
 
-			rc = InvokeFileTransferPlugin(errstack, URL.Value(), fullname.Value(), &pluginStatsAd, LocalProxyName.Value());
+			// We want just the filename of the plugin binary, not the full path.
+			// TODO: This parsing code is ugly and painful, there must be a better way
+			MyString plugin;
+			MyStringTokener plugin_tokener;
+			plugin_tokener.Tokenize( plugin_path );
+			const char* token = plugin_tokener.GetNextToken( &DIR_DELIM_CHAR, true );
+			while ( token ) {
+				plugin = token;
+				token = plugin_tokener.GetNextToken( &DIR_DELIM_CHAR, true );
+			}
+			// Trim the extension for Windows systems
+			if( plugin.FindChar( '.' ) > 0 ) {
+				plugin = plugin.substr( 0, plugin.FindChar( '.' ) );
+			}
 			
-			// Do not call the file transfer plugin now. Add the transfer details
-			// to a list; we'll wait until the main download loop is done, then
-			// group all third party transfers into the same operation.
+			// curl_plugin v0.2 should not transfer the file now! Instead, 
+			// add it to a ClassAd of all files we want to transfer. We'll 
+			// transfer them all in one go after the main download loop.
+			if ( plugin == "curl_plugin" && plugin_version == "0.2" ) {
+				dprintf( D_FULLDEBUG, "DoDownload: deferring transfer of URL %s "
+					" until end of download loop.\n", URL.Value() );
+				rc = InvokeFileTransferPlugin( errstack, URL.Value(), 
+					fullname.Value(), &pluginStatsAd, LocalProxyName.Value() );
+			}
+			// All other file transfer plugins should transfer now.
+			else {
+				dprintf( D_FULLDEBUG, "DoDownload: preparing a URL transfer: (%s) "
+					"to (%s)\n", URL.Value(), fullname.Value() );
+				rc = InvokeFileTransferPlugin( errstack, URL.Value(), 
+					fullname.Value(), &pluginStatsAd, LocalProxyName.Value() );
+			}
 
-
-		} else if ( reply == 4 ) {
+		} 
+		else if ( reply == 4 ) {
 			if ( PeerDoesGoAhead || s->end_of_message() ) {
 				rc = (s->get_x509_delegation( fullname.Value(), false, NULL ) == ReliSock::delegation_ok) ? 0 : -1;
 				dprintf( D_FULLDEBUG,
@@ -4258,6 +4293,55 @@ void FileTransfer::setSecuritySession(char const *session_id) {
 	m_sec_session_id = session_id ? strdup(session_id) : NULL;
 }
 
+// Determines the third-party plugin needed for a file transfer.
+// Looks at both source and destination to determine which one contains a URL,
+// then extracts the method (ie. http, ftp) and uses it to lookup plugin.
+MyString FileTransfer::DetermineFileTransferPlugin( CondorError &error, const char* source, const char* dest ) {
+	
+	char *URL = NULL;
+	MyString plugin;
+	
+	// First, check the destination to see if it looks like a URL.  
+	// If not, source must be the URL.
+	if( IsUrl( dest ) ) {
+		URL = const_cast<char*>(dest);
+		dprintf( D_FULLDEBUG, "FILETRANSFER: using destination to determine "
+			"plugin type: %s\n", dest );
+	} 
+	else {
+		URL = const_cast<char*>(source);
+		dprintf( D_FULLDEBUG, "FILETRANSFER: using source to determine "
+			"plugin type: %s\n", source );
+	}
+
+	// Find the type of transfer
+	const char* colon = strchr( URL, ':' );
+
+	if ( !colon ) {
+		// In theory, this should never happen -- the sending side should only
+		// send URLs after having checked this. However, trust but verify.
+		error.pushf( "FILETRANSFER", 1, "Specified URL does not contain a "
+			"':' (%s)", URL );
+		return NULL;
+	}
+
+	// Extract the protocol/method
+	char* method = ( char* ) malloc( 1 + ( colon-URL ) );
+	ASSERT( method );
+	strncpy( method, URL, ( colon-URL ) );
+	method[( colon-URL )] = '\0';
+
+	// Hashtable returns zero if found.
+	if ( plugin_method_table->lookup( (MyString) method, plugin ) ) {
+		// no plugin for this type!!!
+		error.pushf( "FILETRANSFER", 1, "FILETRANSFER: plugin for type %s not found!", method );
+		dprintf ( D_FULLDEBUG, "FILETRANSFER: plugin for type %s not found!\n", method );
+		free( method );
+		return NULL;
+	}
+
+	return plugin;
+}
 
 int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, const char* dest, ClassAd* plugin_stats, const char* proxy_filename) {
 
@@ -4267,48 +4351,8 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 		return GET_FILE_PLUGIN_FAILED;
 	}
 
-
-	// detect which plugin to invoke
-	char *URL = NULL;
-
-	// first, check the dest to see if it looks like a URL.  if not, source must
-	// be the URL.
-	if(IsUrl(dest)) {
-		URL = const_cast<char*>(dest);
-		dprintf(D_FULLDEBUG, "FILETRANSFER: using destination to determine plugin type: %s\n", dest);
-	} else {
-		URL = const_cast<char*>(source);
-		dprintf(D_FULLDEBUG, "FILETRANSFER: using source to determine plugin type: %s\n", source);
-	}
-
-	// find the type of transfer
-	const char* colon = strchr(URL, ':');
-
-	if (!colon) {
-		// in theory, this should never happen -- then sending side should only
-		// send URLS after having checked this.  however, trust but verify.
-		e.pushf("FILETRANSFER", 1, "Specified URL does not contain a ':' (%s)", URL);
-		return GET_FILE_PLUGIN_FAILED;
-	}
-
-	// extract the protocol/method
-	char* method = (char*) malloc(1 + (colon-URL));
-	ASSERT( method );
-	strncpy(method, URL, (colon-URL));
-	method[(colon-URL)] = '\0';
-
-
-	// look up the method in our hash table
-	MyString plugin;
-
-	// hashtable returns zero if found.
-	if (plugin_method_table->lookup((MyString)method, plugin)) {
-		// no plugin for this type!!!
-		e.pushf("FILETRANSFER", 1, "FILETRANSFER: plugin for type %s not found!", method);
-		dprintf (D_FULLDEBUG, "FILETRANSFER: plugin for type %s not found!\n", method);
-		free(method);
-		return GET_FILE_PLUGIN_FAILED;
-	}
+	// Determine which plugin to invoke
+	MyString plugin = DetermineFileTransferPlugin( e, source, dest );
 
 	
 /*	
@@ -4373,9 +4417,6 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 			"reasons.  Run 'ldd' on your plugin and move needed libraries to a system "
 			"location controlled by root. Good luck!\n");
 	}
-
-	// clean up
-	free(method);
 
 	// any non-zero exit from plugin indicates error.  this function needs to
 	// return -1 on error, or zero otherwise, so map plugin_status to the
@@ -4458,18 +4499,18 @@ int FileTransfer::OutputFileTransferStats( ClassAd &stats ) {
 	return 0;
 }
 
-MyString FileTransfer::GetSupportedMethods() {
+MyString FileTransfer::GetSupportedMethods( ) {
 	MyString method_list;
 
 	// Iterate plugin_table if it exists
-	if (plugin_method_table) {
+	if ( plugin_method_table ) {
 		MyString junk;
 		MyString method;
 
 		plugin_method_table->startIterations();
-		while(plugin_method_table->iterate(method, junk)) {
+		while( plugin_method_table->iterate( method, junk )) {
 			// add comma if needed
-			if (!(method_list.IsEmpty())) {
+			if ( !( method_list.IsEmpty() ) ) {
 				method_list += ",";
 			}
 			method_list += method;
@@ -4501,14 +4542,18 @@ int FileTransfer::InitializePlugins( CondorError &error ) {
 	plugin_list.rewind();
 
 	// Iterate over all the available plugins. For each one call
-	// SetPluginAttributes, which will set appropriate mappings in the 
+	// SetPluginMappings, which will set appropriate mappings in the 
 	// plugin_method_table and plugin_version_table hashtables.
 	char *plugin;
 	while ( ( plugin = plugin_list.next() ) ) {
+
 		// TODO: plugin must be an absolute path (win and unix)
 		SetPluginMappings( error, plugin );
+		
 		// Now verify that the plugin supports at least one transfer method.
-		if ( plugin_method_table->exists( plugin ) == 0 ) {
+		MyString methods = GetSupportedMethods();
+		if ( !methods.IsEmpty() ) {
+			// we support at least one plugin type		
 			I_support_filetransfer_plugins = true;
 		} 
 		else {
@@ -4552,6 +4597,7 @@ FileTransfer::SetPluginMappings( CondorError &error, const char* path )
 		}
 	}
 	my_pclose( fp );
+
 	if( ! read_something ) {
 		dprintf( D_ALWAYS,"FILETRANSFER: \"%s -classad\" did not produce any "
 			"output, ignoring\n", path );
@@ -4575,7 +4621,7 @@ FileTransfer::SetPluginMappings( CondorError &error, const char* path )
 	if ( ad->LookupString( "PluginVersion", &plugin_version ) ) {
 		MyString version = plugin_version;
 		free( plugin_version );
-		plugin_version_table->insert( version, path );
+		plugin_version_table->insert( path, version );
 	}
 
 	delete( ad );
@@ -4594,7 +4640,10 @@ FileTransfer::InsertPluginMethodMappings( MyString methods, MyString plugin )
 	while( ( method = method_list.next() ) ) {
 		dprintf( D_FULLDEBUG, "FILETRANSFER: protocol \"%s\" handled by "
 			"\"%s\"\n", methods.Value(), plugin.Value() );
-		plugin_method_table->insert( method, plugin );
+		if( plugin_method_table->insert( method, plugin ) != 0) {
+			dprintf( D_ALWAYS, "FILETRANSFER: Failed to insert method %s into "
+				"method table for plugin %s\n", method, plugin.Value() );
+		}
 	}
 }
 
