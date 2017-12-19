@@ -39,7 +39,6 @@
 #include "globus_utils.h"
 #include "filename_tools.h"
 #include "condor_holdcodes.h"
-#include "file_transfer_db.h"
 #include "mk_cache_links.h"
 #include "subsystem_info.h"
 #include "condor_url.h"
@@ -2001,7 +2000,7 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 			}
 			else if(res) {
 				// legit remap was found
-				if(!is_relative_to_cwd(remap_filename.Value())) {
+				if(fullpath(remap_filename.Value())) {
 					fullname = remap_filename;
 				}
 				else {
@@ -2432,29 +2431,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		// Write stats to disk
 		OutputFileTransferStats(thisFileStatsAd);
 
-
-
-#ifdef HAVE_EXT_POSTGRESQL
-	        file_transfer_record record;
-		record.fullname = fullname.Value();
-		record.bytes = bytes;
-		record.elapsed  = elapsed;
-    
-			// Get the name of the daemon calling DoDownload
-		char daemon[16]; daemon[15] = '\0';
-		strncpy(daemon, get_mySubSystem()->getName(), 15);
-		record.daemon = daemon;
-
-		record.sockp =s;
-		record.transfer_time = start;
-		record.delegation_method_id = delegation_method;
-		file_transfer_db(&record, &jobAd);
-#else
 		// Get rid of compiler set-but-not-used warnings on Linux
 		// Hopefully the compiler can just prune out the emitted code.
 		if (delegation_method) {}
 		if (elapsed) {}
-#endif
 	}
 
 	// go back to the state we were in before file transfer
@@ -3032,7 +3012,7 @@ FileTransfer::DoUpload(filesize_t *total_bytes, ReliSock *s)
 			is_url = true;
 			fullname = filename;
 			dprintf(D_FULLDEBUG, "DoUpload: sending %s as URL.\n", filename);
-		} else if( filename[0] != '/' && filename[0] != '\\' && filename[1] != ':' ){
+		} else if( !fullpath( filename ) ){
 			// looks like a relative path
 			fullname.formatstr("%s%c%s",Iwd,DIR_DELIM_CHAR,filename);
 		} else {
@@ -4652,7 +4632,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 	}
 
 	std::string full_src_path;
-	if( is_relative_to_cwd( src_path ) ) {
+	if( !fullpath( src_path ) ) {
 		full_src_path = iwd;
 		if( full_src_path.length() > 0 ) {
 			full_src_path += DIR_DELIM_CHAR;
@@ -4840,7 +4820,7 @@ FileTransfer::LegalPathInSandbox(char const *path,char const *sandbox) {
 	canonicalize_dir_delimiters( buf );
 	path = buf.Value();
 
-	if( !is_relative_to_cwd(path) ) {
+	if( fullpath(path) ) {
 		return false;
 	}
 
@@ -4927,7 +4907,7 @@ GetDelegatedProxyRenewalTime(ClassAd *jobAd)
 bool
 FileTransfer::outputFileIsSpooled(char const *fname) {
 	if(fname) {
-		if( is_relative_to_cwd(fname) ) {
+		if( !fullpath(fname) ) {
 			if( Iwd && SpoolSpace && strcmp(Iwd,SpoolSpace)==0 ) {
 				return true;
 			}

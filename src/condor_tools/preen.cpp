@@ -336,7 +336,9 @@ check_spool_dir()
     const char      *history, *startd_history;
 	Directory  		dir(Spool, PRIV_ROOT);
 	StringList 		well_known_list, bad_spool_files;
-	Qmgr_connection *qmgr;
+	Qmgr_connection *qmgr = NULL;
+	double			last_connection_time;
+	double			max_connection_time;
 
 	if ( ValidSpoolFiles == NULL ) {
 		dprintf( D_ALWAYS, "Not cleaning spool directory: No VALID_SPOOL_FILES defined\n");
@@ -347,9 +349,12 @@ check_spool_dir()
     history = condor_basename(history); // condor_basename never returns NULL
     history_length = strlen(history);
 
-    startd_history = param("STARTD_HISTORY");
+    startd_history = param("STARTD_HISTORY			// connect to the Q manager in read-only mode.");
    	startd_history = condor_basename(startd_history);
-   	startd_history_length = strlen(startd_history);
+	startd_history_length = strlen(startd_history);
+	   
+	last_connection_time = _condor_debug_get_time_double();
+	max_connection_time = param_integer("PREEN_MAX_SCHEDD_CONNECTION_TIME");
 
 	well_known_list.initializeFromString (ValidSpoolFiles);
 	if (UserValidSpoolFiles) {
@@ -369,22 +374,14 @@ check_spool_dir()
 		// SCHEDD.lock: High availability lock file.  Current
 		// manual recommends putting it in the spool, so avoid it.
 		"SCHEDD.lock",
-		// These are Quill-related files
-		".quillwritepassword",
-		".pgpass",
 		};
 	for (int ix = 0; ix < (int)(sizeof(valid_list)/sizeof(valid_list[0])); ++ix) {
 		if ( ! well_known_list.contains(valid_list[ix])) well_known_list.append(valid_list[ix]);
 	}
 	
-	// connect to the Q manager in read-only mode.
-	if (!(qmgr = ConnectQ (0,0,false))) {
-		dprintf( D_ALWAYS, "Not cleaning spool directory: Can't contact schedd\n" );
-		return;
-	}
-
 		// Check each file in the directory
 	while( (f = dir.Next()) ) {
+
 			// see if it's on the list
 		if( well_known_list.contains_withwildcard(f) ) {
 			good_file( Spool, f );
@@ -424,18 +421,6 @@ check_spool_dir()
 			continue;
 		}
 
-			// see if it's a legitimate checkpoint
-		if( is_ckpt_file_or_submit_digest(f) ) {
-			good_file( Spool, f );
-			continue;
-		}
-
-			// See if it's a legimate MyProxy password file
-		if ( is_myproxy_file( f ) ) {
-			good_file( Spool, f );
-			continue;
-		}
-
 			// See if it's a CCB server file
 		if ( is_ccb_file( f ) ) {
 			good_file( Spool, f );
@@ -448,25 +433,79 @@ check_spool_dir()
 				continue;
 			}
 		}
+			// If none of the previous checks succeeded, we can try a couple
+			// other checks which require an active connection to the schedd. 
+			// Establish a connection (if not already connected). If this fails
+			// for any reason, abort and don't delete any files.
+		if ( !qmgr ) {
+			if ( !( qmgr = ConnectQ (0,0,false) ) ) {
+				return;
+			}
+			last_connection_time = _condor_debug_get_time_double();
+		}
+
+			// See if it's a legitimate checkpoint. Needs an active connection
+			// to the schedd.
+		if( is_ckpt_file_or_submit_digest(f) ) {
+			good_file( Spool, f );
+			continue;
+		}
+
+			// See if it's a legimate MyProxy password file. Needs an active
+			// connection to the schedd.
+		if ( is_myproxy_file( f ) ) {
+			good_file( Spool, f );
+			continue;
+		}
 
 			// We think it's bad.  For now, just append it to a
 			// StringList, instead of actually deleting it.  This way,
 			// if DisconnectQ() fails, we can abort and not actually
 			// delete any of these files.  -Derek Wright 3/31/99
 		bad_spool_files.append( f );
+
+			// If the schedd is connected, check how long the connection has
+			// been active. If it has exceeded a maximum connection time 
+			// (defined by PREEN_MAX_SCHEDD_CONNECTION_TIME) then disconnect,
+			// and mark bad files for deletion.
+			// We also need to run this code when we hit the last file in the
+			// directory. Is there some way to know if this is the last file?
+		if ( qmgr ) {
+			if ( _condor_debug_get_time_double() > 
+							( last_connection_time + max_connection_time ) ) {
+				if ( DisconnectQ( qmgr ) ) {
+					qmgr = NULL;
+						// We were actually talking to a real queue the whole time
+						// and didn't have any errors.  So, it's now safe to
+						// delete the files we think we can delete.
+					bad_spool_files.rewind();
+					while( (f = bad_spool_files.next()) ) {
+						bad_file( Spool, f, dir );
+					}
+					bad_spool_files.clearAll();
+				} else {
+					dprintf( D_ALWAYS, 
+							"Error disconnecting from job queue, not deleting "
+								"spool files.\n" );
+				}
+			}
+		}
 	}
 
-	if( DisconnectQ(qmgr) ) {
-			// We were actually talking to a real queue the whole time
-			// and didn't have any errors.  So, it's now safe to
-			// delete the files we think we can delete.
-		bad_spool_files.rewind();
-		while( (f = bad_spool_files.next()) ) {
-			bad_file( Spool, f, dir );
+		// All done. If the schedd connection is open, disconnect and make the
+		// remaining files for deletion.
+	if ( qmgr ) {
+		if( DisconnectQ( qmgr ) ) {
+			qmgr = NULL;
+			bad_spool_files.rewind();
+			while( (f = bad_spool_files.next()) ) {
+				bad_file( Spool, f, dir );
+			}
+		} else {
+			dprintf( D_ALWAYS, 
+					"Error disconnecting from job queue, not deleting "
+						"spool files.\n" );
 		}
-	} else {
-		dprintf( D_ALWAYS, 
-				 "Error disconnecting from job queue, not deleting spool files.\n" );
 	}
 }
 
@@ -865,16 +904,12 @@ void check_tmp_dir(){
 #if !defined(WIN32)
 	if (!RmFlag) return;
 
-	const char *tmpDir = NULL;
 	bool newLock = param_boolean("CREATE_LOCKS_ON_LOCAL_DISK", true);
 	if (newLock) {
-				// create a dummy FileLock for TmpPath access
-		FileLock *lock = new FileLock(-1, NULL, NULL);
-		tmpDir = lock->GetTempPath();	
-		delete lock;
-		rec_lock_cleanup(tmpDir, 3);
-		if (tmpDir != NULL)
-			delete []tmpDir;
+		// get temp path for file locking from the FileLock class
+		MyString tmpDir;
+		FileLock::getTempPath(tmpDir);
+		rec_lock_cleanup(tmpDir.Value(), 3);
 	}
   
 #endif	
@@ -991,8 +1026,8 @@ bad_file( const char *dirpath, const char *name, Directory & dir )
 	MyString	pathname;
 	MyString	buf;
 
-	if( is_relative_to_cwd( name ) ) {
-	pathname.formatstr( "%s%c%s", dirpath, DIR_DELIM_CHAR, name );
+	if( !fullpath( name ) ) {
+		pathname.formatstr( "%s%c%s", dirpath, DIR_DELIM_CHAR, name );
 	}
 	else {
 		pathname = name;

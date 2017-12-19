@@ -2197,9 +2197,8 @@ which use DaemonCore).
 
 \label{param:CoreFileName}
 \item[\Macro{CORE\_FILE\_NAME}]
-  Defines the name of the core file created.
-  Defaults to \Expr{core.\$(SUBSYSTEM)} on Unix platforms,
-  and \Expr{core.\$(SUBSYSTEM).WIN32} on Windows platforms.   
+  Defines the name of the core file created on Windows platforms.
+  Defaults to \Expr{core.\$(SUBSYSTEM).WIN32}.
 
 \label{param:PipeBufferMax}
 \item[\Macro{PIPE\_BUFFER\_MAX}]
@@ -3950,13 +3949,12 @@ WANT_HOLD_REASON = \
 
 \label{param:IsOwner}
 \item[\Macro{IS\_OWNER}]
-  A boolean expression that defaults to being defined as
-\begin{verbatim}
-        IS_OWNER = (START =?= FALSE)
-\end{verbatim}
-  Used to describe the state of the machine with respect to its use
-  by its owner.
-  Job ClassAd attributes are not used in defining \MacroNI{IS\_OWNER},
+  A boolean expression that determines when a machine ad should enter
+  the \Expr{Owner} state.
+  While in the \Expr{Owner} state, the machine ad will not be matched to
+  any jobs.
+  The default value is \Expr{False} (never enter \Expr{Owner} state).
+  Job ClassAd attributes should not be used in defining \MacroNI{IS\_OWNER},
   as they would be \Expr{Undefined}.
 
 \label{param:StartdHistory}
@@ -6616,8 +6614,10 @@ SYSTEM_PERIODIC_REMOVE = \
 \item[\Macro{SUBMIT\_REQUIREMENT\_<Name>}]
   A boolean expression 
   evaluated in the context of the \Condor{schedd} daemon ClassAd,
-  which is the \Expr{MY.} name space and the job ClassAd, 
-  which is the \Expr{TARGET.} name space.
+  which is the \Expr{SCHEDD.} or
+  \Expr{MY.} name space and the job ClassAd, 
+  which is the \Expr{JOB.} or
+  \Expr{TARGET.} name space.
   When \Expr{False}, it causes the \Condor{schedd} to reject 
   the submission of the job or cluster of jobs. 
   \MacroNI{<Name>} corresponds to a name listed in 

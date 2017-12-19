@@ -143,9 +143,6 @@ ClassAdLog<K,AltK,AD>::filter_iterator::operator++(int)
 typedef GenericClassAdCollection<JobQueueKey, const char*,JobQueuePayload> JobQueueType;
 template class ClassAdLog<JobQueueKey,const char*,JobQueuePayload>;
 
-#include "file_sql.h"
-extern FILESQL *FILEObj;
-
 extern char *Spool;
 extern char *Name;
 extern Scheduler scheduler;
@@ -1905,6 +1902,21 @@ int QmgmtHandleSetJobFactory(int cluster_id, const char* filename, const char * 
 
 	if (digest_text && digest_text[0]) {
 
+#if 1
+		ClassAd user_ident_ad;
+		ClassAd * user_ident = NULL;
+		if (Q_SOCK) {
+			// build a ad with the user identity so we can use set_user_priv_from_ad
+			// here just like we would if the cluster ad was available.
+			user_ident_ad.Assign(ATTR_OWNER, Q_SOCK->getOwner());
+			user_ident_ad.Assign(ATTR_NT_DOMAIN, Q_SOCK->getDomain());
+			user_ident = &user_ident_ad;
+		}
+
+		// parse the submit digest and (possibly) open the itemdata file.
+		std::string errmsg;
+		JobFactory * factory = MakeJobFactory(cluster_id, digest_text, user_ident, errmsg);
+#else
 		// we have to switch to user priv before parsing the submit digest because there MAY be an itemdata file.
 		// PRAGMA_REMIND("TODO: move setpriv down into MakeJobFactory so we can skip it if there is no itemdata?")
 		priv_state priv = PRIV_UNKNOWN;
@@ -1926,6 +1938,7 @@ int QmgmtHandleSetJobFactory(int cluster_id, const char* filename, const char * 
 			set_priv(priv);
 			uninit_user_ids();
 		}
+#endif
 
 		if ( ! factory) {
 			dprintf(D_MATERIALIZE, "Failing remote SetJobFactory %d because MakeJobFactory failed : %s\n", cluster_id, errmsg.c_str());
@@ -2973,12 +2986,6 @@ int DestroyProc(int cluster_id, int proc_id)
   ScheddPluginManager::Archive(ad);
 #endif
 
-  if ( FILEObj ) {
-	  if (FILEObj->file_newEvent("History", ad) == QUILL_FAILURE) {
-		  dprintf(D_ALWAYS, "AppendHistory Logging History Event --- Error\n");
-	  }
-  }
-
   // save job ad to the log
 	bool already_in_transaction = InTransaction();
 	if( !already_in_transaction ) {
@@ -3073,6 +3080,11 @@ int DestroyCluster(int cluster_id, const char* reason)
 	// find the cluster ad and turn off the job factory
 	JobQueueCluster * clusterad = GetClusterAd(cluster_id);
 	if (clusterad && clusterad->factory) {
+		// Only the owner can delete a cluster
+		if ( Q_SOCK && !OwnerCheck(clusterad, Q_SOCK->getOwner() )) {
+			errno = EACCES;
+			return -1;
+		}
 		PauseJobFactory(clusterad->factory, mmClusterRemoved);
 	}
 
@@ -3132,12 +3144,6 @@ int DestroyCluster(int cluster_id, const char* reason)
 #if defined(HAVE_DLOPEN) || defined(WIN32)
 				ScheddPluginManager::Archive(ad);
 #endif
-
-				if ( FILEObj ) {
-					if (FILEObj->file_newEvent("History", ad) == QUILL_FAILURE) {
-						dprintf(D_ALWAYS, "AppendHistory Logging History Event --- Error\n");
-					}
-		  		}
 
   // save job ad to the log
 
@@ -4198,7 +4204,7 @@ ScheduleJobQueueLogFlush()
 {
 		// Flush the log after a short delay so that we avoid spending
 		// a lot of time waiting for the disk but we also make things
-		// visible to JobRouter and Quill within a maximum delay.
+		// visible to JobRouter within a maximum delay.
 	if( flush_job_queue_log_timer_id == -1 ) {
 		flush_job_queue_log_timer_id = daemonCore->Register_Timer(
 			flush_job_queue_log_delay,
@@ -4809,9 +4815,17 @@ int CommitTransactionInternal( bool durable, CondorError * errorStack ) {
 							std::string submit_digest;
 							if (clusterad->LookupString(ATTR_JOB_MATERIALIZE_DIGEST_FILE, submit_digest)) {
 								ASSERT( ! clusterad->factory);
+
+								// we need to let MakeJobFactory know whether the digest has been spooled or not
+								// because it needs to know whether to impersonate the user or not.
+								MyString spooled_filename;
+								GetSpooledSubmitDigestPath(spooled_filename, clusterad->jid.cluster, Spool);
+								bool spooled_digest = YourStringNoCase(spooled_filename) == submit_digest;
+
 								std::string errmsg;
-								clusterad->factory = MakeJobFactory(clusterad, submit_digest.c_str(), errmsg);
+								clusterad->factory = MakeJobFactory(clusterad, submit_digest.c_str(), spooled_digest, errmsg);
 								if ( ! clusterad->factory) {
+									chomp(errmsg);
 									setJobFactoryPauseAndLog(clusterad, mmInvalid, 0, errmsg);
 								}
 							}
@@ -6979,8 +6993,15 @@ void load_job_factories()
 
 		submit_digest.clear();
 		if (clusterad->LookupString(ATTR_JOB_MATERIALIZE_DIGEST_FILE, submit_digest)) {
+
+			// we need to let MakeJobFactory know whether the digest has been spooled or not
+			// because it needs to know whether to impersonate the user or not.
+			MyString spooled_filename;
+			GetSpooledSubmitDigestPath(spooled_filename, clusterad->jid.cluster, Spool);
+			bool spooled_digest = YourStringNoCase(spooled_filename) == submit_digest;
+
 			std::string errmsg;
-			clusterad->factory = MakeJobFactory(clusterad, submit_digest.c_str(), errmsg);
+			clusterad->factory = MakeJobFactory(clusterad, submit_digest.c_str(), spooled_digest, errmsg);
 			if (clusterad->factory) {
 				++num_loaded;
 			} else {
@@ -6989,6 +7010,7 @@ void load_job_factories()
 				// if the factory failed to load, put it into a non-durable pause mode
 				// a condor_q -factory will show the mmInvalid state, but it doesn't get reflected
 				// in the job queue
+				chomp(errmsg);
 				setJobFactoryPauseAndLog(clusterad, mmInvalid, 0, errmsg);
 			}
 		}

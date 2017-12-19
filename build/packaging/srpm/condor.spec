@@ -92,6 +92,13 @@
 %endif
 %endif
 
+# Don't bother building CREAM for 32-bit RHEL7
+%ifarch %{ix86}
+%if 0%{?rhel} >= 7
+%define cream 0
+%endif
+%endif
+
 %if 0%{?osg} && 0%{?rhel} == 7
 %define aviary 0
 %define std_univ 0
@@ -231,7 +238,6 @@ BuildRequires: cmake
 BuildRequires: %_bindir/flex
 BuildRequires: %_bindir/byacc
 BuildRequires: pcre-devel
-#BuildRequires: postgresql-devel
 BuildRequires: openssl-devel
 BuildRequires: krb5-devel
 BuildRequires: libvirt-devel
@@ -352,6 +358,8 @@ Requires: systemd
 
 BuildRequires: transfig
 BuildRequires: latex2html
+# We don't build the manual (yet)
+#BuildRequires: texlive-epstopdf
 
 Requires: /usr/sbin/sendmail
 Requires: condor-classads = %{version}-%{release}
@@ -657,15 +665,17 @@ Includes all the files necessary to support running standard universe jobs.
 %endif
 
 %if %uw_build
-%package static-shadow
-Summary: Statically linked condow_shadow and condor_master binaries
+
+%ifarch %{ix86}
+%package small-shadow
+Summary: 32-bit condor_shadow binary
 Group: Applications/System
 
-%description static-shadow
-Provides condor_shadow_s and condor_master_s, which have all the globus
-libraries statically linked in and, as a result, have a smaller private
+%description small-shadow
+Provides the 32-bit condor_shadow_s, which has a smaller private
 memory footprint per process.  This makes it possible to run more shadows
 on a single machine at once when memory is the limiting factor.
+%endif
 
 %package externals
 Summary: External packages built into HTCondor
@@ -800,7 +810,11 @@ cmake \
        -DBUILD_TESTING:BOOL=FALSE \
        -DHAVE_BACKFILL:BOOL=FALSE \
        -DHAVE_BOINC:BOOL=FALSE \
-       -DWITH_POSTGRESQL:BOOL=FALSE \
+%if %cream
+       -DWITH_CREAM:BOOL=TRUE \
+%else
+       -DWITH_CREAM:BOOL=FALSE \
+%endif
        -DWANT_LEASE_MANAGER:BOOL=FALSE \
        -DPLATFORM:STRING=${NMI_PLATFORM:-unknown} \
        -DCMAKE_VERBOSE_MAKEFILE=ON \
@@ -838,14 +852,11 @@ cmake \
 %else
        -DWITH_GSOAP:BOOL=FALSE \
 %endif
-       -DWITH_POSTGRESQL:BOOL=FALSE \
        -DHAVE_KBDD:BOOL=TRUE \
        -DHAVE_HIBERNATION:BOOL=TRUE \
        -DWANT_LEASE_MANAGER:BOOL=FALSE \
        -DWANT_HDFS:BOOL=FALSE \
-       -DWANT_QUILL:BOOL=FALSE \
        -DWITH_ZLIB:BOOL=FALSE \
-       -DWITH_POSTGRESQL:BOOL=FALSE \
        -DWANT_CONTRIB:BOOL=ON \
        -DWITH_PIGEON:BOOL=FALSE \
 %if %plumage
@@ -1012,9 +1023,6 @@ rm -f %{buildroot}/%{_mandir}/man1/condor_configure.1
 rm -f %{buildroot}/%{_mandir}/man1/condor_master_off.1
 rm -f %{buildroot}/%{_mandir}/man1/condor_reconfig_schedd.1
 
-# not packaging quill bits
-rm -f %{buildroot}/%{_mandir}/man1/condor_load_history.1
-
 # this one got removed but the manpage was left around
 rm -f %{buildroot}/%{_mandir}/man1/condor_glidein.1
 
@@ -1081,6 +1089,9 @@ rm -rf %{buildroot}%{_sbindir}/condor_install
 rm -rf %{buildroot}%{_sbindir}/condor_install_local
 rm -rf %{buildroot}%{_sbindir}/condor_local_start
 rm -rf %{buildroot}%{_sbindir}/condor_local_stop
+%ifarch x86_64
+rm -rf %{buildroot}%{_sbindir}/condor_shadow_s
+%endif
 rm -rf %{buildroot}%{_sbindir}/condor_startd_factory
 rm -rf %{buildroot}%{_sbindir}/condor_vm_vmware.pl
 rm -rf %{buildroot}%{_sbindir}/filelock_midwife
@@ -1461,7 +1472,6 @@ rm -rf %{buildroot}
 %_sbindir/nordugrid_gahp
 %_sbindir/gce_gahp
 %if %uw_build
-%_sbindir/condor_master_s
 %_sbindir/boinc_gahp
 %endif
 %_libexecdir/condor/condor_gpu_discovery
@@ -1763,8 +1773,11 @@ rm -rf %{buildroot}
 %endif
 
 %if %uw_build
-%files static-shadow
+
+%ifarch %{ix86}
+%files small-shadow
 %{_sbindir}/condor_shadow_s
+%endif
 
 %files external-libs
 %dir %_libdir/condor
