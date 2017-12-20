@@ -100,11 +100,18 @@ Claim::Claim( Resource* res_ip, ClaimType claim_type, int lease_duration )
 
 
 Claim::~Claim()
-{	
+{
 	if( c_type == CLAIM_COD ) {
-		dprintf( D_FULLDEBUG, "Deleted claim %s (owner '%s')\n", 
-				 c_id->id(), 
-				 c_client->owner() ? c_client->owner() : "unknown" );  
+		dprintf( D_FULLDEBUG, "Deleted claim %s (owner '%s')\n",
+				 c_id->id(),
+				 c_client->owner() ? c_client->owner() : "unknown" );
+	}
+
+	// The resources assigned to this claim must have been freed by now.
+	if( c_rip != NULL && c_rip->r_classad != NULL ) {
+		resmgr->adlist_unset_monitors( c_rip->r_id, c_rip->r_classad );
+	} else {
+		dprintf( D_ALWAYS, "Unable to unset monitors in claim destructor.  The StartOfJob* attributes will be stale.  (%p, %p)\n", c_rip, c_rip == NULL ? NULL : c_rip->r_classad );
 	}
 
 		// Cancel any daemonCore events associated with this claim

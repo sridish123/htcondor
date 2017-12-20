@@ -41,6 +41,7 @@ class StartdNamedClassAd : public NamedClassAd
 	bool isResourceMonitor();
 	static bool Merge( ClassAd * to, ClassAd * from );
 	void reset_monitor();
+	void unset_monitor();
 
   private:
 	void Aggregate( ClassAd * to, ClassAd * from );

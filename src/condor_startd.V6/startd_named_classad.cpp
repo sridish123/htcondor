@@ -215,3 +215,35 @@ StartdNamedClassAd::reset_monitor() {
 		}
 	}
 }
+
+void
+StartdNamedClassAd::unset_monitor() {
+	if(! isResourceMonitor()) {
+		dprintf( D_ALWAYS, "StartdNamedClassAd::unset_monitor(): ignoring request to reset monitor of non-monitor.\n" );
+		return;
+	}
+
+	ClassAd * from = this->GetAd();
+	if( from == NULL ) { return; }
+
+	const StartdCronJobParams & params = m_job.Params();
+	for( auto i = from->begin(); i != from->end(); ++i ) {
+		std::string name = i->first;
+		ExprTree * expr = i->second;
+
+		if( params.isMetric( name ) ) {
+			double initialValue;
+			classad::Value v;
+			expr->Evaluate( v );
+			if(! v.IsRealValue( initialValue )) {
+				dprintf( D_ALWAYS, "Metric %s in job %s is not a real value.  Ignoring, but you probably shouldn't.\n", name.c_str(), params.GetName() );
+				continue;
+			}
+
+			std::string jobAttributeName;
+			formatstr( jobAttributeName, "StartOfJob%s", name.c_str() );
+			dprintf( D_ALWAYS, "unset_monitor(): removing %s\n", jobAttributeName.c_str() );
+			from->Delete( jobAttributeName );
+		}
+	}
+}

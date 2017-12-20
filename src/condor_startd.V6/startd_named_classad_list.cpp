@@ -192,3 +192,20 @@ StartdNamedClassAdList::reset_monitors( unsigned r_id, ClassAd * forWhom ) {
 	}
 
 }
+
+void
+StartdNamedClassAdList::unset_monitors( unsigned r_id, ClassAd * forWhom ) {
+	std::list<NamedClassAd *>::iterator iter;
+	for( iter = m_ads.begin(); iter != m_ads.end(); iter++ ) {
+		NamedClassAd		*nad = *iter;
+		StartdNamedClassAd	*sad = dynamic_cast<StartdNamedClassAd*>(nad);
+		ASSERT( sad );
+
+		if(! sad->isResourceMonitor()) { continue; }
+		const char * match_attr = NULL;
+		if( sad->InSlotList( r_id ) && sad->ShouldMergeInto( forWhom, & match_attr ) ) {
+			sad->unset_monitor();
+		}
+	}
+
+}
