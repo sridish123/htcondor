@@ -524,6 +524,12 @@ private:
 			job submitter. (e.g. the job's executable itself)
 		*/
 	StringList m_removed_output_files;
+
+		/** A list of attributes to copy from the update ad to the job
+			ad every time we update the shadow.
+		*/
+	bool m_job_update_attrs_set;
+	StringList m_job_update_attrs;
 };
 
 

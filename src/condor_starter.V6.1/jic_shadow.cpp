@@ -66,7 +66,7 @@ const char* CHIRP_CONFIG_FILENAME = ".chirp.config";
 #endif
 
 JICShadow::JICShadow( const char* shadow_name ) : JobInfoCommunicator(),
-	m_wrote_chirp_config(false)
+	m_wrote_chirp_config(false), m_job_update_attrs_set(false)
 {
 	if( ! shadow_name ) {
 		EXCEPT( "Trying to instantiate JICShadow with no shadow name!" );
@@ -1995,6 +1995,38 @@ JICShadow::publishUpdateAd( ClassAd* ad )
 	// Note they should not go to the starter!
 	ad->Update(m_delayed_updates);
 	m_delayed_updates.Clear();
+
+	// Pull the configured list of attributes from the slot's update ad.
+	// If any of them have changed since the last time, return true;
+	// the shadow can deal with rate-limiting updates to the schedd.
+	if(! m_job_update_attrs_set) {
+		std::string jobUpdateAttrs;
+		if( param( jobUpdateAttrs, "JOB_UPDATE_ATTRS" ) ) {
+			m_job_update_attrs.initializeFromString( jobUpdateAttrs.c_str() );
+			m_job_update_attrs_set = true;
+		}
+	}
+
+	if(! m_job_update_attrs.isEmpty()) {
+		m_job_update_attrs.rewind();
+		const char * attrName = NULL;
+
+		std::string updateAdPath = ".update.ad";
+		FILE * updateAdFile = safe_fopen_wrapper_follow( updateAdPath.c_str(), "r" );
+		if( updateAdFile ) {
+			int isEOF, error, empty;
+			ClassAd updateAd( updateAdFile, "\n", isEOF, error, empty );
+			fclose( updateAdFile );
+
+			while( (attrName = m_job_update_attrs.next()) != NULL ) {
+				// dprintf( D_ALWAYS, "Updating job ad: %s\n", attrName );
+				ad->CopyAttribute( attrName, & updateAd );
+			}
+		} else {
+			dprintf( D_ALWAYS, "Failed to open '%s' to read update ad: %s (%d).\n",
+				updateAdPath.c_str(), strerror(errno), errno );
+		}
+	}
 
 	return retval;
 }

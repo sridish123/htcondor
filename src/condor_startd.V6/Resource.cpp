@@ -2371,6 +2371,27 @@ Resource::publish( ClassAd* cap, amask_t mask )
 #if defined(ADD_TARGET_SCOPING)
 	cap->AddTargetRefs( TargetJobAttrs, false );
 #endif
+
+	// Don't bother to write an ad to disk that won't include the extras ads.
+	// Also only write the ad to disk when the claim has a ClassAd and the
+	// starter knows where the execute directory is.  Empirically, this set
+	// of conditions also ensures that reset_monitor() has been called, so
+	// the first ad we write will include the StartOfJob* attribute(s).
+	if( IS_PUBLIC(mask) && IS_UPDATE(mask)
+	  && r_cur && r_cur->ad() && r_cur->executeDir() ) {
+		std::string updateAdPath;
+		formatstr( updateAdPath, "%s/dir_%d/.update.ad", r_cur->executeDir(), r_cur->starterPID() );
+		dprintf( D_ALWAYS, "Writing update ad to %s\n", updateAdPath.c_str() );
+
+		FILE * updateAdFile = safe_fopen_wrapper_follow( updateAdPath.c_str(), "w" );
+		if( updateAdFile ) {
+			fPrintAd( updateAdFile, * cap, true );
+			fclose( updateAdFile );
+		} else {
+			dprintf( D_ALWAYS, "Failed to open '%s' for writing update ad: %s (%d).\n",
+				updateAdPath.c_str(), strerror( errno ), errno );
+		}
+	}
 }
 
 void

@@ -262,6 +262,9 @@ public:
 	bool verifyCODAttrs( ClassAd* req );
 	bool publishStarterAd( ClassAd* ad );
 
+	const char * executeDir() { if( c_starter ) { return c_starter->executeDir(); } else { return NULL; } }
+	pid_t starterPID() { if( c_starter ) { return c_starter->pid(); } else { return 0; } }
+
 	bool periodicCheckpoint( void );
 
 	bool ownerMatches( const char* owner );
