@@ -170,9 +170,14 @@ StartdNamedClassAdList::Publish( ClassAd *merged_ad, unsigned r_id )
 			dPrintAd( D_FULLDEBUG, accumulator );
 		}
 	}
-	StartdNamedClassAd::Merge( merged_ad, & accumulator );
 
-	// Done
+	// We don't filter out the (raw) Uptime* metrics here, because the
+	// starter needs them to compute the (per-job) *Usage metrics.  Instead,
+	// we filter them out in Resource::do_update().
+
+	dprintf( D_ALWAYS, "FIXME: compute per-slot recent metrics.\n" );
+
+	StartdNamedClassAd::Merge( merged_ad, & accumulator );
 	return 0;
 }
 

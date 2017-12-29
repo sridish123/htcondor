@@ -9,8 +9,8 @@ unsigned debug = 0;
 unsigned reportInterval = 10;
 
 int compareSamples( const void * vpA, const void * vpB ) {
-	nvmlSample_t * a = (nvmlSample_t *)vpA;
-	nvmlSample_t * b = (nvmlSample_t *)vpB;
+	const nvmlSample_t * a = (const nvmlSample_t *)vpA;
+	const nvmlSample_t * b = (const nvmlSample_t *)vpB;
 	if( a->timeStamp < b->timeStamp ) {
 		return -1;
 	} else if( a->timeStamp == b->timeStamp ) {
@@ -71,7 +71,8 @@ nvmlReturn_t getElapsedTimeForDevice( nvmlDevice_t d, unsigned long long * lastS
 	return NVML_SUCCESS;
 }
 
-int main( int argc, char ** argv ) {
+// int main( int argc, char ** argv ) {
+int main() {
 	nvmlReturn_t r = nvmlInit();
 	if( r != NVML_SUCCESS ) {
 		fprintf( stderr, "nvmlInit() failed, aborting.\n" );
@@ -150,7 +151,7 @@ int main( int argc, char ** argv ) {
 			for( unsigned i = 0; i < deviceCount; ++i ) {
 				// fprintf( stdout, "SlotMergeConstraint = AssignedGPUs == \"CUDA%u\"\n", i );
 				fprintf( stdout, "SlotMergeConstraint = StringListMember( \"CUDA%u\", AssignedGPUs )\n", i );
-				fprintf( stdout, "GPUsUsage = %.6f\n", elapsedTimes[i] / 1000000.0 );
+				fprintf( stdout, "UptimeGPUsSeconds = %.6f\n", elapsedTimes[i] / 1000000.0 );
 				fprintf( stdout, "- GPUsSlot%u\n", i );
 				fflush( stdout );
 

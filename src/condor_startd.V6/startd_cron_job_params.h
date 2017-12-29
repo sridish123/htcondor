@@ -49,16 +49,10 @@ class StartdCronJobParams : public ClassAdCronJobParams
 	bool Initialize( void );
 	bool InSlotList( unsigned slot ) const;
 
-	bool isMetric( const std::string & attributeName ) const {
-		return metrics.find( attributeName ) != metrics.end();
-	}
-	bool addMetric( const char * metricType, const char * attributeName );
-	bool getMetric( const std::string & attributeName, Metric & m ) const {
-		auto i = metrics.find( attributeName );
-		if( i == metrics.end() ) { return false; }
-		m = i->second;
-		return true;
-	}
+	bool isMetric( const std::string & attributeName ) const;
+	bool addMetric( const char * metricType, const char * resourceName );
+	bool getMetric( const std::string & attributeName, Metric & m ) const;
+	static bool getResourceNameFromAttributeName( const std::string & attributeName, std::string & resourceName );
 	bool isResourceMonitor( void ) const { return metrics.size() > 0; }
 
   private:

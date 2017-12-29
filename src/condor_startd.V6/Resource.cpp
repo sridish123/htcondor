@@ -1301,6 +1301,27 @@ Resource::do_update( void )
 #endif
 #endif
 
+		// Modifying the ClassAds we're sending in ResMgr::send_update()
+		// would be evil, so do the collector filtering here.
+	std::vector< std::string > deleteList;
+	for( auto i = public_ad.begin(); i != public_ad.end(); ++i ) {
+		const std::string & name = i->first;
+		//
+		// Arguably, this code here and the code in Resource::publish()
+		// would benefit from a startd-global (?) list of the names of all
+		// custom global resources; that way, we could confirm that this
+		// Uptime* attribute actually corresponded to a custom global
+		// resource and wasn't something from somewhere else (for instance,
+		// some other startd cron job).
+		//
+		if( name.find( "Uptime" ) == 0 ) {
+			deleteList.push_back( name );
+		}
+	}
+	for( auto i = deleteList.begin(); i != deleteList.end(); ++i ) {
+		public_ad.Delete( * i );
+	}
+
 		// Send class ads to collector(s)
 	rval = resmgr->send_update( UPDATE_STARTD_AD, &public_ad,
 								&private_ad, true );
@@ -2385,6 +2406,40 @@ Resource::publish( ClassAd* cap, amask_t mask )
 
 		FILE * updateAdFile = safe_fopen_wrapper_follow( updateAdPath.c_str(), "w" );
 		if( updateAdFile ) {
+			// For now, instead of poking around for all the metric names
+			// (or worse, reparsing them from the config file), just assume
+			// that every pair of StartOfJobX and X attributes should result
+			// in an XUsage attribute.  Otherwise, for each defined metric,
+			// replace the corresponding StartOfJob* attribute with our
+			// computation of the corresponding *Usage attribute.
+			std::vector< std::string > deleteList;
+			for( auto i = cap->begin(); i != cap->end(); ++i ) {
+				const std::string & name = i->first;
+
+				if( name.find( "StartOfJob" ) != 0 ) { continue; }
+				std::string uptimeName = name.substr( 10 );
+				std::string usageName;
+				if(! StartdCronJobParams::getResourceNameFromAttributeName( uptimeName, usageName )) { continue; }
+				usageName += "Usage";
+
+
+				std::string usageExpr;
+				formatstr( usageExpr, "(%s - %s)/(time() - JobStart)",
+					uptimeName.c_str(), name.c_str() );
+
+				classad::Value v;
+				if(! cap->EvaluateExpr( usageExpr, v )) { continue; }
+				double usageValue;
+				if(! v.IsRealValue( usageValue )) { continue; }
+				cap->InsertAttr( usageName, usageValue );
+
+				deleteList.push_back( uptimeName );
+				deleteList.push_back( name );
+			}
+			for( auto i = deleteList.begin(); i != deleteList.end(); ++i ) {
+				cap->Delete( *i );
+			}
+
 			fPrintAd( updateAdFile, * cap, true );
 			fclose( updateAdFile );
 		} else {

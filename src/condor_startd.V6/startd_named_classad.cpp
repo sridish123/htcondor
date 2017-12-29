@@ -132,7 +132,7 @@ StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 
 	const StartdCronJobParams & params = m_job.Params();
 	for( auto i = from->begin(); i != from->end(); ++i ) {
-		std::string name = i->first;
+		const std::string & name = i->first;
 		ExprTree * expr = i->second;
 
 		StartdCronJobParams::Metric metric;
@@ -196,7 +196,7 @@ StartdNamedClassAd::reset_monitor() {
 
 	const StartdCronJobParams & params = m_job.Params();
 	for( auto i = from->begin(); i != from->end(); ++i ) {
-		std::string name = i->first;
+		const std::string & name = i->first;
 		ExprTree * expr = i->second;
 
 		if( params.isMetric( name ) ) {
@@ -204,7 +204,7 @@ StartdNamedClassAd::reset_monitor() {
 			classad::Value v;
 			expr->Evaluate( v );
 			if(! v.IsRealValue( initialValue )) {
-				dprintf( D_ALWAYS, "Metric %s in job %s is not a real value.  Ignoring, but you probably shouldn't.\n", name.c_str(), params.GetName() );
+				dprintf( D_ALWAYS, "Metric %s in job %s is not a floating-point value.  Ignoring, but you probably shouldn't.\n", name.c_str(), params.GetName() );
 				continue;
 			}
 
