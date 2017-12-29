@@ -1996,17 +1996,41 @@ JICShadow::publishUpdateAd( ClassAd* ad )
 	ad->Update(m_delayed_updates);
 	m_delayed_updates.Clear();
 
-	// Pull the configured list of attributes from the slot's update ad.
-	// If any of them have changed since the last time, return true;
-	// the shadow can deal with rate-limiting updates to the schedd.
+	// Construct the list of attributes to pull from the slot's update ad.
+	// Arguably, this list should be passed to the starter from the startd,
+	// because you can theoretically run more than one, but we'll ignore
+	// that for now (and the startd doesn't produce the list itself).
 	if(! m_job_update_attrs_set) {
-		std::string jobUpdateAttrs;
-		if( param( jobUpdateAttrs, "JOB_UPDATE_ATTRS" ) ) {
-			m_job_update_attrs.initializeFromString( jobUpdateAttrs.c_str() );
-			m_job_update_attrs_set = true;
+		std::string scjl;
+		if( param( scjl, "STARTD_CRON_JOBLIST" ) ) {
+			StringList jobs( scjl.c_str() );
+			for( char * metricName = jobs.first(); metricName != NULL; metricName = jobs.next() ) {
+				std::string metrics;
+				std::string paramName;
+				formatstr( paramName, "STARTD_CRON_%s_METRICS", metricName );
+				if( param( metrics, paramName.c_str() ) ) {
+					StringList pairs( metrics.c_str() );
+					for( char * pair = pairs.first(); pair != NULL; pair = pairs.next() ) {
+						StringList tn( pair, ":" );
+						/* char * metricType = */ tn.first();
+						char * resourceName = tn.next();
+
+						std::string metricName;
+						formatstr( metricName, "%sUsage", resourceName );
+						m_job_update_attrs.append( metricName.c_str() );
+
+						formatstr( metricName, "Recent%sUsage", resourceName );
+						m_job_update_attrs.append( metricName.c_str() );
+					}
+				}
+			}
 		}
+		m_job_update_attrs_set = true;
 	}
 
+	// Pull the list of attributes from the slot's update ad.
+	// FIXME: If any of them have changed since the last time, return true;
+	// the shadow can deal with rate-limiting updates to the schedd.
 	if(! m_job_update_attrs.isEmpty()) {
 		m_job_update_attrs.rewind();
 		const char * attrName = NULL;
