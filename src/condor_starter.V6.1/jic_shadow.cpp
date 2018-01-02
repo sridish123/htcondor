@@ -1939,6 +1939,67 @@ JICShadow::getDelayedUpdate( const std::string &name )
 }
 
 bool
+JICShadow::publishStartdUpdates( ClassAd* ad ) {
+	// Construct the list of attributes to pull from the slot's update ad.
+	// Arguably, this list should be passed to the starter from the startd,
+	// because you can theoretically run more than one, but we'll ignore
+	// that for now (and the startd doesn't produce the list itself).
+	if(! m_job_update_attrs_set) {
+		std::string scjl;
+		if( param( scjl, "STARTD_CRON_JOBLIST" ) ) {
+			StringList jobs( scjl.c_str() );
+			for( char * metricName = jobs.first(); metricName != NULL; metricName = jobs.next() ) {
+				std::string metrics;
+				std::string paramName;
+				formatstr( paramName, "STARTD_CRON_%s_METRICS", metricName );
+				if( param( metrics, paramName.c_str() ) ) {
+					StringList pairs( metrics.c_str() );
+					for( char * pair = pairs.first(); pair != NULL; pair = pairs.next() ) {
+					StringList tn( pair, ":" );
+						/* char * metricType = */ tn.first();
+						char * resourceName = tn.next();
+
+						std::string metricName;
+						formatstr( metricName, "%sUsage", resourceName );
+						m_job_update_attrs.append( metricName.c_str() );
+
+						formatstr( metricName, "Recent%sUsage", resourceName );
+						m_job_update_attrs.append( metricName.c_str() );
+					}
+				}
+			}
+		}
+		m_job_update_attrs_set = true;
+	}
+
+	// Pull the list of attributes from the slot's update ad.
+	bool published = false;
+	if(! m_job_update_attrs.isEmpty()) {
+		m_job_update_attrs.rewind();
+		const char * attrName = NULL;
+
+		std::string updateAdPath = ".update.ad";
+		FILE * updateAdFile = safe_fopen_wrapper_follow( updateAdPath.c_str(), "r" );
+		if( updateAdFile ) {
+			int isEOF, error, empty;
+			ClassAd updateAd( updateAdFile, "\n", isEOF, error, empty );
+			fclose( updateAdFile );
+
+			while( (attrName = m_job_update_attrs.next()) != NULL ) {
+				// dprintf( D_ALWAYS, "Updating job ad: %s\n", attrName );
+				ad->CopyAttribute( attrName, & updateAd );
+				published = true;
+			}
+		} else {
+			dprintf( D_ALWAYS, "Failed to open '%s' to read update ad: %s (%d).\n",
+				updateAdPath.c_str(), strerror(errno), errno );
+		}
+	}
+
+	return published;
+}
+
+bool
 JICShadow::publishUpdateAd( ClassAd* ad )
 {
 	// These are updates taken from Chirp
@@ -1996,62 +2057,7 @@ JICShadow::publishUpdateAd( ClassAd* ad )
 	ad->Update(m_delayed_updates);
 	m_delayed_updates.Clear();
 
-	// Construct the list of attributes to pull from the slot's update ad.
-	// Arguably, this list should be passed to the starter from the startd,
-	// because you can theoretically run more than one, but we'll ignore
-	// that for now (and the startd doesn't produce the list itself).
-	if(! m_job_update_attrs_set) {
-		std::string scjl;
-		if( param( scjl, "STARTD_CRON_JOBLIST" ) ) {
-			StringList jobs( scjl.c_str() );
-			for( char * metricName = jobs.first(); metricName != NULL; metricName = jobs.next() ) {
-				std::string metrics;
-				std::string paramName;
-				formatstr( paramName, "STARTD_CRON_%s_METRICS", metricName );
-				if( param( metrics, paramName.c_str() ) ) {
-					StringList pairs( metrics.c_str() );
-					for( char * pair = pairs.first(); pair != NULL; pair = pairs.next() ) {
-						StringList tn( pair, ":" );
-						/* char * metricType = */ tn.first();
-						char * resourceName = tn.next();
-
-						std::string metricName;
-						formatstr( metricName, "%sUsage", resourceName );
-						m_job_update_attrs.append( metricName.c_str() );
-
-						formatstr( metricName, "Recent%sUsage", resourceName );
-						m_job_update_attrs.append( metricName.c_str() );
-					}
-				}
-			}
-		}
-		m_job_update_attrs_set = true;
-	}
-
-	// Pull the list of attributes from the slot's update ad.
-	// FIXME: If any of them have changed since the last time, return true;
-	// the shadow can deal with rate-limiting updates to the schedd.
-	if(! m_job_update_attrs.isEmpty()) {
-		m_job_update_attrs.rewind();
-		const char * attrName = NULL;
-
-		std::string updateAdPath = ".update.ad";
-		FILE * updateAdFile = safe_fopen_wrapper_follow( updateAdPath.c_str(), "r" );
-		if( updateAdFile ) {
-			int isEOF, error, empty;
-			ClassAd updateAd( updateAdFile, "\n", isEOF, error, empty );
-			fclose( updateAdFile );
-
-			while( (attrName = m_job_update_attrs.next()) != NULL ) {
-				// dprintf( D_ALWAYS, "Updating job ad: %s\n", attrName );
-				ad->CopyAttribute( attrName, & updateAd );
-			}
-		} else {
-			dprintf( D_ALWAYS, "Failed to open '%s' to read update ad: %s (%d).\n",
-				updateAdPath.c_str(), strerror(errno), errno );
-		}
-	}
-
+	if( publishStartdUpdates( ad ) ) { return true; }
 	return retval;
 }
 
@@ -2092,7 +2098,10 @@ JICShadow::publishJobExitAd( ClassAd* ad )
 		// walk through all the UserProcs and have those publish, as
 		// well.  It returns true if there was anything published,
 		// false if not.
-	return Starter->publishJobExitAd( ad );
+	bool retval = Starter->publishJobExitAd( ad );
+
+	if( publishStartdUpdates( ad ) ) { return true; }
+	return retval;
 }
 
 

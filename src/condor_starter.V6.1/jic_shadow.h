@@ -259,10 +259,13 @@ private:
 			the shadow
 			@param ad ClassAd pointer to publish into
 			@return true if success, false if failure
-		*/ 
+		*/
 	bool publishUpdateAd( ClassAd* ad );
 
 	bool publishJobExitAd( ClassAd* ad );
+
+	// Should only be called from publish[Update|JobExit]Ad().
+	bool publishStartdUpdates( ClassAd* ad );
 
 		/** Send an update ClassAd to the shadow.  The "insure_update"
 			just means do we make sure the update gets there.  It has
