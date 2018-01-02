@@ -2415,23 +2415,28 @@ Resource::publish( ClassAd* cap, amask_t mask )
 			std::vector< std::string > deleteList;
 			for( auto i = cap->begin(); i != cap->end(); ++i ) {
 				const std::string & name = i->first;
-
 				if( name.find( "StartOfJob" ) != 0 ) { continue; }
-				std::string uptimeName = name.substr( 10 );
+
 				std::string usageName;
+				std::string uptimeName = name.substr( 10 );
 				if(! StartdCronJobParams::getResourceNameFromAttributeName( uptimeName, usageName )) { continue; }
 				usageName += "Usage";
 
+				if( name.rfind( "Seconds" ) == name.length() - 7 ) {
+					std::string usageExpr;
+					formatstr( usageExpr, "(%s - %s)/(time() - JobStart)",
+						uptimeName.c_str(), name.c_str() );
 
-				std::string usageExpr;
-				formatstr( usageExpr, "(%s - %s)/(time() - JobStart)",
-					uptimeName.c_str(), name.c_str() );
-
-				classad::Value v;
-				if(! cap->EvaluateExpr( usageExpr, v )) { continue; }
-				double usageValue;
-				if(! v.IsRealValue( usageValue )) { continue; }
-				cap->InsertAttr( usageName, usageValue );
+					classad::Value v;
+					if(! cap->EvaluateExpr( usageExpr, v )) { continue; }
+					double usageValue;
+					if(! v.IsRealValue( usageValue )) { continue; }
+					cap->InsertAttr( usageName, usageValue );
+				} else if( name.rfind( "PeakUsage" ) == name.length() - 9 ) {
+					cap->CopyAttribute( usageName.c_str(), name.c_str() );
+				} else {
+					continue;
+				}
 
 				deleteList.push_back( uptimeName );
 				deleteList.push_back( name );
