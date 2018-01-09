@@ -2197,9 +2197,8 @@ which use DaemonCore).
 
 \label{param:CoreFileName}
 \item[\Macro{CORE\_FILE\_NAME}]
-  Defines the name of the core file created.
-  Defaults to \Expr{core.\$(SUBSYSTEM)} on Unix platforms,
-  and \Expr{core.\$(SUBSYSTEM).WIN32} on Windows platforms.   
+  Defines the name of the core file created on Windows platforms.
+  Defaults to \Expr{core.\$(SUBSYSTEM).WIN32}.
 
 \label{param:PipeBufferMax}
 \item[\Macro{PIPE\_BUFFER\_MAX}]
@@ -3950,13 +3949,12 @@ WANT_HOLD_REASON = \
 
 \label{param:IsOwner}
 \item[\Macro{IS\_OWNER}]
-  A boolean expression that defaults to being defined as
-\begin{verbatim}
-        IS_OWNER = (START =?= FALSE)
-\end{verbatim}
-  Used to describe the state of the machine with respect to its use
-  by its owner.
-  Job ClassAd attributes are not used in defining \MacroNI{IS\_OWNER},
+  A boolean expression that determines when a machine ad should enter
+  the \Expr{Owner} state.
+  While in the \Expr{Owner} state, the machine ad will not be matched to
+  any jobs.
+  The default value is \Expr{False} (never enter \Expr{Owner} state).
+  Job ClassAd attributes should not be used in defining \MacroNI{IS\_OWNER},
   as they would be \Expr{Undefined}.
 
 \label{param:StartdHistory}
@@ -6616,8 +6614,10 @@ SYSTEM_PERIODIC_REMOVE = \
 \item[\Macro{SUBMIT\_REQUIREMENT\_<Name>}]
   A boolean expression 
   evaluated in the context of the \Condor{schedd} daemon ClassAd,
-  which is the \Expr{MY.} name space and the job ClassAd, 
-  which is the \Expr{TARGET.} name space.
+  which is the \Expr{SCHEDD.} or
+  \Expr{MY.} name space and the job ClassAd, 
+  which is the \Expr{JOB.} or
+  \Expr{TARGET.} name space.
   When \Expr{False}, it causes the \Condor{schedd} to reject 
   the submission of the job or cluster of jobs. 
   \MacroNI{<Name>} corresponds to a name listed in 
@@ -7376,6 +7376,12 @@ Configuration File Entries}
   and not by user request. 
   If \Expr{NEVER}, the owner will not receive email. 
 
+\label{param:JobDefaultLeaseDuration}
+\item[\Macro{JOB\_DEFAULT\_LEASE\_DURATION}]
+  The default value for the \SubmitCmd{job\_lease\_duration} submit command
+  when the submit file does not specify a value. The default
+  value is 2400, which is 40 minutes.
+
 \label{param:JobDefaultRequestMemory}
 \item[\Macro{JOB\_DEFAULT\_REQUESTMEMORY}]
   The amount of memory in MiB to acquire for a job, 
@@ -7596,6 +7602,13 @@ do not specify their own with:
   will use in the specification of an interactive job.
   The default is \File{\MacroUNI{RELEASE\_DIR}/libexec/interactive.sub}
   when not defined.
+
+\label{param:CredMinTimeLeft}
+\item[\Macro{CRED\_MIN\_TIME\_LEFT}]
+  When a job uses an X509 user proxy, condor\_submit will refuse to
+submit a job whose x509 expiration time is less than this many seconds
+in the future.  The default is to only refuse jobs whose expiration
+time has already passed.
 
 \end{description}
 
@@ -12668,13 +12681,11 @@ on page~\pageref{sec:daemon-classad-hooks}.
 \label{param:BenchmarksJobSlots}
 \item[\Macro{STARTD\_CRON\_<JobName>\_SLOTS} 
        and \Macro{BENCHMARKS\_<JobName>\_SLOTS}]
-  A comma separated list of slots.
-  The output of the job specified by \Expr{<JobName>}
-  is incorporated into ClassAds;
-  this list specifies which slots are to incorporate the output attributes
-  of the job.
-  If not specified, the default is to incorporate the output attributes into
-  the ClassAd of all slots.
+  Only the slots specified in this comma-separated list may incorporate
+  the output of the job specified by \Expr{<JobName>}.  If the list is
+  not specified, any slot may.  Whether or not a specific slot actually
+  incorporates the output depends on the output;
+  see \ref{sec:daemon-classad-hooks}.
 
   \Expr{<JobName>} is the logical name assigned for a job as defined by
   configuration variable \MacroNI{STARTD\_CRON\_JOBLIST} 

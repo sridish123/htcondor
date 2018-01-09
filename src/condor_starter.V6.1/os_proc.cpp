@@ -120,7 +120,7 @@ OsProc::StartJob(FamilyInfo* family_info, FilesystemRemap* fs_remap=NULL)
         preserve_rel = false;
     }
 
-    bool relative_exe = is_relative_to_cwd(JobName.Value());
+    bool relative_exe = !fullpath(JobName.Value());
 
     if (relative_exe && preserve_rel && !transfer_exe) {
         dprintf(D_ALWAYS, "Preserving relative executable path: %s\n", JobName.Value());
@@ -439,7 +439,7 @@ OsProc::StartJob(FamilyInfo* family_info, FilesystemRemap* fs_remap=NULL)
 		classad::ExprTree *tree = parser.ParseExpression(rlimit_expr);
 		if (tree) {
 			classad::Value val;
-			long long result;
+			long long result = 0L;
 
 			if (EvalExprTree(tree, Starter->jic->machClassAd(), JobAd, val) && 
 				val.IsIntegerValue(result)) {

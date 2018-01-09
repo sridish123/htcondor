@@ -25,8 +25,11 @@
 #include "condor_uid.h"
 #include "condor_md.h"
 #include "directory_util.h"
-#include "filename_tools.h"
+#include "file_lock.h"
+#include "basename.h"
 #include "stat_wrapper.h"
+#include <sys/stat.h>
+#include <stdlib.h>
 #include <string> 
 
 #ifndef WIN32
@@ -76,11 +79,26 @@ static string MakeHashName(const char* fileName, time_t fileModifiedTime) {
 // WARNING!  This code changes priv state.  Be very careful if modifying it.
 // Do not return in the block of code where the priv has been set to either
 // condor or root.  -zmiller
-static bool MakeLink(const char* srcFile, const string &newLink) {
+static bool MakeLink(const char* srcFilePath, const string &newLink) {
+
+	bool retVal = false;
+	int srcFileInodeNum;
+	int targetLinkInodeNum;
+	struct stat srcFileStat;
+	struct stat targetLinkStat;
+
+	// Make sure the necessary parameters are set
 	std::string webRootDir;
 	param(webRootDir, "HTTP_PUBLIC_FILES_ROOT_DIR");
 	if(webRootDir.empty()) {
 		dprintf(D_ALWAYS, "mk_cache_links.cpp: HTTP_PUBLIC_FILES_ROOT_DIR "
+						"not set! Falling back to regular file transfer\n");
+		return (false);
+	}
+	std::string webRootOwner;
+	param(webRootOwner, "HTTP_PUBLIC_FILES_ROOT_OWNER");
+	if(webRootOwner.empty()) {
+		dprintf(D_ALWAYS, "mk_cache_links.cpp: HTTP_PUBLIC_FILES_ROOT_OWNER "
 						"not set! Falling back to regular file transfer\n");
 		return (false);
 	}
@@ -91,164 +109,162 @@ static bool MakeLink(const char* srcFile, const string &newLink) {
 			webRootDir.c_str());
 		return (false);
 	}
-	StatWrapper fileMode;
-	bool fileOK = false;
-	if (fileMode.Stat(srcFile) == 0) {
-		const StatStructType *statrec = fileMode.GetBuf();
-		if (statrec != NULL)
-			fileOK = (statrec->st_mode & S_IROTH); // Verify readable by all
-	}
-	if (fileOK == false) {
-		dprintf(D_ALWAYS,
-			"Cannot transfer -- public input file not world readable: %s\n", srcFile);
-		return (false);
-	}
 
-
-	// see how we should create the link.  There are a few options.
-	// 1) As the condor user.
-	// 2) As root, and then chown to the user.
-	// 3) As root, and then chown to some other user (like "httpd")
-	std::string link_owner;
-	param(link_owner, "HTTP_PUBLIC_FILES_USER");
-
-	uid_t link_uid = -1;
-	gid_t link_gid = -1;
-	bool  create_as_root = false;
-
-	priv_state priv = PRIV_UNKNOWN;
-
-	if (strcasecmp(link_owner.c_str(), "<user>") == 0) {
-		// we'll do everything in user priv except use root
-		// to create and chown the link
-
-		link_uid = get_user_uid();
-		link_gid = get_user_gid();
-		create_as_root = true;
-		priv = set_user_priv();
-	} else if (strcasecmp(link_owner.c_str(), "<condor>") == 0) {
-		// in this case we do everything as the condor user since they
-		// own the directory
-
-		priv = set_condor_priv();
-	} else {
-		// in this case we need to determine what uid they requested
-		// and then do everything as that user.  we set root priv and
-		// then temporarily assume the uid and gid of the specified
-		// user.
-
-		// has to be a username and not just a uid, since otherwise it
-		// isn't clear what gid we should use (if they aren't in the passwd
-		// file, for instance) and we also save on lookups.
-		bool isname = pcache()->get_user_ids(link_owner.c_str(), link_uid, link_gid);
-		if (!isname) {
-			dprintf(D_ALWAYS, "ERROR: unable to look up HTTP_PUBLIC_FILES_USER (%s)"
-				" in /etc/passwd.\n", link_owner.c_str());
-
-			// we ARE allowed to return here because we have not
-			// yet switched priv state in this case.
-			return false;
-		}
-
-		if (link_uid == 0 || link_gid == 0) {
-			dprintf(D_ALWAYS, "ERROR: HTTP_PUBLIC_FILES_USER (%s)"
-				" in /etc/passwd has UID 0.  Aborting.\n", link_owner.c_str());
-
-			// we ARE allowed to return here because we have not
-			// yet switched priv state in this case.
-			return false;
-		}
-
-
-		// now become the specified user for this operation.
-		priv = set_root_priv();
-		if (setegid(link_gid)) {}
-		if (seteuid(link_uid)) {}
-	}
-
-
+	// Determine the full path of the access file.
+	MyString accessFilePath;
+	dircat(goodPath, newLink.c_str(), accessFilePath);
+	accessFilePath += ".access";
+	
 	// STARTING HERE, DO NOT RETURN FROM THIS FUNCTION WITHOUT RESETTING
 	// THE ORIGINAL PRIV STATE.
+	
+	// Check if an access file exists (which will be the case if someone has
+	// already sent the source file).
+	// If it does exist, lock it so that condor_preen cannot open it while
+	// garbage collecting.
+	// If it does not exist, carry on. We'll create it before exiting.
+	
+	priv_state original_priv = set_root_priv();
+	FileLock *accessFileLock = NULL;
+	
+	if(access(accessFilePath.c_str(), F_OK) == 0) {
+		accessFileLock = new FileLock(accessFilePath.c_str(), true, false);
 
-	// we will now create or update the link
-	const char *const targetLink = dircat(goodPath, newLink.c_str()); // needs to be freed
-	bool retVal = false;
-	if (targetLink != NULL) {
-		// Check if target already exists
-		if (fileMode.Stat(targetLink, StatWrapper::STATOP_LSTAT) == 0) { 
-			// Good enough if link exists, ok if update fails
-			retVal = true;
-
-			// It is assumed that existing link points to srcFile.
-			//
-			// I don't like this assumption.  I think we need to
-			// add username or uid to filename to prevent
-			// accidents/mischeif when two users happen to us the
-			// same file.  If user A then deletes or modifies the
-			// file, user B is stuck with a link they probably
-			// can't update.  To be fixed ASAP.  -zmiller
-			const StatStructType *statrec = fileMode.GetBuf();
-			if (statrec != NULL) {
-				time_t filemtime = statrec->st_mtime;
-				// Must be careful to operate on link, not target file.
-				//
-				// This should be done AS THE OWNER OF THE FILE.
-				if ((time(NULL) - filemtime) > 3600 && lutimes(targetLink, NULL) != 0) {
-					// Update mod time, but only once an hour to avoid excess file access
-					dprintf(D_ALWAYS, "Could not update modification date on %s,"
-						"error = %s\n", targetLink, strerror(errno));
-				}
-			} else {
-				dprintf(D_ALWAYS, "Could not stat file %s\n", targetLink);
-			}
-		} else {
-			// now create the link.  we may need to do this as root and chown
-			// it, depending on the create_as_root flag.  if that's false, just
-			// stay in the priv state we are in for creation and there's no need
-			// to chown.
-
-			priv_state link_priv = PRIV_UNKNOWN;
-			if (create_as_root) {
-				link_priv = set_root_priv();
-			}
-
-			if (symlink(srcFile, targetLink) == 0) {
-				// so far, so good!
-				retVal = true;
-			} else {
-				dprintf(D_ALWAYS, "Could not link %s to %s, error = %s\n", srcFile,
-					targetLink, strerror(errno));
-			}
-
-			if (create_as_root) {
-				// if we succesfully created the link, now chown to the user
-				if (retVal && lchown(targetLink, link_uid, link_gid) != 0) {
-					// chown didn't actually succeed, so this operation is now a failure.
-					retVal = false;
-
-					// destroy the evidence?
-					unlink(targetLink);
-
-					dprintf(D_ALWAYS, "Could not change ownership of %s to %i:%i, error = %s\n",
-						targetLink, link_uid, link_gid, strerror(errno));
-				}
-
-				// either way, reset priv state
-				set_priv(link_priv);
-			}
+		// Try to grab a lock on the access file. This should block until it 
+		// obtains the lock. If this fails for any reason, bail out.
+		bool obtainedLock = accessFileLock->obtain(WRITE_LOCK);
+		if(!obtainedLock) {
+			dprintf(D_ALWAYS, "MakeLink: Failed to obtain lock on access file with"
+				" error code %d (%s).\n", errno, strerror(errno));
+			set_priv(original_priv);
+			return (false);
 		}
+	}
+	
+	// Impersonate the user and open the file using safe_open(). This will allow
+	// us to verify the user has privileges to access the file, and later to
+	// verify the hard link points back to the same inode.
+	set_user_priv();
+	
+	bool fileOK = false;
+	FILE *srcFile = safe_fopen_wrapper(srcFilePath, "r");
+	if (srcFile) {
+		if(stat(srcFilePath, &srcFileStat) == 0) {
+			srcFileInodeNum = srcFileStat.st_ino;
+			fileOK = (srcFileStat.st_mode & S_IRUSR); // Verify readable by owner
+		}
+	}
+	if (fileOK == false) {
+		dprintf(D_ALWAYS, "MakeLink: Cannot transfer -- public input file not "
+			"readable by user: %s\n", srcFilePath);
+		set_priv(original_priv);
+		return (false);
+	}
+	fclose(srcFile);
 
-		delete [] targetLink;
+	// Create the hard link using root privileges; it will automatically get
+	// owned by the same owner of the file. If the link already exists, don't do 
+	// anything at this point, we'll check later to make sure it points to the
+	// correct inode.
+	MyString linkpathbuf;
+	const char *const targetLinkPath = dircat(goodPath, newLink.c_str(), linkpathbuf);
+
+	// Switch to root privileges, so we can test if the link exists, and create
+	// it if it does not
+	set_root_priv();
+	
+	// Check if target link already exists
+	FILE *targetLink = safe_fopen_wrapper(targetLinkPath, "r");
+	if (targetLink) {
+		// If link exists, update the .access file timestamp.
+		retVal = true;
+		fclose(targetLink);
+	}	
+	else {
+		// Link does not exist, so create it as root.
+		if (link(srcFilePath, targetLinkPath) == 0) {
+			// so far, so good!
+			retVal = true;
+		}
+		else {
+			dprintf(D_ALWAYS, "MakeLink: Could not link %s to %s, error: %s\n", 
+				targetLinkPath, srcFilePath, strerror(errno));
+		}
 	}
 
-	// return to original privilege level, and exit
-	set_priv(priv);
+	// Now we need to make sure nothing devious has happened, that the hard link 
+	// points to the file we're expecting. First, make sure that the user 
+	// specified by HTTP_PUBLIC_FILES_ROOT_OWNER is a valid user.
+	uid_t link_uid = -1;
+	gid_t link_gid = -1;
+	bool isValidUser = pcache()->get_user_ids(webRootOwner.c_str(), link_uid, link_gid);
+	if (!isValidUser) {
+		dprintf(D_ALWAYS, "Unable to look up HTTP_PUBLIC_FILES_ROOT_OWNER (%s)"
+				" in /etc/passwd. Aborting.\n", webRootOwner.c_str());
+		retVal = false;
+	}
+
+	if (link_uid == 0 || link_gid == 0) {
+		dprintf(D_ALWAYS, "HTTP_PUBLIC_FILES_ROOT_OWNER (%s)"
+			" in /etc/passwd has UID 0.  Aborting.\n", webRootOwner.c_str());
+		retVal = false;
+	}
+
+	// Now that we've verified HTTP_PUBLIC_FILES_ROOT_OWNER is a valid user, 
+	// switch privileges to this user. Open the hard link. Verify that the
+	// inode is the same as the file we opened earlier on.	
+	if (retVal == true) {
+		if(setegid(link_gid) == -1) {
+			dprintf(D_ALWAYS, "MakeLink: Error switching to group ID %d\n", link_gid);
+			retVal = false;
+		}
+		if(seteuid(link_uid) == -1) {
+			dprintf(D_ALWAYS, "MakeLink: Error switching to user ID %d\n", link_uid);
+			retVal = false;
+		}
+
+		if (stat(targetLinkPath, &targetLinkStat) == 0) {
+			targetLinkInodeNum = targetLinkStat.st_ino;
+			if (srcFileInodeNum == targetLinkInodeNum) {
+				retVal = true;
+			}
+			else {
+				dprintf(D_ALWAYS, "Source file %s inode (%d) does not match "
+					"hard link %s inode (%d), aborting.\n", srcFilePath, 
+					srcFileInodeNum, targetLinkPath, targetLinkInodeNum);
+			}
+		}
+		else {
+			retVal = false;
+			dprintf(D_ALWAYS, "Cannot open hard link %s as user %s. Reverting to "
+				"regular file transfer.\n", targetLinkPath, webRootOwner.c_str());
+		}
+	}
+	
+	// Touch the access file. This will create it if it doesn't exist, or update
+	// the timestamp if it does.
+	FILE* accessFile = fopen(accessFilePath.c_str(), "w");
+	if (accessFile) {
+		fclose(accessFile);
+	}
+	else {
+		dprintf(D_ALWAYS, "Failed to update access file %s.\n", accessFilePath.c_str());
+	}
+	
+	// Release the lock on the access file
+	if(accessFileLock && !accessFileLock->release()) {
+		dprintf(D_ALWAYS, "MakeLink: Failed to release lock on access file with"
+			" error code %d (%s).\n", errno, strerror(errno));
+	}
+
+	// Reset priv state
+	set_priv(original_priv);
 
 	return retVal;
 }
 
 static string MakeAbsolutePath(const char* path, const char* initialWorkingDir) {
-	if (is_relative_to_cwd(path)) {
+	if (!fullpath(path)) {
 		string fullPath = initialWorkingDir;
 		fullPath += DIR_DELIM_CHAR;
 		fullPath += path;
@@ -326,7 +342,7 @@ void ProcessCachedInpFiles(ClassAd *const Ad, StringList *const InputFiles,
 			}
 			else {
 				dprintf(D_FULLDEBUG, "mk_cache_links.cpp: Failed to generate "
-									" hash link for %s\n", fullPath.c_str());
+									 "hash link for %s\n", fullPath.c_str());
 			}
 		}
 		free( initialWorkingDir );

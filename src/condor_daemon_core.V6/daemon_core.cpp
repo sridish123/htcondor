@@ -710,8 +710,13 @@ int DaemonCore::FileDescriptorSafetyLimit()
 			// Our max is the maxiumum file descriptor that our Selector
 			// class says it can handle.
 		int file_descriptor_max = Selector::fd_select_size();
+#ifdef WIN32
+		// Set the danger level at 1 less than the max (Windows doesn't put sockets into the same table as files)
+		file_descriptor_safety_limit = file_descriptor_max - 1;
+#else
 		// Set the danger level at 80% of the max
 		file_descriptor_safety_limit = file_descriptor_max - file_descriptor_max/5;
+#endif
 		if( file_descriptor_safety_limit < MIN_FILE_DESCRIPTOR_SAFETY_LIMIT ) {
 				// There is no point trying to live within this limit,
 				// because it is too small.  It is better to try and fail
@@ -4855,6 +4860,7 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 				// below to determine whether we should send a UNIX
 				// SIGTERM or a DC signal.
 			if ( pid != mypid && target_has_dcpm == FALSE ) {
+				dprintf(D_ALWAYS, "Send_Signal SIGTERM to pid %d using Shutdown_Graceful\n", pid);
 				if( Shutdown_Graceful(pid) ) {
 					msg->deliveryStatus( DCMsg::DELIVERY_SUCCEEDED );
 				}
@@ -4980,9 +4986,11 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	classy_counted_ptr<Daemon> d = new Daemon( DT_ANY, destination );
 
 	// now destination process is local, send via UDP; if remote, send via TCP
+	bool is_udp = false;
 	if ( is_local == TRUE && d->hasUDPCommandPort()) {
 		msg->setStreamType(Stream::safe_sock);
 		if( !nonblocking ) msg->setTimeout(3);
+		is_udp = true;
 	}
 	else {
 		msg->setStreamType(Stream::reli_sock);
@@ -4991,6 +4999,8 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	{
 		msg->setSecSessionId(pidinfo->child_session_id);
 	}
+	dprintf(D_FULLDEBUG, "Send_Signal %d to pid %d via %s in %s mode\n", sig, pid, is_udp ? "UDP" : "TCP", nonblocking ? "nonblocking" : "blocking");
+
 	msg->messengerDelivery( true ); // we really are sending this message
 	if( nonblocking ) {
 		d->sendMsg( msg.get() );
@@ -5349,7 +5359,7 @@ void *DaemonCore::GetDataPtr()
 // else FALSE means not inheritable.
 int DaemonCore::SetFDInheritFlag(int fh, int flag)
 {
-	long underlying_handle;
+	intptr_t underlying_handle;
 
 	underlying_handle = _get_osfhandle(fh);
 
@@ -7028,6 +7038,10 @@ int DaemonCore::Create_Process(
 			dprintf(D_ALWAYS, "ERROR: Create_Process failed to create security session for child daemon.\n");
 			goto wrapup;
 		}
+		KeyCacheEntry *entry = NULL;
+		rc = getSecMan()->session_cache->lookup(session_id_c_str,entry);
+		ASSERT( rc && entry && entry->policy() );
+		entry->policy()->Assign( ATTR_SEC_REMOTE_VERSION, CondorVersion() );
 		IpVerify* ipv = getSecMan()->getIpVerify();
 		MyString id = CONDOR_CHILD_FQU;
 		ipv->PunchHole(DAEMON, id);
@@ -7143,7 +7157,7 @@ int DaemonCore::Create_Process(
 				else {
 					// we are handing down a C library FD
 					SetFDInheritFlag(std[ii],TRUE);	// set handle inheritable
-					long longTemp = _get_osfhandle(std[ii]);
+					intptr_t longTemp = _get_osfhandle(std[ii]);
 					if (longTemp != -1 ) {
 						valid = TRUE;
 						*std_handles[ii] = (HANDLE)longTemp;
@@ -8929,6 +8943,10 @@ DaemonCore::Inherit( void )
 			{
 				dprintf(D_ALWAYS, "Error: Failed to recreate security session in child daemon.\n");
 			}
+			KeyCacheEntry *entry = NULL;
+			rc = getSecMan()->session_cache->lookup(claimid.secSessionId(),entry);
+			ASSERT( rc && entry && entry->policy() );
+			entry->policy()->Assign( ATTR_SEC_REMOTE_VERSION, CondorVersion() );
 			IpVerify* ipv = getSecMan()->getIpVerify();
 			MyString id;
 			id.formatstr("%s", CONDOR_PARENT_FQU);

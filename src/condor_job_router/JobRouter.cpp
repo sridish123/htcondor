@@ -215,17 +215,19 @@ JobRouter::config() {
 #endif
 
 	m_job_router_entries_refresh = param_integer(PARAM_JOB_ROUTER_ENTRIES_REFRESH,0);
-	if( m_job_router_refresh_timer >= 0 ) {
-		daemonCore->Cancel_Timer(m_job_router_refresh_timer);
-		m_job_router_refresh_timer = -1;
-	}
-	if( m_job_router_entries_refresh > 0 ) {
-		m_job_router_refresh_timer = 
-			daemonCore->Register_Timer(
-				m_job_router_entries_refresh,
-				m_job_router_entries_refresh,
-				(TimerHandlercpp)&JobRouter::config,
-				"JobRouter::config", this);
+	if ( ! m_operate_as_tool ) {
+		if( m_job_router_refresh_timer >= 0 ) {
+			daemonCore->Cancel_Timer(m_job_router_refresh_timer);
+			m_job_router_refresh_timer = -1;
+		}
+		if( m_job_router_entries_refresh > 0 ) {
+			m_job_router_refresh_timer =
+				daemonCore->Register_Timer(
+					m_job_router_entries_refresh,
+					m_job_router_entries_refresh,
+					(TimerHandlercpp)&JobRouter::config,
+					"JobRouter::config", this);
+		}
 	}
 
 	char *constraint = param("JOB_ROUTER_SOURCE_JOB_CONSTRAINT");
@@ -382,7 +384,10 @@ JobRouter::config() {
 		ParseRoutingEntries( routing_str, PARAM_JOB_ROUTER_ENTRIES, router_defaults_ad, allow_empty_requirements, new_routes );
 	}
 
-	if(!m_enable_job_routing) return;
+	if(!m_enable_job_routing) {
+		delete new_routes;
+		return;
+	}
 
 	SetRoutingTable(new_routes);
 
@@ -1941,9 +1946,7 @@ JobRouter::FinishCheckSubmittedJobStatus(RoutedJob *job) {
 
 	classad::ClassAd *ad = ad_collection2->GetClassAd(job->dest_key);
 
-	// If ad is not found, this could be because Quill hasn't seen
-	// it yet, in which case this is not a problem.  The following
-	// attempts to ensure this by seeing if enough time has passed
+	// If ad is not found, check if enough time has passed
 	// since we submitted the job.
 
 	if(!ad) {

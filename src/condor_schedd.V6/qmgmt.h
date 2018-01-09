@@ -245,8 +245,10 @@ public:
 
 
 // from qmgmt_factory.cpp
-class JobFactory * MakeJobFactory(int cluster_id, const char * submit_digest_text); // make a job factory from submit digest text
-class JobFactory * MakeJobFactory(JobQueueCluster * job, const char * submit_file); // make a job factory from an on-disk submit digest
+// make a job factory from submit digest text, used on submit, optional user_ident is who to inpersonate when reading item data file (if any)
+class JobFactory * MakeJobFactory(int cluster_id, const char * submit_digest_text, ClassAd * user_ident, std::string & errmsg);
+// make a job factory from an on-disk submit digest - used on schedd restart
+class JobFactory * MakeJobFactory(JobQueueCluster * job, const char * submit_file, bool spooled_submit_file, std::string & errmsg);
 void DestroyJobFactory(JobFactory * factory);
 
 void AttachJobFactoryToCluster(JobFactory * factory, JobQueueCluster * cluster);
@@ -261,9 +263,17 @@ bool JobFactoryIsComplete(JobQueueCluster * cluster);
 bool JobFactoryIsRunning(JobQueueCluster * cluster);
 bool JobFactoryAllowsClusterRemoval(JobQueueCluster * cluster);
 // if pause_code < 0, pause is permanent, if >= 3, cluster was removed
-int PauseJobFactory(JobFactory * factory, int pause_code);
-int ResumeJobFactory(JobFactory * factory, int pause_code);
-bool CheckJobFactoryPause(JobFactory * factory, int pause_code); // 0 for resume, 1 for pause, returns true if state changed
+typedef enum {
+	mmInvalid = -1, // some fatal error occurred, such as failing to load the submit digest.
+	mmRunning = 0,
+	mmHold = 1,
+	mmNoMoreItems = 2,
+	mmClusterRemoved = 3
+} MaterializeMode;
+int PauseJobFactory(JobFactory * factory, MaterializeMode pause_code);
+int ResumeJobFactory(JobFactory * factory, MaterializeMode pause_code);
+bool CheckJobFactoryPause(JobFactory * factory, int want_pause); // Make sure factory mode matches the persist mode
+bool GetJobFactoryMaterializeMode(JobQueueCluster * cluster, int & pause_code);
 void PopulateFactoryInfoAd(JobFactory * factory, ClassAd & iad);
 void ScheduleClusterForDeferredCleanup(int cluster_id);
 
@@ -299,6 +309,8 @@ ClassAd* GetExpandedJobAd(const PROC_ID& jid, bool persist_expansions);
 
 #ifdef SCHEDD_INTERNAL_DECLARATIONS
 JobQueueJob* GetJobAd(const PROC_ID& jid);
+JobQueueJob* GetJobAndInfo(const PROC_ID& jid, int &universe, const OwnerInfo* &powni); // Used by schedd.cpp since JobQueueJob is not a public structure
+int GetJobInfo(JobQueueJob *job, const OwnerInfo* &powni); // returns universe and OwnerInfo pointer for job
 JobQueueJob* GetJobAd(int cluster, int proc);
 JobQueueCluster* GetClusterAd(const PROC_ID& jid);
 JobQueueCluster* GetClusterAd(int cluster);
@@ -449,6 +461,8 @@ void MarkJobClean(const char* job_id_str);
 
 bool Reschedule();
 
+bool UniverseUsesVanillaStartExpr(int universe);
+
 int get_myproxy_password_handler(Service *, int, Stream *sock);
 
 QmgmtPeer* getQmgmtConnectionInfo();
@@ -463,6 +477,7 @@ extern int grow_prio_recs(int);
 
 extern void	FindRunnableJob(PROC_ID & jobid, ClassAd* my_match_ad, char const * user);
 extern int Runnable(PROC_ID*);
+extern int Runnable(JobQueueJob *job, const char *& reason);
 
 extern class ForkWork schedd_forker;
 

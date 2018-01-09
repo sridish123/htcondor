@@ -428,11 +428,11 @@ int
 ReadUserLogState::StatFile( const char *path, StatStructType &statbuf ) const
 {
 	StatWrapper	statwrap;
-	if ( statwrap.Stat( path, StatWrapper::STATOP_STAT ) ) {
+	if ( statwrap.Stat( path ) ) {
 		return statwrap.GetRc( );
 	}
 
-	statwrap.GetBuf( statbuf );
+	statbuf = *statwrap.GetBuf();
 
 	return 0;
 }
@@ -448,7 +448,7 @@ ReadUserLogState::StatFile( int fd )
 		return statwrap.GetRc( );
 	}
 
-	statwrap.GetBuf( m_stat_buf );
+	m_stat_buf = *statwrap.GetBuf();
 	m_stat_time = time( NULL );
 	m_stat_valid = true;
 	Update();
@@ -931,9 +931,6 @@ ReadUserLogStateAccess::getFileOffset(
 		return false;
 	}
 
-	if ( my_pos > LONG_MAX ) {
-		return false;
-	}
 	pos = (unsigned long) my_pos;
 	return true;
 }
@@ -948,9 +945,6 @@ ReadUserLogStateAccess::getFileEventNum(
 		return false;
 	}
 
-	if ( (unsigned long)my_num > ULONG_MAX ) {
-		return false;
-	}
 	num = (unsigned long) my_num;
 	return true;
 }
@@ -1007,9 +1001,6 @@ ReadUserLogStateAccess::getLogPosition(
 		return false;
 	}
 
-	if ( (unsigned long)my_pos > ULONG_MAX ) {
-		return false;
-	}
 	pos = (unsigned long) my_pos;
 	return true;
 }
@@ -1045,9 +1036,6 @@ ReadUserLogStateAccess::getEventNumber(
 		return false;
 	}
 
-	if ( (unsigned long)my_event_no > ULONG_MAX ) {
-		return false;
-	}
 	event_no = (unsigned long) my_event_no;
 	return true;
 }

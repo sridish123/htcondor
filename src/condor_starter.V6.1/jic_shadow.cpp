@@ -495,7 +495,9 @@ JICShadow::transferOutput( bool &transient_failure )
 		std::string full_stats = "(peer stats from starter): ";
 		full_stats += stats;
 		
-		REMOTE_CONDOR_dprintf_stats(const_cast<char *>(full_stats.c_str()));
+		if (shadow_version && shadow_version->built_since_version(8, 5, 8)) {
+			REMOTE_CONDOR_dprintf_stats(const_cast<char *>(full_stats.c_str()));
+		}
 		set_priv(saved_priv);
 
 		if( m_ft_rval ) {
@@ -1445,23 +1447,21 @@ JICShadow::initWithFileTransfer()
 	// the special names StdoutRemapName and StderrRemapName.
 	// The shadow will remap these to the original names when transferring
 	// the output.
-	if ( shadow_version->built_since_version( 7, 7, 2 ) ) {
-		bool stream;
-		std::string stdout_name;
-		std::string stderr_name;
-		job_ad->LookupString( ATTR_JOB_OUTPUT, stdout_name );
-		job_ad->LookupString( ATTR_JOB_ERROR, stderr_name );
-		if ( job_ad->LookupBool( ATTR_STREAM_OUTPUT, stream ) && !stream &&
-			 !nullFile( stdout_name.c_str() ) ) {
-			job_ad->Assign( ATTR_JOB_OUTPUT, StdoutRemapName );
-		}
-		if ( job_ad->LookupBool( ATTR_STREAM_ERROR, stream ) && !stream &&
-			 !nullFile( stderr_name.c_str() ) ) {
-			if ( stdout_name == stderr_name ) {
-				job_ad->Assign( ATTR_JOB_ERROR, StdoutRemapName );
-			} else {
-				job_ad->Assign( ATTR_JOB_ERROR, StderrRemapName );
-			}
+	bool stream;
+	std::string stdout_name;
+	std::string stderr_name;
+	job_ad->LookupString( ATTR_JOB_OUTPUT, stdout_name );
+	job_ad->LookupString( ATTR_JOB_ERROR, stderr_name );
+	if ( job_ad->LookupBool( ATTR_STREAM_OUTPUT, stream ) && !stream &&
+		 !nullFile( stdout_name.c_str() ) ) {
+		job_ad->Assign( ATTR_JOB_OUTPUT, StdoutRemapName );
+	}
+	if ( job_ad->LookupBool( ATTR_STREAM_ERROR, stream ) && !stream &&
+		 !nullFile( stderr_name.c_str() ) ) {
+		if ( stdout_name == stderr_name ) {
+			job_ad->Assign( ATTR_JOB_ERROR, StdoutRemapName );
+		} else {
+			job_ad->Assign( ATTR_JOB_ERROR, StderrRemapName );
 		}
 	}
 
@@ -1652,7 +1652,9 @@ refuse(ReliSock * s)
 	ASSERT(s);
 	s->encode();
 	int i = 0; // == failure;
-	s->code(i); // == failure
+	if (!s->code(i)) {
+		dprintf(D_ALWAYS, "Unable to refuse X509 proxy update -- has client gone away?\n");
+	}
 	s->end_of_message();
 }
 
@@ -1752,7 +1754,11 @@ updateX509Proxy(int cmd, ReliSock * rsock, const char * path)
 
 		// Send our reply back to the client
 	rsock->encode();
-	rsock->code(reply);
+	if (!rsock->code(reply)) {
+		dprintf(D_ALWAYS,
+		        "Attempt to refresh X509 proxy failed to reply\n");
+		reply = false;
+	}
 	rsock->end_of_message();
 
 	if(reply) {
@@ -1796,7 +1802,9 @@ JICShadow::updateX509Proxy(int cmd, ReliSock * s)
 	if( ! usingFileTransfer() ) {
 		s->encode();
 		int i = 2; // == success, but please don't call any more.
-		s->code(i); // == success, but please don't call any more.
+		if (!s->code(i)) { // == success, but please don't call any more.
+			dprintf(D_ALWAYS, "Unable to update X509 proxy request -- has client gone away?\n");
+		}
 		s->end_of_message();
 		refuse(s);
 		return false;
@@ -2322,7 +2330,9 @@ JICShadow::transferCompleted( FileTransfer *ftrans )
 
 		ASSERT( !shadowDisconnected() );
 
-		REMOTE_CONDOR_dprintf_stats(const_cast<char *>(full_stats.c_str()));
+		if (shadow_version && shadow_version->built_since_version(8, 5, 8)) {
+			REMOTE_CONDOR_dprintf_stats(const_cast<char *>(full_stats.c_str()));
+		}
 
 			// If we transferred the executable, make sure it
 			// has its execute bit set.

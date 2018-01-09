@@ -2168,12 +2168,16 @@ int SubmitHash::SetJobLease()
 				  reconnectable jobs can survive schedd crashes and
 				  the like...
 				*/
-			lease_duration = 40 * 60;
+			tmp.set(param("JOB_DEFAULT_LEASE_DURATION"));
 		} else {
 				// not defined and can't reconnect, we're done.
 			return 0;
 		}
-	} else {
+	}
+
+	// first try parsing as an integer
+	if (tmp)
+	{
 		char *endptr = NULL;
 		lease_duration = strtol(tmp.ptr(), &endptr, 10);
 		if (endptr != tmp.ptr()) {
@@ -2199,6 +2203,7 @@ int SubmitHash::SetJobLease()
 			}
 		}
 	}
+	// if lease duration was an integer, lease_duration will have the value.
 	if (lease_duration) {
 		AssignJobVal(ATTR_JOB_LEASE_DURATION, lease_duration);
 	} else if (tmp) {
@@ -2720,19 +2725,9 @@ int SubmitHash::SetGSICredentials()
 	}
 
 	if (proxy_file != NULL) {
-		if ( proxy_file[0] == '#' ) {
-			buffer.formatstr( "%s=\"%s\"", ATTR_X509_USER_PROXY_SUBJECT, 
-						   &proxy_file[1]);
-			InsertJobExpr(buffer);	
-
-//			(void) buffer.sprintf( "%s=\"%s\"", ATTR_X509_USER_PROXY, 
-//						   proxy_file);
-//			InsertJobExpr(buffer);	
-			free( proxy_file );
-		} else {
-			char *full_proxy_file = strdup( full_path( proxy_file ) );
-			free( proxy_file );
-			proxy_file = full_proxy_file;
+		char *full_proxy_file = strdup( full_path( proxy_file ) );
+		free( proxy_file );
+		proxy_file = full_proxy_file;
 #if defined(HAVE_EXT_GLOBUS)
 // this code should get torn out at some point (8.7.0) since the SchedD now
 // manages these attributes securely and the values provided by submit should
@@ -2840,11 +2835,10 @@ int SubmitHash::SetGSICredentials()
 // out. -zmiller
 #endif
 
-			(void) buffer.formatstr( "%s=\"%s\"", ATTR_X509_USER_PROXY, 
-						   proxy_file);
-			InsertJobExpr(buffer);	
-			free( proxy_file );
-		}
+		(void) buffer.formatstr( "%s=\"%s\"", ATTR_X509_USER_PROXY,
+					   proxy_file);
+		InsertJobExpr(buffer);
+		free( proxy_file );
 	}
 
 	char* tmp = submit_param(SUBMIT_KEY_DelegateJobGSICredentialsLifetime,ATTR_DELEGATE_JOB_GSI_CREDENTIALS_LIFETIME);
@@ -4757,7 +4751,7 @@ int SubmitHash::SetExecutable()
 		}
 
 		// spool executable if necessary
-		if ( copy_to_spool ) {
+		if ( copy_to_spool && jid.proc == 0 ) {
 
 			bool try_ickpt_sharing = false;
 			CondorVersionInfo cvi(getScheddVersion());
@@ -7618,6 +7612,22 @@ bool qslice::selected(int ix, int len) {
 	return ix >= is && ix < ie && ( !(flags&8) || (0 == ((ix-is) % step)) );
 }
 
+// returns number of selected items for a list of the given length, result is never negative
+// negative step values NOT handled correctly
+int qslice::length_for(int len) {
+	if (!(flags&1)) return len;
+	int is = 0; if (flags&2) { is = (start < 0) ? start+len : start; }
+	int ie = len; if (flags&4) { ie = (end < 0) ? end+len : end; }
+	int ret = ie - is;
+	if ((flags&8) && step > 1) { 
+		ret = (ret + step -1) / step;
+	}
+	// bound the return value to the range of 0 to len
+	ret = MAX(0, ret);
+	return MIN(ret, len);
+}
+
+
 int qslice::to_string(char * buf, int cch) {
 	char sz[16*3];
 	if ( ! (flags&1)) return 0;
@@ -7675,6 +7685,15 @@ static char * queue_token_scan(char * ptr, const struct _qtoken tokens[], int ct
 	return p;
 }
 
+// returns number of selected items
+// the items member must have been populated
+// or the mode must be foreach_not
+// the return does not take queue_num into account.
+int SubmitForeachArgs::item_len()
+{
+	if (foreach_mode == foreach_not) return 1;
+	return slice.length_for(items.number());
+}
 
 enum {
 	PARSE_ERROR_INVALID_QNUM_EXPR = -2,
@@ -8078,8 +8097,7 @@ int SubmitHash::load_external_q_foreach_items (
 
 	default:
 	case foreach_not:
-		// to simplify the loop below, set a single empty item into the itemlist.
-		//citems = 1;
+		// there is an implicit, single, empty item when the mode is foreach_not
 		break;
 	}
 
@@ -8138,6 +8156,8 @@ int SubmitHash::parse_up_to_q_line(MacroStream &ms, std::string & errmsg, char**
 	*qline = NULL;
 
 	MACRO_EVAL_CONTEXT ctx = mctx; ctx.use_mask = 2;
+
+	PRAGMA_REMIND("move firstread (used by Parse_macros) and at_eof() into MacroStream class")
 
 	int err = Parse_macros(ms,
 		0, SubmitMacroSet, READ_MACROS_SUBMIT_SYNTAX,
@@ -8232,7 +8252,7 @@ const char* SubmitHash::to_string(std::string & out, int flags)
 	return out.c_str();
 }
 
-const char* SubmitHash::make_digest(std::string & out, int cluster_id, SubmitForeachArgs fea, int /*options*/)
+const char* SubmitHash::make_digest(std::string & out, int cluster_id, StringList & vars, int /*options*/)
 {
 	int flags = HASHITER_NO_DEFAULTS;
 	out.reserve(SubmitMacroSet.size * 80); // make a guess at how much space we need.
@@ -8245,8 +8265,8 @@ const char* SubmitHash::make_digest(std::string & out, int cluster_id, SubmitFor
 	skip_knobs.insert("Row");
 	skip_knobs.insert("Node");
 	skip_knobs.insert("Item");
-	if ( ! fea.vars.isEmpty()) {
-		for (const char * var = fea.vars.first(); var != NULL; var = fea.vars.next()) {
+	if ( ! vars.isEmpty()) {
+		for (const char * var = vars.first(); var != NULL; var = vars.next()) {
 			skip_knobs.insert(var);
 		}
 	}

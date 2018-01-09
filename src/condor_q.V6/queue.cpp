@@ -153,7 +153,7 @@ bool warnScheddGlobalLimits(DaemonAllowLocateFull *schedd,MyString &result_buf);
 
 static 	int dash_long = 0, dash_tot = 0, global = 0, show_io = 0, dash_dag = 0, show_held = 0;
 static  int dash_batch = 0, dash_batch_specified = 0, dash_batch_is_default = 1;
-static  int dash_factory = 0;
+static  int dash_factory = 0; // if non zero, bits are options, 1=cluster-ads-only, 2=late-materialize-only
 static ClassAdFileParseType::ParseType dash_long_format = ClassAdFileParseType::Parse_auto;
 static bool print_attrs_in_hash_order = false;
 static bool auto_standard_summary = false; // print standard summary
@@ -751,10 +751,6 @@ int main (int argc, const char **argv)
 		exit( 1 );
 	}
 
-		/*if(querySchedds && scheddList.MyLength() == 0) {
-		  result = Collectors->query(quillQuery, quillList);
-		}*/
-
 	first = true;
 	// get queue from each ScheddIpAddr in ad
 	scheddList.Open();
@@ -1104,8 +1100,7 @@ processCommandLineArguments (int argc, const char *argv[])
 			// the direct argument is vistigial, because only schedd is allowed, but we still parse and accept it.
 			i++;
 			if (MATCH != strcasecmp(argv[i], "schedd")) {
-				fprintf( stderr, "Error: Quill feature set is not available.\n"
-					"-direct may only take 'schedd' as an option.\n" );
+				fprintf( stderr, "Error: -direct may only take 'schedd' as an option.\n" );
 				exit(EXIT_FAILURE);
 			}
 		}
@@ -1252,7 +1247,20 @@ processCommandLineArguments (int argc, const char *argv[])
 		}
 		else
 		if (is_dash_arg_colon_prefix (dash_arg, "factory", &pcolon, 4)) {
-			dash_factory = true;
+			if (pcolon) {
+				StringList opts(++pcolon, ",");
+				for (const char * opt = opts.first(); opt; opt = opts.next()) {
+					if (is_arg_prefix(opt, "clusters_only", 1)) {
+						dash_factory |= 1;
+					} else if (is_arg_prefix(opt, "late_materialize", 1)) {
+						dash_factory |= 2;
+					} else {
+						fprintf( stderr, "Error: unknown option %s for -factory\n", opt );
+						exit (1);
+					}
+				}
+			}
+			if ( ! dash_factory) { dash_factory = 3; } // all-cluster-ads | late-materialize-only
 		}
 		else
 		if (is_dash_arg_prefix (dash_arg, "attributes", 2)) {
@@ -1791,7 +1799,8 @@ processCommandLineArguments (int argc, const char *argv[])
 		// handle flags that just set a constraint when used with a formatting option, but
 		// set a constraint and a format when used alone.
 		if (dash_factory) {
-			Q.addAND("ProcId is undefined && JobMaterializeDigestFile isnt undefined");
+			if (dash_factory & 1) Q.addAND("ProcId is undefined");
+			if (dash_factory & 2) Q.addAND("JobMaterializeDigestFile isnt undefined");
 		}
 	}
 
@@ -3238,7 +3247,7 @@ print_jobs_analysis(ClassAdList & jobs, const char * source_label, DaemonAllowLo
 			for (int ii = 0; ii < cJobsToEval; ++ii) {
 				ClassAd *job = it->second[ii];
 				if (summarize_anal) {
-					char achJobId[16], achAutocluster[16], achRunning[16];
+					char achJobId[32], achAutocluster[48], achRunning[32];
 					int cluster_id = 0, proc_id = 0;
 					job->LookupInteger(ATTR_CLUSTER_ID, cluster_id);
 					job->LookupInteger(ATTR_PROC_ID, proc_id);
@@ -3943,6 +3952,7 @@ static void reduce_procs(cluster_progress & prog, JobRowOfData & jr)
 	const int ixDagNodesDone = 6;
 	const int ixDagNodesTotal = 7; // ATTR_DAG_NODES_TOTAL ?: ATTR_TOTAL_SUBMIT_PROCS
 	int total_submit_procs = 0;
+	int num_procs = 0;
 
 	prog.count += 1;
 
@@ -3964,11 +3974,10 @@ static void reduce_procs(cluster_progress & prog, JobRowOfData & jr)
 			prog.jobs += 1;
 		}
 
-		int num_procs = 0;
 		// as of 8.5.7 the schedd will inject ATTR_TOTAL_SUBMIT_PROCS into the cluster ad
 		// and we will have fetched it in the ixDagNodesTotal field.
 		// We don't add it to the total unless this cluster is NOT a node of a dag.
-		if (jr.getNumber(ixDagNodesTotal, num_procs)) { total_submit_procs = num_procs; }
+		if (jr.getNumber(ixDagNodesTotal, num_procs)) { total_submit_procs = num_procs; num_procs = 1; }
 
 		if (jid.proc >= 0) {
 			jr.getNumber(ixJobStatusCol, status);
@@ -3995,6 +4004,7 @@ static void reduce_procs(cluster_progress & prog, JobRowOfData & jr)
 			}
 			jrod2->flags |= JROD_FOLDED;
 		}
+		++num_procs;
 		jrod2 = jrod2->next_proc;
 	}
 
@@ -4010,7 +4020,7 @@ static void reduce_procs(cluster_progress & prog, JobRowOfData & jr)
 			total = prog.max_proc+1;
 		}
 		if (total) {
-			int done = total - prog.jobs;
+			int done = total - num_procs;
 			if (materialized_next_proc_by_cluster_map.find(prog.cluster) != materialized_next_proc_by_cluster_map.end()) { 
 				int materialized_jobs = materialized_next_proc_by_cluster_map[prog.cluster];
 				done = materialized_jobs - prog.jobs;
@@ -4249,12 +4259,9 @@ const char * summarize_sinful_for_display(std::string & addrsumy, const char * a
 }
 
 
-// query SCHEDD or QUILLD daemon for jobs. and then print out the desired job info.
+// query SCHEDD daemon for jobs. and then print out the desired job info.
 // this function handles -analyze, -streaming, -dag and all normal condor_q output
-// when the source is a SCHEDD or QUILLD.
-// TJ isn't sure that the QUILL daemon can use fast path, prior to the 2013 refactor, 
-// the old code didn't try.
-//
+// when the source is a SCHEDD.
 static bool
 show_schedd_queue(const char* scheddAddress, const char* scheddName, const char* scheddMachine, int useFastPath)
 {
@@ -5896,7 +5903,7 @@ const char * const jobFactory_PrintFormat = "SELECT\n"
    "JobsPresent   AS 'PRESNT' WIDTH 6 PRINTF %6d\n"
    "JobsRunning   AS '  RUN ' WIDTH 6 PRINTF %6d\n"
    "JobsIdle      AS '  IDLE' WIDTH 6 PRINTF %6d\n"
-   "JobsIdle      AS '  HOLD' WIDTH 6 PRINTF %6d\n"
+   "JobsHeld      AS '  HOLD' WIDTH 6 PRINTF %6d\n"
     ATTR_JOB_MATERIALIZE_NEXT_PROC_ID " AS 'NEXTID' WIDTH 6 PRINTF %6d\n"
     ATTR_JOB_MATERIALIZE_PAUSED       " AS MODE PRINTAS JOB_FACTORY_MODE OR _\n"
     ATTR_JOB_MATERIALIZE_DIGEST_FILE  " AS DIGEST\n"

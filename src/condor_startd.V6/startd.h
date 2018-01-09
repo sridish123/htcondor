@@ -105,6 +105,9 @@ extern	int		match_timeout;	// How long you're willing to be
 extern	int		killing_timeout;  // How long you're willing to be
 	                              // in preempting/killing before you
 								  // drop the hammer on the starter
+extern	int		vm_killing_timeout;  // How long you're willing to be
+	                              // in preempting/killing before you
+								  // drop the hammer on the starter for VM universe jobs
 extern	int		max_claim_alives_missed;  // how many keepalives can we
 										  // miss until we timeout the
 										  // claim and give up
@@ -137,6 +140,11 @@ extern  int main_reaper;
 
 extern StartdCronJobMgr		*cron_job_mgr;
 extern StartdBenchJobMgr	*bench_job_mgr;
+
+	// Map containing things that we have failed to cleanup at least once, but should keep trying
+	// The most likely thing this map contains is execute directories on Windows because anti-virus
+	// software was holding a file open when we went to clean the diretory up.
+extern CleanupReminderMap cleanup_reminders;
 
 #endif /* _STARTD_NO_DECLARE_GLOBALS */
 

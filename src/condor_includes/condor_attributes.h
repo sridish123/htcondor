@@ -46,7 +46,6 @@
 #define ATTR_ACTION_RESULT  "ActionResult"
 #define ATTR_ACTION_RESULT_TYPE  "ActionResultType"
 #define ATTR_ACTIVITY  "Activity"
-#define ATTR_ALLOW_NOTIFICATION_CC  "AllowNotificationCC"
 #define ATTR_ALL_REMOTE_HOSTS  "AllRemoteHosts"
 #define ATTR_ANNEX_NAME  "AnnexName"
 #define ATTR_APPEND_FILES  "AppendFiles"
@@ -81,6 +80,7 @@
 #define ATTR_BYTES_RECVD  "BytesRecvd"
 #define ATTR_CAN_HIBERNATE  "CanHibernate"
 #define ATTR_CAPABILITY  "Capability"
+#define ATTR_CE_REQUIREMENTS  "CERequirements"
 #define ATTR_CKPT_SERVER  "CkptServer"
 #define ATTR_CLAIM_STARTD  "ClaimStartd"
 #define ATTR_COD_CLAIMS  "CODClaims"
@@ -158,6 +158,7 @@
 #define ATTR_DAG_NODES_TOTAL "DAG_NodesTotal"
 #define ATTR_DAG_NODES_UNREADY "DAG_NodesUnready"
 #define ATTR_DAG_STATUS "DAG_Status"
+#define ATTR_DAG_STATS "DAG_Stats"
 #define ATTR_DEFERRAL_OFFSET  "DeferralOffset"
 #define ATTR_DEFERRAL_PREP_TIME  "DeferralPrepTime"
 #define ATTR_DEFERRAL_TIME  "DeferralTime"
@@ -302,6 +303,7 @@
 #define ATTR_JOB_MATERIALIZE_NEXT_ROW     "JobMaterializeNextRow"
 #define ATTR_JOB_MATERIALIZE_STEP_SIZE    "JobMaterializeStepSize"
 #define ATTR_JOB_MATERIALIZE_PAUSED       "JobMaterializePaused"
+#define ATTR_JOB_MATERIALIZE_PAUSE_REASON "JobMaterializePauseReason"
 #define ATTR_JOB_ARGUMENTS1  "Args"
 #define ATTR_JOB_ARGUMENTS2  "Arguments"
 #define ATTR_JOB_CMD  "Cmd"
@@ -565,6 +567,7 @@
 #define ATTR_REMOVE_REASON  "RemoveReason"
 #define ATTR_REQUEUE_REASON  "RequeueReason"
 #define ATTR_REQUIREMENTS  "Requirements"
+#define ATTR_RESOURCE_REQUEST_CONSTRAINT "_condor_RESOURCE_CONSTRAINT"  // used in resource request ad
 #define ATTR_RESOURCE_REQUEST_COUNT "_condor_RESOURCE_COUNT"  // used in resource request ad
 #define ATTR_RESOURCE_REQUEST_CLUSTER "_condor_RESOURCE_CLUSTER"
 #define ATTR_RESOURCE_REQUEST_PROC "_condor_RESOURCE_PROC"
@@ -869,16 +872,6 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_UPDATESTATS_SEQUENCED  "UpdatesSequenced"
 #define ATTR_UPDATESTATS_LOST  "UpdatesLost"
 #define ATTR_UPDATESTATS_HISTORY  "UpdatesHistory"
-
-#define ATTR_QUILL_ENABLED  "QuillEnabled"
-#define ATTR_QUILL_NAME  "QuillName"
-#define ATTR_QUILL_IS_REMOTELY_QUERYABLE  "QuillIsRemotelyQueryable"
-#define ATTR_QUILL_DB_IP_ADDR  "QuillDatabaseIpAddr"
-#define ATTR_QUILL_DB_NAME  "QuillDatabaseName"
-#define ATTR_QUILL_DB_QUERY_PASSWORD  "QuillDatabaseQueryPassword"
-
-#define ATTR_QUILL_SQL_TOTAL  "NumSqlTotal"
-#define ATTR_QUILL_SQL_LAST_BATCH  "NumSqlLastBatch"
 
 #define ATTR_CHECKPOINT_PLATFORM  "CheckpointPlatform"
 #define ATTR_LAST_CHECKPOINT_PLATFORM  "LastCheckpointPlatform"

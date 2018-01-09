@@ -738,12 +738,13 @@ DAGMan supports jobs with queues of multiple procs, so for example:
 \begin{verbatim}
 queue 500
 \end{verbatim}
-will queue 500 procs as expected. However, \emph{as of version 8.7.2 DAGMan 
-does not support late materialization}. If a submit file queues multiple procs
-while the \Macro{SCHEDD\_ALLOW\_LATE\_MATERIALIZATION} and
-\Macro{SUBMIT\_FACTORY\_JOBS\_BY\_DEFAULT} attributes are set to True, DAGMan
-will produce unexpected results, including failing without warning. We are
-working to resolve this as quickly as possible.
+will queue 500 procs as expected. 
+
+Additionally, as of version 8.7.4 DAGMan supports late materialization. To use
+this functionality, set both \Macro{SCHEDD\_ALLOW\_LATE\_MATERIALIZATION} 
+and \Macro{SUBMIT\_FACTORY\_JOBS\_BY\_DEFAULT} knobs in your HTCondor
+configuration to True. This will have the side effect of submitting all jobs as
+factory jobs (not just the ones you explicitly flag) so use this sparingly.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{\label{dagman:submitdag}DAG Submission}
@@ -1000,9 +1001,16 @@ Using both will be detected and generate an error.
 % status file, jobstate.log file, halt file, etc.)
 
 After submission, the progress of the DAG can be monitored
-by looking at the job event log file(s),
+by looking at the job event log file(s) or
 observing the e-mail that job submission to HTCondor causes,
 or by using \Condor{q} \Arg{-dag}.
+
+Detailed information about a DAG's job progress can be obtained using \Condor{q} 
+\Arg{-l} \Arg{<jobID>}. This information is not updated frequently, however, so
+expect to see stale data. You can increase the frequency of updates by setting
+the \MacroNI{DAGMAN\_QUEUE\_UPDATE\_INTERVAL} configuration macro to a lower 
+number, ie. 5 or 10 seconds. Doing so will increase the workload on the
+\Condor{schedd}, so be cautious about setting it too low.
 
 There is also a large amount of information logged in an extra file.
 The name of this extra file is produced by appending
