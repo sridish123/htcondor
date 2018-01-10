@@ -1314,7 +1314,7 @@ Resource::do_update( void )
 		// resource and wasn't something from somewhere else (for instance,
 		// some other startd cron job).
 		//
-		if( name.find( "Uptime" ) == 0 ) {
+		if( name.find( "Uptime" ) == 0 || name.find( "StartOfJobUptime" ) == 0 ) {
 			deleteList.push_back( name );
 		}
 	}
@@ -2438,14 +2438,28 @@ Resource::publish( ClassAd* cap, amask_t mask )
 					continue;
 				}
 
+				// This has the side - effect of deleting the Uptime*
+				// attributes from the -direct classad, which is a
+				// convenient place for it, but only when a job is running.
 				deleteList.push_back( uptimeName );
 				deleteList.push_back( name );
 			}
+
+
+			// This is inefficient, but not inefficient enough to rewrite
+			// fPrintAd() with a blacklist.
+			classad::References r;
+			sGetAdAttrs( r, * cap, true, NULL );
 			for( auto i = deleteList.begin(); i != deleteList.end(); ++i ) {
-				cap->Delete( *i );
+				r.erase( *i );
 			}
 
-			fPrintAd( updateAdFile, * cap, true );
+			std::string adstring;
+			sPrintAdAttrs( adstring, * cap, r );
+
+			fprintf( updateAdFile, "%s", adstring.c_str() );
+
+
 			fclose( updateAdFile );
 		} else {
 			dprintf( D_ALWAYS, "Failed to open '%s' for writing update ad: %s (%d).\n",
