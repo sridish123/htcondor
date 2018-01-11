@@ -1073,7 +1073,7 @@ CStarter::peek(int /*cmd*/, Stream *sock)
 		size_t size = 0;
 		off_t offset = *it2;
 
-		if (it->size() && ((*it)[0] != DIR_DELIM_CHAR))
+		if ( it->size() && !fullpath(it->c_str()) )
 		{
 			*it = iwd + DIR_DELIM_CHAR + *it;
 		}
@@ -3678,12 +3678,9 @@ CStarter::removeTempExecuteDir( void )
 			// for chroots other than the trivial one, cat the chroot to the configured execute dir
 			// we don't expect to ever get here on Windows.
 			// If we do get here on Windows, Find_Named_Entry will just fail to find a match
-			const char *tmp = dircat(it->second.c_str(), Execute);
-			if ( ! tmp) {
+			if ( ! dircat(it->second.c_str(), Execute, full_exec_dir)) {
 				continue;
 			}
-			full_exec_dir = tmp;
-			delete [] tmp;
 		}
 		Directory execute_dir( full_exec_dir.Value(), PRIV_ROOT );
 		if ( execute_dir.Find_Named_Entry( dir_name.Value() ) ) {

@@ -2015,7 +2015,7 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 			}
 			else if(res) {
 				// legit remap was found
-				if(!is_relative_to_cwd(remap_filename.Value())) {
+				if(fullpath(remap_filename.Value())) {
 					fullname = remap_filename;
 				}
 				else {
@@ -2948,6 +2948,11 @@ FileTransfer::UploadThread(void *arg, Stream *s)
 {
 	dprintf(D_FULLDEBUG,"entering FileTransfer::UploadThread\n");
 	FileTransfer * myobj = ((upload_info *)arg)->myobj;
+
+	if (s == NULL) {
+		return 0;
+	}
+
 	filesize_t	total_bytes;
 	int status = myobj->DoUpload( &total_bytes, (ReliSock *)s );
 	if(!myobj->WriteStatusToTransferPipe(total_bytes)) {
@@ -3075,7 +3080,7 @@ FileTransfer::DoUpload(filesize_t *total_bytes, ReliSock *s)
 			is_url = true;
 			fullname = filename;
 			dprintf(D_FULLDEBUG, "DoUpload: sending %s as URL.\n", filename);
-		} else if( filename[0] != '/' && filename[0] != '\\' && filename[1] != ':' ){
+		} else if( !fullpath( filename ) ){
 			// looks like a relative path
 			fullname.formatstr("%s%c%s",Iwd,DIR_DELIM_CHAR,filename);
 		} else {
@@ -4580,7 +4585,9 @@ int FileTransfer::OutputFileTransferStats( ClassAd &stats ) {
 			stats_file_old_path += ".old";
 			// TODO: Add a lock to prevent two starters from rotating the log 
 			// at the same time.
-			rotate_file( stats_file_path.c_str(), stats_file_old_path.c_str() );
+			if (rotate_file(stats_file_path.c_str(), stats_file_old_path.c_str()) != 0) {
+				dprintf(D_ALWAYS, "FileTransfer failed to rotate %s to %s\n", stats_file_path.c_str(), stats_file_old_path.c_str());
+			}
 		}
 	}
 
@@ -4825,7 +4832,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 	}
 
 	std::string full_src_path;
-	if( is_relative_to_cwd( src_path ) ) {
+	if( !fullpath( src_path ) ) {
 		full_src_path = iwd;
 		if( full_src_path.length() > 0 ) {
 			full_src_path += DIR_DELIM_CHAR;
@@ -5013,7 +5020,7 @@ FileTransfer::LegalPathInSandbox(char const *path,char const *sandbox) {
 	canonicalize_dir_delimiters( buf );
 	path = buf.Value();
 
-	if( !is_relative_to_cwd(path) ) {
+	if( fullpath(path) ) {
 		return false;
 	}
 
@@ -5100,7 +5107,7 @@ GetDelegatedProxyRenewalTime(ClassAd *jobAd)
 bool
 FileTransfer::outputFileIsSpooled(char const *fname) {
 	if(fname) {
-		if( is_relative_to_cwd(fname) ) {
+		if( !fullpath(fname) ) {
 			if( Iwd && SpoolSpace && strcmp(Iwd,SpoolSpace)==0 ) {
 				return true;
 			}

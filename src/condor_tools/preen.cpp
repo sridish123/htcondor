@@ -51,6 +51,11 @@
 #include "ipv6_hostname.h"
 #include "subsystem_info.h"
 
+#include <iostream>
+#include <map>
+
+using namespace std;
+
 State get_machine_state();
 
 extern void		_condor_set_debug_flags( const char *strflags, int flags );
@@ -265,7 +270,7 @@ produce_output()
 }
 
 bool
-check_job_spool_hierarchy( char const *parent, char const *child, StringList &bad_spool_files )
+check_job_spool_hierarchy( char const *parent, char const *child, std::set< std::string > &stale_spool_files )
 {
 	ASSERT( parent );
 	ASSERT( child );
@@ -294,13 +299,14 @@ check_job_spool_hierarchy( char const *parent, char const *child, StringList &ba
 		}
 
 		if( IsDirectory(dir.GetFullPath()) && !IsSymlink(dir.GetFullPath()) ) {
-			if( check_job_spool_hierarchy( topdir.c_str(), f, bad_spool_files ) ) {
+			if( check_job_spool_hierarchy( topdir.c_str(), f, stale_spool_files ) ) {
 				good_file( topdir.c_str(), f );
 				continue;
 			}
 		}
 
-		bad_spool_files.append( dir.GetFullPath() );
+		const char* dirPath = dir.GetFullPath();
+		stale_spool_files.insert( dirPath );
 	}
 
 		// By returning true here, we indicate that this directory is
@@ -335,9 +341,9 @@ check_spool_dir()
 	const char  	*f;
     const char      *history, *startd_history;
 	Directory  		dir(Spool, PRIV_ROOT);
-	StringList 		well_known_list, bad_spool_files;
-	Qmgr_connection *qmgr = new Qmgr_connection();
-	bool			is_schedd_connected = false;
+	StringList 		well_known_list;
+	std::set<std::string> stale_spool_files;
+	Qmgr_connection *qmgr = NULL;
 	double			last_connection_time;
 	double			max_connection_time;
 
@@ -352,8 +358,8 @@ check_spool_dir()
 
     startd_history = param("STARTD_HISTORY			// connect to the Q manager in read-only mode.");
    	startd_history = condor_basename(startd_history);
-   	startd_history_length = strlen(startd_history);
-
+	startd_history_length = strlen(startd_history);
+	   
 	last_connection_time = _condor_debug_get_time_double();
 	max_connection_time = param_integer("PREEN_MAX_SCHEDD_CONNECTION_TIME");
 
@@ -380,7 +386,10 @@ check_spool_dir()
 		if ( ! well_known_list.contains(valid_list[ix])) well_known_list.append(valid_list[ix]);
 	}
 	
-		// Check each file in the directory
+		// Step 1: Check each file in the directory. Look for files that
+		// obviously should be here (job queue logs, shared exes, etc.) and
+		// flag them as good files. Put everything else into stale_spool_files,
+		// which we'll deal with later.
 	while( (f = dir.Next()) ) {
 
 			// see if it's on the list
@@ -412,8 +421,8 @@ check_spool_dir()
 			strlen(f) >= startd_history_length &&
 			strncmp(f, startd_history, startd_history_length) == 0) {
 
-            good_file( Spool, f );
-            continue;
+			good_file( Spool, f );
+			continue;
 		}
 
 			// see it it's an in-use shared executable
@@ -429,85 +438,83 @@ check_spool_dir()
 		}
 
 		if( IsDirectory( dir.GetFullPath() ) && !IsSymlink( dir.GetFullPath() ) ) {
-			if( check_job_spool_hierarchy( Spool, f, bad_spool_files ) ) {
+			if( check_job_spool_hierarchy( Spool, f, stale_spool_files ) ) {
 				good_file( Spool, f );
 				continue;
 			}
 		}
-			// If none of the previous checks succeeded, we can try a couple
-			// other checks which require an active connection to the schedd. 
-			// Establish a connection (if not already connected). If this fails
-			// for any reason, abort and don't delete any files.
-		if ( !is_schedd_connected ) {
-			if ( !( qmgr = ConnectQ (0,0,false) ) ) {
+
+			// We still don't know if this file is good or bad, and we can't
+			// tell without asking the schedd. Add it to our potentially stale
+			// files list, we'll deal with it later.
+		stale_spool_files.insert( f );
+	}
+
+		// Step 2: Connect to the schedd, and check if the files in 
+		// stage_spool_files are truly stale. If we find any that are not, 
+		// remove from the list. Also if we stay connected to the schedd for
+		// too long, force a temporary disconnect so it can recover.
+	for( auto i = stale_spool_files.begin(); i != stale_spool_files.end(); ++i ) {
+		
+		std::string spool_file = *i;
+
+		// Establish (or re-establish) schedd connection
+		if ( !qmgr ) {
+			if ( !( qmgr = ConnectQ (0, 0, false) ) ) {
+				dprintf( D_ALWAYS, "Unknown error connecting to job queue. "
+					"Aborting without deleting files.\n" );
 				return;
 			}
-			is_schedd_connected = true;
 			last_connection_time = _condor_debug_get_time_double();
 		}
 
-			// See if it's a legitimate checkpoint. Needs an active connection
-			// to the schedd.
-		if( is_ckpt_file_or_submit_digest(f) ) {
-			good_file( Spool, f );
+			// See if it's a legitimate checkpoint.
+		if( is_ckpt_file_or_submit_digest( spool_file.c_str() ) ) {
+			good_file( Spool, spool_file.c_str() );
+			stale_spool_files.erase( spool_file );
 			continue;
 		}
 
-			// See if it's a legimate MyProxy password file. Needs an active
-			// connection to the schedd.
-		if ( is_myproxy_file( f ) ) {
-			good_file( Spool, f );
+			// See if it's a legimate MyProxy password file.
+		if ( is_myproxy_file( spool_file.c_str() ) ) {
+			good_file( Spool, spool_file.c_str() );
+			stale_spool_files.erase( spool_file );
 			continue;
 		}
-			
-
-			// We think it's bad.  For now, just append it to a
-			// StringList, instead of actually deleting it.  This way,
-			// if DisconnectQ() fails, we can abort and not actually
-			// delete any of these files.  -Derek Wright 3/31/99
-		bad_spool_files.append( f );
 
 			// If the schedd is connected, check how long the connection has
 			// been active. If it has exceeded a maximum connection time 
-			// (defined by PREEN_MAX_SCHEDD_CONNECTION_TIME) then disconnect,
-			// and mark bad files for deletion.
-			// We also need to run this code when we hit the last file in the
-			// directory. Is there some way to know if this is the last file?
-		if ( is_schedd_connected ) {
+			// (defined by PREEN_MAX_SCHEDD_CONNECTION_TIME) then disconnect.
+			// This will give the schedd some time to deal with everything that
+			// happened while it was blocked.
+		if ( qmgr ) {
 			if ( _condor_debug_get_time_double() > 
 							( last_connection_time + max_connection_time ) ) {
 				if ( DisconnectQ( qmgr ) ) {
-						// We were actually talking to a real queue the whole time
-						// and didn't have any errors.  So, it's now safe to
-						// delete the files we think we can delete.
-					bad_spool_files.rewind();
-					while( (f = bad_spool_files.next()) ) {
-						bad_file( Spool, f, dir );
-					}
-					is_schedd_connected = false;
-					bad_spool_files.clearAll();
-				} else {
-					dprintf( D_ALWAYS, 
-							"Error disconnecting from job queue, not deleting "
-								"spool files.\n" );
+					qmgr = NULL;
+				} 
+				else {
+					dprintf( D_ALWAYS, "Error disconnecting from job queue.\n" );
 				}
 			}
 		}
 	}
 
-		// All done. If the schedd connection is open, disconnect and make the
-		// remaining files for deletion.
-	if ( is_schedd_connected ) {
-		if( DisconnectQ( qmgr ) ) {
-			bad_spool_files.rewind();
-			while( (f = bad_spool_files.next()) ) {
-				bad_file( Spool, f, dir );
-			}
-		} else {
-			dprintf( D_ALWAYS, 
-					"Error disconnecting from job queue, not deleting "
-						"spool files.\n" );
+		// Now disconnect from the schedd for good.
+	if ( qmgr ) {
+		if ( DisconnectQ( qmgr ) ) {
+			qmgr = NULL;
+		} 
+		else {
+			dprintf( D_ALWAYS, "Error disconnecting from job queue.\n" );
 		}
+	}
+
+		// Step 3: Now that we have a final list of stale files, it's time to 
+		// go through and actually flag them all for deletion.
+	for( auto i = stale_spool_files.begin(); i != stale_spool_files.end(); ++i ) {
+		std::string spool_file = *i;
+		bad_file( Spool, spool_file.c_str(), dir );
 	}
 }
 
@@ -906,16 +913,12 @@ void check_tmp_dir(){
 #if !defined(WIN32)
 	if (!RmFlag) return;
 
-	const char *tmpDir = NULL;
 	bool newLock = param_boolean("CREATE_LOCKS_ON_LOCAL_DISK", true);
 	if (newLock) {
-				// create a dummy FileLock for TmpPath access
-		FileLock *lock = new FileLock(-1, NULL, NULL);
-		tmpDir = lock->GetTempPath();	
-		delete lock;
-		rec_lock_cleanup(tmpDir, 3);
-		if (tmpDir != NULL)
-			delete []tmpDir;
+		// get temp path for file locking from the FileLock class
+		MyString tmpDir;
+		FileLock::getTempPath(tmpDir);
+		rec_lock_cleanup(tmpDir.Value(), 3);
 	}
   
 #endif	
@@ -1032,8 +1035,8 @@ bad_file( const char *dirpath, const char *name, Directory & dir )
 	MyString	pathname;
 	MyString	buf;
 
-	if( is_relative_to_cwd( name ) ) {
-	pathname.formatstr( "%s%c%s", dirpath, DIR_DELIM_CHAR, name );
+	if( !fullpath( name ) ) {
+		pathname.formatstr( "%s%c%s", dirpath, DIR_DELIM_CHAR, name );
 	}
 	else {
 		pathname = name;

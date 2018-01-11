@@ -4178,12 +4178,10 @@ Scheduler::InitializeUserLog( PROC_ID job_id )
 	MyString owner;
 	MyString domain;
 	MyString iwd;
-	MyString gjid;
 	int use_xml;
 
 	GetAttributeString(job_id.cluster, job_id.proc, ATTR_OWNER, owner);
 	GetAttributeString(job_id.cluster, job_id.proc, ATTR_NT_DOMAIN, domain);
-	GetAttributeString(job_id.cluster, job_id.proc, ATTR_GLOBAL_JOB_ID, gjid);
 
 	for(std::vector<const char*>::iterator p = logfiles.begin();
 			p != logfiles.end(); ++p) {
@@ -4207,7 +4205,7 @@ Scheduler::InitializeUserLog( PROC_ID job_id )
     }
 
 	if (ULog->initialize(owner.Value(), domain.Value(), logfiles,
-			job_id.cluster, job_id.proc, 0, gjid.Value())) {
+			job_id.cluster, job_id.proc, 0)) {
 		if(logfiles.size() > 1) {
 			InitializeMask(ULog,job_id.cluster, job_id.proc);
 		}
@@ -4221,7 +4219,7 @@ Scheduler::InitializeUserLog( PROC_ID job_id )
 		SpoolDir += DIR_DELIM_CHAR;
 		if ( !strncmp( SpoolDir.c_str(), logfilename.c_str(),
 					SpoolDir.length() ) && ULog->initialize( logfiles,
-					job_id.cluster, job_id.proc, 0, gjid.Value() ) ) {
+					job_id.cluster, job_id.proc, 0 ) ) {
 			if(logfiles.size() > 1) {
 				InitializeMask(ULog,job_id.cluster,job_id.proc);
 			}
@@ -5459,7 +5457,7 @@ Scheduler::updateGSICred(int cmd, Stream* s)
 	ASSERT(!SpoolSpace.empty());
 	char *proxy_path = NULL;
 	jobad->LookupString(ATTR_X509_USER_PROXY,&proxy_path);
-	if( proxy_path && is_relative_to_cwd(proxy_path) ) {
+	if( proxy_path && !fullpath(proxy_path) ) {
 		MyString iwd;
 		if( jobad->LookupString(ATTR_JOB_IWD,iwd) ) {
 			iwd.formatstr_cat("%c%s",DIR_DELIM_CHAR,proxy_path);
@@ -6181,26 +6179,26 @@ Scheduler::actOnJobs(int, Stream* s)
 
 		case JA_HOLD_JOBS:
 			if (clusterad->factory) {
-				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmHold)) {
+				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmHold) < 0) {
+					results.record( tmp_id, AR_PERMISSION_DENIED );
+				} else {
 					results.record( tmp_id, AR_SUCCESS );
 					num_success++;
 
 					SetAttributeString(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSE_REASON, reason.Value());
-				} else {
-					results.record( tmp_id, AR_PERMISSION_DENIED );
 				}
 			}
 			break;
 
 		case JA_RELEASE_JOBS:
 			if (clusterad->factory) {
-				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmRunning)) {
+				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmRunning) < 0) {
+					results.record( tmp_id, AR_PERMISSION_DENIED );
+				} else {
 					results.record( tmp_id, AR_SUCCESS );
 					num_success++;
 
 					DeleteAttribute(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSE_REASON); 
-				} else {
-					results.record( tmp_id, AR_PERMISSION_DENIED );
 				}
 			}
 			break;
@@ -6208,12 +6206,18 @@ Scheduler::actOnJobs(int, Stream* s)
 		case JA_REMOVE_JOBS:
 		case JA_REMOVE_X_JOBS:
 			if (clusterad->factory) {
-				PauseJobFactory(clusterad->factory, mmClusterRemoved);
-				//PRAGMA_REMIND("TODO: can we remove the cluster now rather than just pausing the factory and scheduling the removal?")
-				ScheduleClusterForDeferredCleanup(tmp_id.cluster);
-				// we succeeded because we found the cluster, and a Pause 3 will cannot fail.
-				results.record( tmp_id, AR_SUCCESS );
-				num_success++;
+				// check to see if we are allowed to pause this factory, but don't actually change it's
+				// pause state, the mmClusterRemoved pause mode is a runtime-only schedd state.
+				if (SetAttribute(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, "3", SetAttribute_QueryOnly) < 0) {
+					results.record( tmp_id, AR_PERMISSION_DENIED );
+				} else {
+					PauseJobFactory(clusterad->factory, mmClusterRemoved);
+					//PRAGMA_REMIND("TODO: can we remove the cluster now rather than just pausing the factory and scheduling the removal?")
+					ScheduleClusterForDeferredCleanup(tmp_id.cluster);
+					// we succeeded because we found the cluster, and a Pause 3 will cannot fail.
+					results.record( tmp_id, AR_SUCCESS );
+					num_success++;
+				}
 			}
 			break;
 		}
@@ -9176,7 +9180,7 @@ Scheduler::spawnShadow( shadow_rec* srec )
 	PROC_ID* job_id = &srec->job_id;
 
 	Shadow*	shadow_obj = NULL;
-	int		sh_is_dc = FALSE;
+	bool	sh_is_dc = FALSE;
 	char* 	shadow_path = NULL;
 	bool wants_reconnect = false;
 
@@ -9251,14 +9255,12 @@ Scheduler::spawnShadow( shadow_rec* srec )
 		}
 	}
 
-	sh_is_dc = (int)shadow_obj->isDC();
+	sh_is_dc = shadow_obj->isDC();
 	bool sh_reads_file = shadow_obj->provides( ATTR_HAS_JOB_AD_FROM_FILE );
 	shadow_path = strdup( shadow_obj->path() );
 
-	if ( shadow_obj ) {
-		delete( shadow_obj );
-		shadow_obj = NULL;
-	}
+	delete( shadow_obj );
+	shadow_obj = NULL;
 
 #endif /* ! WIN32 */
 
@@ -15845,7 +15847,16 @@ bool setJobFactoryPauseAndLog(JobQueueCluster * cad, int pause_mode, int hold_co
 	if (reason.empty() || pause_mode == mmRunning) {
 		cad->Delete(ATTR_JOB_MATERIALIZE_PAUSE_REASON);
 	} else {
-		cad->Assign(ATTR_JOB_MATERIALIZE_PAUSE_REASON, reason);
+		if (strchr(reason.c_str(), '\n')) {
+			// make sure that the reason  has no embedded newlines because if it does,
+			// it will cause the SCHEDD to abort when it rotates the job log.
+			std::string msg(reason);
+			std::replace(msg.begin(), msg.end(), '\n', ' ');
+			std::replace(msg.begin(), msg.end(), '\r', ' ');
+			cad->Assign(ATTR_JOB_MATERIALIZE_PAUSE_REASON, msg);
+		} else {
+			cad->Assign(ATTR_JOB_MATERIALIZE_PAUSE_REASON, reason);
+		}
 	}
 
 	if (cad->factory) {
