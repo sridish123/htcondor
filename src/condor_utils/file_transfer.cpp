@@ -1846,8 +1846,8 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	// Variable for deferred transfers, used to transfer multiple files at once
 	// by certain filte transfer plugins. These need to be scoped to the full
 	// function.
-	classad::ClassAd *deferredTransfers = new classad::ClassAd();
-	classad::ClassAd thisTransfer;
+	std::unique_ptr<classad::ClassAd> deferredTransfers(new classad::ClassAd());
+	classad::ClassAd* thisTransfer;
 	int numDeferredTransfers = 0;
 
 	bool I_go_ahead_always = false;
@@ -2257,9 +2257,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 					" until end of download loop.\n", URL.Value() );
 				numDeferredTransfers++;
 				std::string thisTransferAttr = "transfer" + std::to_string(numDeferredTransfers);
-				thisTransfer.InsertAttr( "Url", URL );
-				thisTransfer.InsertAttr( "DownloadFileName", fullname );
-				deferredTransfers->Insert( thisTransferAttr, &thisTransfer );
+				thisTransfer = new classad::ClassAd();
+				thisTransfer->InsertAttr( "Url", URL );
+				thisTransfer->InsertAttr( "DownloadFileName", fullname );
+				deferredTransfers->Insert( thisTransferAttr, thisTransfer );
 			}
 			// All other file transfer plugins should transfer now.
 			else {
@@ -2491,12 +2492,13 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 
 	// Now that we've completed the main file transfer loop, it's time to 
 	// transfer all files that needed a third party plugin.
-	rc = InvokeMultipleFileTransferPlugin( errstack, deferredTransfers, 
-		&pluginStatsAd, LocalProxyName.Value() );
-	if ( rc != 0 ) {
-		dprintf(D_ALWAYS, "FILETRANSFER: Multiple file transfer failed.\n");
+	if( deferredTransfers->size() > 0 ) {
+		rc = InvokeMultipleFileCurlPlugin( errstack, std::move(deferredTransfers), 
+			&pluginStatsAd, LocalProxyName.Value() );
+		if ( rc != 0 ) {
+			dprintf(D_ALWAYS, "FILETRANSFER: Multiple file transfer failed.\n");
+		}
 	}
-	delete [] deferredTransfers;
 
 	// go back to the state we were in before file transfer
 	s->set_crypto_mode(socket_default_crypto);
@@ -4448,53 +4450,80 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 	return 0;
 }
 
-// Similar to FileTransfer::InvokeFileTransferPlugin, although designed to 
-// transfer multiple files at once (passed in via the transfer_files classad)
-int FileTransfer::InvokeMultipleFileTransferPlugin(CondorError &e, classad::ClassAd* 
-		transfer_files, ClassAd* plugin_stats, const char* proxy_filename) {
-	/*
-	if (plugin_method_table == NULL) {
-		dprintf(D_FULLDEBUG, "FILETRANSFER: No plugin table defined! (request was %s)\n", source);
-		e.pushf("FILETRANSFER", 1, "No plugin table defined (request was %s)", source);
+// [FileTransfer::InvokeMultipleFileCurlPlugin]
+// @description: Similar to FileTransfer::InvokeFileTransferPlugin, although 
+// 		designed to transfer multiple files at once (passed in via the 
+//		transfer_files classad) using curl_plugin.
+int FileTransfer::InvokeMultipleFileCurlPlugin( CondorError &e, 
+			std::unique_ptr<classad::ClassAd> transfer_files, 
+			ClassAd* plugin_stats, const char* proxy_filename ) {
+
+	if ( plugin_method_table == NULL ) {
+		dprintf( D_FULLDEBUG, "FILETRANSFER: No plugin table defined! "
+				"(requesting multi-file transfer)\n" );
+		e.pushf( "FILETRANSFER", 1, "No plugin table defined (requesting "
+				"multi-file transfer)" );
 		return GET_FILE_PLUGIN_FAILED;
 	}
-
-	// Determine which plugin to invoke
-	MyString plugin = DetermineFileTransferPlugin( e, source, dest );
 
 	// Prepare environment for the plugin
 	Env plugin_env;
 	plugin_env.Import();
 
 	// Add x509UserProxy if it's defined
-	if (proxy_filename && *proxy_filename) {
-		plugin_env.SetEnv("X509_USER_PROXY",proxy_filename);
-		dprintf(D_FULLDEBUG, "FILETRANSFER: setting X509_USER_PROXY env to %s\n", proxy_filename);
+	if ( proxy_filename && *proxy_filename ) {
+		plugin_env.SetEnv( "X509_USER_PROXY",proxy_filename );
+		dprintf( D_FULLDEBUG, "FILETRANSFER: setting X509_USER_PROXY env to %s\n",
+				proxy_filename );
 	}
 
 	// Determine if we want to run the plugin with root priv (if available).
 	// If so, drop_privs should be false.  the default is to drop privs.
-	bool drop_privs = !param_boolean("RUN_FILETRANSFER_PLUGINS_WITH_ROOT", false);
+	bool drop_privs = !param_boolean( "RUN_FILETRANSFER_PLUGINS_WITH_ROOT", false );
+
+	// We already assume at this point that we're using curl_plugin, but we don't
+	// know the full path. 
+	// MRC: Look it up in the plugin_method_table.
+	std::string plugin_path = "/nobackup/condor/release_dir/libexec/curl_plugin";
+
+	// Unparse the classad of files to transfer. Save it to a temporary file
+	// in the spool directory.
+	classad::ClassAdUnParser unparser;
+	std::string transfer_files_string;
+	unparser.Unparse( transfer_files_string, transfer_files.get() );
+
+	int cluster_id, proc_id;   
+	jobAd.LookupInteger( ATTR_CLUSTER_ID, cluster_id );
+	jobAd.LookupInteger( ATTR_PROC_ID, proc_id );
+
+	std::string curl_input_filename = param( "SPOOL" );
+	curl_input_filename += "/curl_plugin_input." + std::to_string( cluster_id ) 
+		+ "." + std::to_string( proc_id );
+	FILE* curl_input_file = safe_fopen_wrapper( curl_input_filename.c_str(), "w" );
+	fputs( transfer_files_string.c_str(), curl_input_file );
+	fclose( curl_input_file );
+
+	// Prepare args for the plugin
+	ArgList plugin_args;
+	plugin_args.AppendArg( plugin_path.c_str() );
+	plugin_args.AppendArg( curl_input_filename.c_str() );
 
 	// Invoke the plugin
-	dprintf(D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin.Value());
-	FILE* plugin_pipe = my_popen(plugin_args, "r", FALSE, &plugin_env, drop_privs);
-
-	// Send the transfer_files ClassAd in string format to the plugin via
-	// the open socket
-	// ...
+	dprintf( D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
+	FILE* plugin_pipe = my_popen( plugin_args, "r", FALSE, &plugin_env, drop_privs );
 
 	// Capture stdout from the plugin and dump it to the stats file
 	char single_stat[1024];
 	while( fgets( single_stat, sizeof( single_stat ), plugin_pipe ) ) {
 		if( !plugin_stats->Insert( single_stat ) ) {
-			dprintf (D_ALWAYS, "FILETRANSFER: error importing statistic %s\n", single_stat);
+			dprintf ( D_ALWAYS, "FILETRANSFER: error importing statistic %s\n", single_stat );
 		}
 	}
 
 	// Close the plugin
-	int plugin_status = my_pclose(plugin_pipe);
-	dprintf (D_ALWAYS, "FILETRANSFER: plugin returned %i\n", plugin_status);
+	int plugin_status = my_pclose( plugin_pipe );
+	dprintf ( D_ALWAYS, "FILETRANSFER: plugin returned %i (%s)\n", 
+		plugin_status, strerror( plugin_status ) );
 
 	// there is a unique issue when invoking plugins as root where shared
 	// libraries defined as relative to $ORIGIN in the RUNPATH will not
@@ -4504,7 +4533,7 @@ int FileTransfer::InvokeMultipleFileTransferPlugin(CondorError &e, classad::Clas
 	// if we suspect this is the case, let's print a hint since it's
 	// otherwise very difficult to understand what is happening and why
 	// this failed.
-	if (!drop_privs && plugin_status == 32512) {
+	if ( !drop_privs && plugin_status == 32512 ) {
 		dprintf (D_ALWAYS, "FILETRANSFER: ERROR!  You are invoking plugins as root because "
 			"you have RUN_FILETRANSFER_PLUGINS_WITH_ROOT set to TRUE.  However, some of "
 			"the shared libraries in your plugin are likely paths that are relative to "
@@ -4516,16 +4545,18 @@ int FileTransfer::InvokeMultipleFileTransferPlugin(CondorError &e, classad::Clas
 	// Any non-zero exit from plugin indicates error.  
 	// Return -1 on error, or 0 otherwise, so map plugin_status to the
 	// proper value.
+	// MRC: This error handling code only applies to single files, change it
+	// to accommodate multiple files.
 	if (plugin_status != 0) {
 		std::string errorMessage;
 		std::string transferUrl;
-		plugin_stats->LookupString("TransferError", errorMessage);
-		plugin_stats->LookupString("TransferUrl", transferUrl);
-		e.pushf("FILETRANSFER", 1, "non-zero exit (%i) from %s. Error: %s (%s)", 
-			plugin_status, plugin.Value(), errorMessage.c_str(), transferUrl.c_str());
+		plugin_stats->LookupString( "TransferError", errorMessage );
+		plugin_stats->LookupString( "TransferUrl", transferUrl );
+		e.pushf( "FILETRANSFER", 1, "non-zero exit (%i) from %s. Error: %s (%s)", 
+			plugin_status, plugin_path.c_str(), errorMessage.c_str(), transferUrl.c_str() );
 		return GET_FILE_PLUGIN_FAILED;
 	}
-	*/
+
 	return 0;
 }
 

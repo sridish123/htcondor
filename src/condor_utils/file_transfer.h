@@ -289,8 +289,8 @@ class FileTransfer: public Service {
 	int InitializePlugins( CondorError &e );
 	MyString DetermineFileTransferPlugin( CondorError &error, const char* source, const char* dest );
 	int InvokeFileTransferPlugin( CondorError &e, const char* URL, const char* dest, ClassAd* plugin_stats, const char* proxy_filename = NULL );
-	int InvokeMultipleFileTransferPlugin( CondorError &e, classad::ClassAd* transfer_files, ClassAd* plugin_stats, const char* proxy_filename );
-    int OutputFileTransferStats( ClassAd &stats );
+	int InvokeMultipleFileCurlPlugin( CondorError &e, std::unique_ptr<classad::ClassAd> transfer_files, ClassAd* plugin_stats, const char* proxy_filename );
+	int OutputFileTransferStats( ClassAd &stats );
 	MyString GetSupportedMethods();
 
 		// Convert directories with a trailing slash to a list of the contents

@@ -1,21 +1,13 @@
 #include "condor_common.h"
 #include "condor_classad.h"
 #include "../condor_utils/file_transfer_stats.h"
+#include "curl_plugin.h"
 #include "utc_time.h"
-
-#ifdef WIN32
-#define CURL_STATICLIB // this has to match the way the curl library was built.
-#endif
-
-#include <curl/curl.h>
+#include <iostream>
 
 #define MAX_RETRY_ATTEMPTS 20
 
-int send_curl_request( char** argv, int diagnostic, CURL* handle, FileTransferStats* stats );
-int server_supports_resume( CURL* handle, char* url );
-void init_stats( char **argv );
-static size_t header_callback( char* buffer, size_t size, size_t nitems );
-static size_t ftp_write_callback( void* buffer, size_t size, size_t nmemb, void* stream );
+using namespace std;
 
 static FileTransferStats* ft_stats;
 
@@ -23,32 +15,37 @@ int
 main( int argc, char **argv ) {
     CURL* handle = NULL;
     ClassAd stats_ad;
+    FILE* input_file;
     FileTransferStats stats;
-    int retry_count = 0;
-    int rval = -1;
     int diagnostic = 0;
+    int retry_count = 0;
+    int rval = 0;
     MyString stats_string;
+    std::string input_filename;
+    std::string transfer_files;
     UtcTime time;
 
     // Point the global curl_stats pointer to our local object
     ft_stats = &stats;
 
-    if(argc == 2 && strcmp(argv[1], "-classad") == 0) {
-        printf("%s",
-            "PluginVersion = \"0.1\"\n"
-            "PluginType = \"FileTransfer\"\n"
-            "SupportedMethods = \"http,https,ftp,file\"\n"
+    // Make sure there is only one command-line argument, and it's either
+    // -classad or the name of an input file
+    if ( argc == 2 ) {
+        if ( strcmp( argv[1], "-classad" ) == 0 ) {
+            printf( "%s",
+                "PluginVersion = \"0.2\"\n"
+                "PluginType = \"FileTransfer\"\n"
+                "SupportedMethods = \"http,https,ftp,file\"\n"
             );
-
-        return 0;
+            return 0;
+        }
+        else {
+            input_filename = argv[1];
+        }
     }
-
     if ((argc > 3) && ! strcmp(argv[3],"-diagnostic")) {
         diagnostic = 1;
     } 
-    else if(argc != 3) {
-        return -1;
-    }
 
     // Initialize win32 + SSL socket libraries.
     // Do not initialize these separately! Doing so causes https:// transfers
@@ -64,11 +61,23 @@ main( int argc, char **argv ) {
         return -1;
     }
 
+    // Read input file containing data about files we want to transfer.
+    // This file contains a one-line serialized classad.
+    input_file = safe_fopen_wrapper( input_filename.c_str(), "r" );
+    fseek( input_file, 0L, SEEK_END );
+    int length = ftell( input_file );
+    char input_file_data[length];
+    fseek( input_file, 0L, SEEK_SET );
+    fgets( input_file_data, length, input_file ) ;
+    fclose( input_file );
+
     // Initialize the stats structure
     init_stats( argv );
     stats.TransferStartTime = time.getTimeDouble();
 
     // Enter the loop that will attempt/retry the curl request
+    // MRC: Update following code to accommodate multiple files
+    /*
     for(;;) {
     
         // The sleep function is defined differently in Windows and Linux
@@ -109,6 +118,7 @@ main( int argc, char **argv ) {
         sPrintAd( stats_string, stats_ad );
         fprintf( stdout, "%s", stats_string.c_str() );
     }
+    */
 
     // Cleanup 
     curl_easy_cleanup(handle);
