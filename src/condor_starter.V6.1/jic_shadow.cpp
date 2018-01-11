@@ -1945,6 +1945,8 @@ JICShadow::publishStartdUpdates( ClassAd* ad ) {
 	// because you can theoretically run more than one, but we'll ignore
 	// that for now (and the startd doesn't produce the list itself).
 	if(! m_job_update_attrs_set) {
+		m_job_update_attrs.append( "CPUsUsage" );
+
 		std::string scjl;
 		if( param( scjl, "STARTD_CRON_JOBLIST" ) ) {
 			StringList jobs( scjl.c_str() );
@@ -1969,6 +1971,7 @@ JICShadow::publishStartdUpdates( ClassAd* ad ) {
 				}
 			}
 		}
+
 		m_job_update_attrs_set = true;
 	}
 

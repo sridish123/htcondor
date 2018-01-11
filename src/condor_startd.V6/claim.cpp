@@ -292,7 +292,7 @@ Claim::publish( ClassAd* cad, amask_t how_much )
 		// put the image size value from the last call to updateUsage into the ad.
 		cad->Assign(ATTR_IMAGE_SIZE, c_image_size);
 		// also the CpusUsage value
-		//cad->Assign("CpusUsage", c_cpus_usage);
+		cad->Assign("CPUsUsage", c_cpus_usage);
 		//PRAGMA_REMIND("put CpusUsage into the standard attributes header file.")
 	}
 
@@ -1413,7 +1413,7 @@ void Claim::updateUsage(double & percentCpuUsage, long long & imageSize)
 		imageSize = usage.total_image_size;
 	}
 	// save off the last values so we can use them in the ::publish method
-	c_cpus_usage = percentCpuUsage;
+	c_cpus_usage = percentCpuUsage / 100;
 	c_image_size = imageSize;
 }
 

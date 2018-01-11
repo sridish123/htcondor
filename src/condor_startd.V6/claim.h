@@ -261,8 +261,12 @@ public:
 	bool verifyCODAttrs( ClassAd* req );
 	bool publishStarterAd( ClassAd* ad );
 
-	const char * executeDir() { if( c_starter ) { return c_starter->executeDir(); } else { return NULL; } }
-	pid_t starterPID() { if( c_starter ) { return c_starter->pid(); } else { return 0; } }
+	const char * executeDir() {
+		Starter * s = findStarterByPid( c_starter_pid );
+		if( s ) { return s->executeDir(); }
+		else { return NULL; }
+	}
+	pid_t starterPID() const { return c_starter_pid; }
 
 	bool periodicCheckpoint( void );
 
