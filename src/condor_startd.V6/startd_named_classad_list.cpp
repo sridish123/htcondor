@@ -175,7 +175,7 @@ StartdNamedClassAdList::Publish( ClassAd *merged_ad, unsigned r_id )
 	// starter needs them to compute the (per-job) *Usage metrics.  Instead,
 	// we filter them out in Resource::do_update().
 
-	dprintf( D_ALWAYS, "FIXME: compute per-slot recent metrics.\n" );
+	// FIXME: compute per-slot recent metrics.
 
 	StartdNamedClassAd::Merge( merged_ad, & accumulator );
 	return 0;

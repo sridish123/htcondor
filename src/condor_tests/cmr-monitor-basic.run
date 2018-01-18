@@ -272,19 +272,15 @@ if( CondorTest::RunTest( $testName, $submitFileName, 0 ) ) {
 				die( "Value in event log (" . $eventLogUsage{ $jobID } . ") does not equal value in history file (${value}), aborting.\n" );
 			}
 
-			# In the long run, the observed fraction will converge on the
-			# increment divided by STARTD_CRON_SQUIDs_MONITOR_PERIOD.
-			#
-			# In the short term, a job that starts just before a sample
-			# is charged for the whole previous sample, whereas a job which
-			# stops just before a sample is not charged at all for almost a
-			# full sample's worth of activity.  Since the job length is an
-			# even multiple of the sample length, it can't be off by one on
-			# both sides, and we don't have to permit 4 and 8 increments.
-			my $lowerBound = (5 * $increment) / 60;
-			my $upperBound = (7 * $increment) / 60;
-
-			if( $lowerBound <= $value && $value <= $upperBound ) {
+			my $STARTD_CRON_SQUIDs_MONITOR_PERIOD = 10;
+			my $expectedValue = $increment / $STARTD_CRON_SQUIDs_MONITOR_PERIOD;
+			# Because we sleep for sixty seconds in the job, we expect to get
+			# five complete samples of usage over five sampling periods;
+			# however, because we keep time in integer seconds, occasionally
+			# the difference between the first and fifth sample is one second
+			# longer than it "ought" to be.
+			my $sadnessValue = ($increment * 5) / 51;
+			if( $value == $expectedValue || $value == $sadnessValue ) {
 				RegisterResult( 1, check_name => $SQUID . "-usage", test_name => $testName );
 			} else {
 				RegisterResult( 0, check_name => $SQUID . "-usage", test_name => $testName );

@@ -1300,7 +1300,10 @@ Resource::do_update( void )
 		// resource and wasn't something from somewhere else (for instance,
 		// some other startd cron job).
 		//
-		if( name.find( "Uptime" ) == 0 || name.find( "StartOfJobUptime" ) == 0 ) {
+		if( name.find( "Uptime" ) == 0
+		 || name.find( "StartOfJobUptime" ) == 0
+		 || (name != "LastUpdate" && name.find( "LastUpdate" ) == 0)
+		 || name.find( "FirstUpdate" ) == 0 ) {
 			deleteList.push_back( name );
 		}
 	}
@@ -2405,10 +2408,21 @@ Resource::publish( ClassAd* cap, amask_t mask )
 				if(! StartdCronJobParams::getResourceNameFromAttributeName( uptimeName, usageName )) { continue; }
 				usageName += "Usage";
 
+				std::string lastUpdateName = "LastUpdate" + uptimeName;
+				std::string firstUpdateName = "FirstUpdate" + uptimeName;
+
 				if( name.rfind( "Seconds" ) == name.length() - 7 ) {
+					// Note that we calculate the usage rate only for full
+					// sample intervals.  This eliminates the imprecision of
+					// the sample interval in which the job started; since we
+					// can't include the usage from the sample interval in
+					// which the job ended, we also don't include the time
+					// the job was running in that interval.  The computation
+					// is thus exact for its time period.
 					std::string usageExpr;
-					formatstr( usageExpr, "(%s - %s)/(time() - JobStart)",
-						uptimeName.c_str(), name.c_str() );
+					formatstr( usageExpr, "(%s - %s)/(%s - %s)",
+						uptimeName.c_str(), name.c_str(),
+						lastUpdateName.c_str(), firstUpdateName.c_str() );
 
 					classad::Value v;
 					if(! cap->EvaluateExpr( usageExpr, v )) { continue; }
@@ -2421,11 +2435,10 @@ Resource::publish( ClassAd* cap, amask_t mask )
 					continue;
 				}
 
-				// This has the side - effect of deleting the Uptime*
-				// attributes from the -direct classad, which is a
-				// convenient place for it, but only when a job is running.
 				deleteList.push_back( uptimeName );
 				deleteList.push_back( name );
+				deleteList.push_back( lastUpdateName );
+				deleteList.push_back( firstUpdateName );
 			}
 
 
@@ -2441,7 +2454,6 @@ Resource::publish( ClassAd* cap, amask_t mask )
 			sPrintAdAttrs( adstring, * cap, r );
 
 			fprintf( updateAdFile, "%s", adstring.c_str() );
-
 
 			fclose( updateAdFile );
 		} else {

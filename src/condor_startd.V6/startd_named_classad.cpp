@@ -153,6 +153,13 @@ StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 				dprintf( D_FULLDEBUG, "Aggregate(): %s = %.6f\n", name.c_str(), newValue );
 				to->InsertAttr( name, newValue );
 			}
+
+			// Now that we've aggregate the value, set a resource-specific
+			// LastUpdate* attribute for when we aggregate into a slot ad
+			// with more than one resource.
+			std::string lastUpdateName = "LastUpdate" + name;
+			to->CopyAttribute( lastUpdateName.c_str(), "LastUpdate", from );
+			dprintf( D_FULLDEBUG, "Aggregate(): setting %s\n", lastUpdateName.c_str() );
 		} else {
 			dprintf( D_FULLDEBUG, "Aggregate(): copying '%s'.\n", name.c_str() );
 			ExprTree * copy = expr->Copy();
@@ -160,6 +167,29 @@ StartdNamedClassAd::Aggregate( ClassAd * to, ClassAd * from ) {
 				dprintf( D_ALWAYS, "Failed to copy attribute while aggregating ad.  Ignoring, but you probably shouldn't.\n" );
 			}
 		}
+	}
+
+	// Once we've aggregated the new sample, reset the StartOfJob* values, and
+	// set FirstUpdate*, if this is the first sample since the job started.
+	bool resetStartOfJob = false;
+	if( to->LookupBool( "ResetStartOfJob", resetStartOfJob ) && resetStartOfJob ) {
+		dprintf( D_FULLDEBUG, "Aggregate(): resetting StartOfJob* attributes...\n" );
+
+		for( auto i = to->begin(); i != to->end(); ++i ) {
+			const std::string & name = i->first;
+			if( name.find( "StartOfJob" ) != 0 ) { continue; }
+
+			std::string uptimeName = name.substr( 10 );
+			to->CopyAttribute( name.c_str(), uptimeName.c_str() );
+
+			std::string firstUpdateName = "FirstUpdate" + uptimeName;
+			to->CopyAttribute( firstUpdateName.c_str(), "LastUpdate" );
+		}
+
+		to->Delete( "ResetStartOfJob" );
+
+		dprintf( D_FULLDEBUG, "Aggregate(): aggregated ad is now:\n" );
+		dPrintAd( D_FULLDEBUG, * to );
 	}
 }
 
@@ -212,6 +242,7 @@ StartdNamedClassAd::reset_monitor() {
 			formatstr( jobAttributeName, "StartOfJob%s", name.c_str() );
 			dprintf( D_ALWAYS, "reset_monitor(): recording %s = %.6f\n", jobAttributeName.c_str(), initialValue );
 			from->InsertAttr( jobAttributeName.c_str(), initialValue );
+			from->InsertAttr( "ResetStartOfJob", true );
 		}
 	}
 }
@@ -244,6 +275,16 @@ StartdNamedClassAd::unset_monitor() {
 			formatstr( jobAttributeName, "StartOfJob%s", name.c_str() );
 			dprintf( D_ALWAYS, "unset_monitor(): removing %s\n", jobAttributeName.c_str() );
 			from->Delete( jobAttributeName );
+
+			std::string firstUpdateName;
+			formatstr( firstUpdateName, "FirstUpdate%s", name.c_str() );
+			dprintf( D_ALWAYS, "unset_monitor(): removing %s\n", firstUpdateName.c_str() );
+			from->Delete( firstUpdateName );
+
+			std::string lastUpdateName;
+			formatstr( lastUpdateName, "LastUpdate%s", name.c_str() );
+			dprintf( D_ALWAYS, "unset_monitor(): removing %s\n", lastUpdateName.c_str() );
+			from->Delete( lastUpdateName );
 		}
 	}
 }
