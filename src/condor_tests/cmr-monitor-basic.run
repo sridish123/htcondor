@@ -278,9 +278,10 @@ if( CondorTest::RunTest( $testName, $submitFileName, 0 ) ) {
 			# five complete samples of usage over five sampling periods;
 			# however, because we keep time in integer seconds, occasionally
 			# the difference between the first and fifth sample is one second
-			# longer than it "ought" to be.
+			# longer than it "ought" to be... or one second shorter.  *sigh*
 			my $sadnessValue = ($increment * 5) / 51;
-			if( $value == $expectedValue || $value == $sadnessValue ) {
+			my $madnessValue = ($increment * 5) / 49;
+			if( $value == $expectedValue || $value == $sadnessValue || $value == $madnessValue ) {
 				RegisterResult( 1, check_name => $SQUID . "-usage", test_name => $testName );
 			} else {
 				RegisterResult( 0, check_name => $SQUID . "-usage", test_name => $testName );
