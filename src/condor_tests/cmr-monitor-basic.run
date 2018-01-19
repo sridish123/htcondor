@@ -288,10 +288,45 @@ if( CondorTest::RunTest( $testName, $submitFileName, 0 ) ) {
 			}
 		}
 	}
-
-	CondorTest::debug("$testName: SUCCESS\n",1);
 } else {
-	die( "Error: $testName: CondorTest::RunTest() failed\n" );
+	die( "Error: $testName: CondorTest::RunTest(${submitFileName}) failed\n" );
+}
+
+# Poll the .update.ad file and then check its results.
+%jobIDToSQUIDsMap = ();
+$submitFileName = "cmr-monitor-basic-ad.cmd";
+if( CondorTest::RunTest( $testName, $submitFileName, 0 ) ) {
+	open( my $fh, '<', 'cmr-monitor-basic-ad.out' ) or
+		die( "Error: $testName: could not open 'cmr-monitor-basic-ad.out'\n" );
+
+	my $lineCount = 0;
+	while( my $line = <$fh> ) {
+		++$lineCount;
+		my( $SQUID, $value ) = split( ' ', $line );
+
+		my $increment = $squidIncrements{ $SQUID };
+		if(! defined( $increment )) {
+			die( "Failure: SQUID '${SQUID}' invalid.\n" );
+		}
+
+		# See commentary above.
+		my $STARTD_CRON_SQUIDs_MONITOR_PERIOD = 10;
+		my $expectedValue = $increment / $STARTD_CRON_SQUIDs_MONITOR_PERIOD;
+		my $sadnessValue = ($increment * 5) / 51;
+		my $madnessValue = ($increment * 5) / 49;
+		if( $value == $expectedValue || $value == $sadnessValue || $value == $madnessValue ) {
+			RegisterResult( 1, check_name => $SQUID . "-update.ad-${lineCount}", test_name => $testName );
+		} else {
+			RegisterResult( 0, check_name => $SQUID . "-update.ad-${lineCount}", test_name => $testName );
+		}
+	}
+
+	# Each test job appends four lines to the log.
+	if( $lineCount != 16 ) {
+		die( "Error: $testName: 'cmr-monitor-basic-ad.out' had $lineCount lines, not 16.\n" );
+	}
+} else {
+	die( "Error: $testName: CondorTest::RunTest(${submitFileName}) failed\n" );
 }
 
 exit( 0 );
