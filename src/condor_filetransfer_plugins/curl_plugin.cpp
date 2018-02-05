@@ -14,19 +14,17 @@ static FileTransferStats* ft_stats;
 int 
 main( int argc, char **argv ) {
     CURL* handle = NULL;
-    ClassAd stats_ad;
+    classad::ClassAd stats_ad;
+    CondorClassAdFileIterator adFileIter;
     FILE* input_file;
-    FileTransferStats stats;
     int diagnostic = 0;
     int retry_count = 0;
     int rval = 0;
+    map<MyString, transfer_request> requested_files;
     MyString stats_string;
-    std::string input_filename;
-    std::string transfer_files;
+    string input_filename;
+    string transfer_files;
     UtcTime time;
-
-    // Point the global curl_stats pointer to our local object
-    ft_stats = &stats;
 
     // Make sure there is only one command-line argument, and it's either
     // -classad or the name of an input file
@@ -43,85 +41,124 @@ main( int argc, char **argv ) {
             input_filename = argv[1];
         }
     }
-    if ((argc > 3) && ! strcmp(argv[3],"-diagnostic")) {
+    if ( ( argc > 3 ) && ! strcmp( argv[3],"-diagnostic" ) ) {
         diagnostic = 1;
     } 
+
+    // Read input file containing data about files we want to transfer. Input
+    // data is formatted as a series of classads, each with an arbitrary number
+    // of inputs.
+    input_file = safe_fopen_wrapper( input_filename.c_str(), "r" );
+    if( input_file == NULL ) {
+        fprintf( stderr, "Unable to open curl_plugin input file %s.\n", 
+            input_filename.c_str() );
+        return -1;
+    }
+    
+    if( !adFileIter.begin( input_file, false, CondorClassAdFileParseHelper::Parse_new )) {
+		fprintf( stderr, "Failed to start parsing classad input.\n" );
+		return -1;
+    } 
+    else {
+        // Iterate over the classads in the file, and insert each one into our
+        // requested_files map, with the key: url, value: additional details 
+        // about the transfer.
+        ClassAd transfer_file_ad;
+        MyString download_file_name;
+        MyString url;
+        transfer_request request_details;
+        std::pair<MyString, transfer_request> this_request;
+        
+        while ( adFileIter.next( transfer_file_ad ) > 0 ) {
+            transfer_file_ad.LookupString( "DownloadFileName", download_file_name );
+            transfer_file_ad.LookupString( "Url", url );
+            request_details.download_file_name = download_file_name;
+            this_request = std::make_pair( url, request_details );
+            printf("[main] inserting url=%s, download_file_name=%s\n", url.Value(), request_details.download_file_name.Value());
+            requested_files.insert( this_request );
+        }
+    }
+    fclose(input_file);
 
     // Initialize win32 + SSL socket libraries.
     // Do not initialize these separately! Doing so causes https:// transfers
     // to segfault.
     int init = curl_global_init( CURL_GLOBAL_DEFAULT );
-    if( init != 0 ) {
+    if ( init != 0 ) {
         fprintf( stderr, "Error: curl_plugin initialization failed with error"
                                                 " code %d\n", init ); 
         return -1;
     }
-
     if ( ( handle = curl_easy_init() ) == NULL ) {
+        fprintf( stderr, "Error: failed to initialize curl_plugin handle, exiting" );
         return -1;
     }
 
-    // Read input file containing data about files we want to transfer.
-    // This file contains a one-line serialized classad.
-    input_file = safe_fopen_wrapper( input_filename.c_str(), "r" );
-    fseek( input_file, 0L, SEEK_END );
-    int length = ftell( input_file );
-    char input_file_data[length];
-    fseek( input_file, 0L, SEEK_SET );
-    fgets( input_file_data, length, input_file ) ;
-    fclose( input_file );
+    // Iterate over the map of files to transfer.
+    for ( std::map<MyString, transfer_request>::iterator it = requested_files.begin(); it != requested_files.end(); ++it ) {
 
-    // Initialize the stats structure
-    init_stats( argv );
-    stats.TransferStartTime = time.getTimeDouble();
+        MyString download_file_name = it->second.download_file_name;
+        MyString url = it->first;
 
-    // Enter the loop that will attempt/retry the curl request
-    // MRC: Update following code to accommodate multiple files
-    /*
-    for(;;) {
-    
-        // The sleep function is defined differently in Windows and Linux
-        #ifdef WIN32
-            Sleep( ( retry_count++ ) * 1000 );
-        #else
-            sleep( retry_count++ );
-        #endif
+        printf("[main] attempting to download %s to filename=%s\n", it->first.Value(), it->second.download_file_name.Value());
         
-        rval = send_curl_request( argv, diagnostic, handle, ft_stats );
+        // Initialize the stats structure for this transfer.
+        FileTransferStats stats;
+        ft_stats = &stats;
+        init_stats( (char*) url.Value() );
+        printf("[main] initialized stats!\n");
+        stats.TransferStartTime = time.getTimeDouble();
 
-        // If curl request is successful, break out of the loop
-        if( rval == CURLE_OK ) {    
-            break;
+        // Enter the loop that will attempt/retry the curl request
+        for ( ;; ) {
+    
+            // The sleep function is defined differently in Windows and Linux
+            #ifdef WIN32
+                Sleep( ( retry_count++ ) * 1000 );
+            #else
+                sleep( retry_count++ );
+            #endif
+            
+            rval = send_curl_request( argv, diagnostic, handle, ft_stats );
+
+            // If curl request is successful, break out of the loop
+            if( rval == CURLE_OK ) {    
+                break;
+            }
+            // If we have not exceeded the maximum number of retries, and we encounter
+            // a non-fatal error, stay in the loop and try again
+            else if( retry_count <= MAX_RETRY_ATTEMPTS && 
+                                    ( rval == CURLE_COULDNT_CONNECT ||
+                                        rval == CURLE_PARTIAL_FILE || 
+                                        rval == CURLE_READ_ERROR || 
+                                        rval == CURLE_OPERATION_TIMEDOUT || 
+                                        rval == CURLE_SEND_ERROR || 
+                                        rval == CURLE_RECV_ERROR ) ) {
+                continue;
+            }
+            // On fatal errors, break out of the loop
+            else {
+                break;
+            }
         }
-        // If we have not exceeded the maximum number of retries, and we encounter
-        // a non-fatal error, stay in the loop and try again
-        else if( retry_count <= MAX_RETRY_ATTEMPTS && 
-                                  ( rval == CURLE_COULDNT_CONNECT ||
-                                    rval == CURLE_PARTIAL_FILE || 
-                                    rval == CURLE_READ_ERROR || 
-                                    rval == CURLE_OPERATION_TIMEDOUT || 
-                                    rval == CURLE_SEND_ERROR || 
-                                    rval == CURLE_RECV_ERROR ) ) {
-            continue;
-        }
-        // On fatal errors, break out of the loop
-        else {
-            break;
+
+        stats.TransferEndTime = time.getTimeDouble();
+
+        // If the transfer was successful, output the statistics to stdout
+        if( rval != -1 ) {
+            stats.Publish( stats_ad );
+            sPrintAd( stats_string, stats_ad );
+            fprintf( stdout, "%s", stats_string.c_str() );
         }
     }
 
-    stats.TransferEndTime = time.getTimeDouble();
+    // Now that we've finished all transfers, write all the statistics we
+    // gathered to stdout, with an individual classad to represent each file
+    // transferred. They'll be read and processed by the FileTransfer object.
+    // MRC: Implement this!
 
-    // If the transfer was successful, output the statistics to stdout
-    if( rval != -1 ) {
-        stats.Publish( stats_ad );
-        sPrintAd( stats_string, stats_ad );
-        fprintf( stdout, "%s", stats_string.c_str() );
-    }
-    */
-
-    // Cleanup 
-    curl_easy_cleanup(handle);
+    // Cleanup and exit
+    curl_easy_cleanup( handle );
     curl_global_cleanup();
 
     return rval;    // 0 on success
@@ -393,9 +430,8 @@ server_supports_resume( CURL* handle, char* url ) {
     Initialize the stats ClassAd
 */
 void 
-init_stats( char **argv ) {
+init_stats( char* request_url ) {
     
-    char* request_url = strdup( argv[1] );
     char* url_token;
     
      // Set the transfer protocol. If it's not http, ftp and file, then just
@@ -439,7 +475,6 @@ init_stats( char **argv ) {
     }
 
     // Cleanup and exit
-    free( request_url );
     freeaddrinfo( info );
 }
 

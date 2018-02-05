@@ -1846,9 +1846,9 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	// Variable for deferred transfers, used to transfer multiple files at once
 	// by certain filte transfer plugins. These need to be scoped to the full
 	// function.
-	std::unique_ptr<classad::ClassAd> deferredTransfers(new classad::ClassAd());
-	classad::ClassAd* thisTransfer;
-	int numDeferredTransfers = 0;
+	classad::ClassAdUnParser unparser;
+	std::string deferredTransfers = "";
+	std::unique_ptr<classad::ClassAd> thisTransfer( new classad::ClassAd() );
 
 	bool I_go_ahead_always = false;
 	bool peer_goes_ahead_always = false;
@@ -2255,12 +2255,14 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 			if ( plugin == "curl_plugin" && plugin_version == "0.2" ) {
 				dprintf( D_FULLDEBUG, "DoDownload: deferring transfer of URL %s "
 					" until end of download loop.\n", URL.Value() );
-				numDeferredTransfers++;
-				std::string thisTransferAttr = "transfer" + std::to_string(numDeferredTransfers);
-				thisTransfer = new classad::ClassAd();
+				thisTransfer->Clear();
 				thisTransfer->InsertAttr( "Url", URL );
 				thisTransfer->InsertAttr( "DownloadFileName", fullname );
-				deferredTransfers->Insert( thisTransferAttr, thisTransfer );
+
+				std::string thisTransferString;
+				unparser.Unparse( thisTransferString, thisTransfer.get() );
+				deferredTransfers += thisTransferString;
+			
 			}
 			// All other file transfer plugins should transfer now.
 			else {
@@ -2492,8 +2494,8 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 
 	// Now that we've completed the main file transfer loop, it's time to 
 	// transfer all files that needed a third party plugin.
-	if( deferredTransfers->size() > 0 ) {
-		rc = InvokeMultipleFileCurlPlugin( errstack, std::move(deferredTransfers), 
+	if( !deferredTransfers.empty() ) {
+		rc = InvokeMultipleFileCurlPlugin( errstack, deferredTransfers, 
 			&pluginStatsAd, LocalProxyName.Value() );
 		if ( rc != 0 ) {
 			dprintf(D_ALWAYS, "FILETRANSFER: Multiple file transfer failed.\n");
@@ -4460,8 +4462,8 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 // 		designed to transfer multiple files at once (passed in via the 
 //		transfer_files classad) using curl_plugin.
 int FileTransfer::InvokeMultipleFileCurlPlugin( CondorError &e, 
-			std::unique_ptr<classad::ClassAd> transfer_files, 
-			ClassAd* plugin_stats, const char* proxy_filename ) {
+			std::string transfer_files_string, ClassAd* plugin_stats, 
+			const char* proxy_filename ) {
 
 	if ( plugin_method_table == NULL ) {
 		dprintf( D_FULLDEBUG, "FILETRANSFER: No plugin table defined! "
@@ -4491,12 +4493,8 @@ int FileTransfer::InvokeMultipleFileCurlPlugin( CondorError &e,
 	// MRC: Look it up in the plugin_method_table.
 	std::string plugin_path = "/nobackup/condor/release_dir/libexec/curl_plugin";
 
-	// Unparse the classad of files to transfer. Save it to a temporary file
-	// in the spool directory.
-	classad::ClassAdUnParser unparser;
-	std::string transfer_files_string;
-	unparser.Unparse( transfer_files_string, transfer_files.get() );
-
+	// Save the transfer_files_string data (a list of classads detailing which
+	// files to download) to a temporary file in the spool directory.
 	int cluster_id, proc_id;   
 	jobAd.LookupInteger( ATTR_CLUSTER_ID, cluster_id );
 	jobAd.LookupInteger( ATTR_PROC_ID, proc_id );
