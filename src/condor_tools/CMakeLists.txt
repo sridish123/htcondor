@@ -31,6 +31,10 @@ condor_exe(condor_userprio "user_prio.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
 condor_exe(condor_transform_ads "transform_ads.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
 condor_exe(condor_findhost "give_interactive.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
 condor_exe(condor_qedit "qedit.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
+if (LINUX)
+condor_exe(condor_docker_enter "docker_enter.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
+endif()
+
 
 #condor_exe(condor_curlplugin "condor_curlplugin.c" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
 
@@ -131,6 +135,7 @@ endif()
 ############################################################
 if ( LINUX AND HAVE_LIBDL AND HAVE_DLFCN_H AND HAVE_DLOPEN )
 	condor_exe( condor_gpu_discovery "condor_gpu_discovery.cpp" ${C_LIBEXEC} "${HAVE_LIBDL}" OFF )
+	condor_exe( condor_gpu_utilization "condor_gpu_utilization.cpp" ${C_LIBEXEC} "${HAVE_LIBDL}" OFF )
 else ()
 	if (WINDOWS)
 		condor_exe( condor_gpu_discovery "condor_gpu_discovery.cpp" ${C_LIBEXEC} "${CONDOR_TOOL_LIBS}" OFF )

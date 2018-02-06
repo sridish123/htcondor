@@ -700,8 +700,6 @@ int _putClassAd_v0( Stream *sock, classad::ClassAd& ad, bool excludeTypes, bool 
             buf += " = ";
             unp.Unparse( buf, expr );
 
-            ConvertDefaultIPToSocketIP(attr.c_str(),buf,*sock);
-
             if( ! sock->prepare_crypto_for_secret_is_noop() &&
 				compat_classad::ClassAdAttributeIsPrivate(attr.c_str()))
 			{
@@ -800,7 +798,6 @@ int _putClassAd_v0( Stream *sock, classad::ClassAd& ad, bool excludeTypes, bool 
 			else {
 				unp.Unparse( buf, expr );
 			}
-            ConvertDefaultIPToSocketIP(attr,buf,*sock);
 
             if( ! sock->prepare_crypto_for_secret_is_noop() &&
 				compat_classad::ClassAdAttributeIsPrivate(attr) )
@@ -939,6 +936,7 @@ int _putClassAd( Stream *sock, classad::ClassAd& ad, int options)
 
 	classad::ClassAdUnParser	unp;
 	std::string					buf;
+	buf.reserve(8192);
 	bool send_server_time = false;
 
 	unp.SetOldClassAd( true, true );
@@ -990,9 +988,6 @@ int _putClassAd( Stream *sock, classad::ClassAd& ad, int options)
 				}
 				else { numExprs++; }
 			}
-			if ( strcasecmp( ATTR_CURRENT_TIME, attr.c_str() ) == 0 ) {
-				numExprs--;
-			}
 		}
 	}
 
@@ -1028,9 +1023,6 @@ int _putClassAd( Stream *sock, classad::ClassAd& ad, int options)
 			std::string const &attr = itor->first;
 			classad::ExprTree const *expr = itor->second;
 
-			if(strcasecmp(ATTR_CURRENT_TIME,attr.c_str())==0) {
-				continue;
-			}
 			if(exclude_private && compat_classad::ClassAdAttributeIsPrivate(attr.c_str())){
 				continue;
 			}
@@ -1046,8 +1038,6 @@ int _putClassAd( Stream *sock, classad::ClassAd& ad, int options)
 			buf = attr;
 			buf += " = ";
 			unp.Unparse( buf, expr );
-
-			ConvertDefaultIPToSocketIP(attr.c_str(),buf,*sock);
 
 			if( ! sock->prepare_crypto_for_secret_is_noop() &&
 				compat_classad::ClassAdAttributeIsPrivate(attr.c_str()))
@@ -1112,13 +1102,16 @@ int _putClassAd( Stream *sock, classad::ClassAd& ad, int options, const classad:
 		buf = *attr;
 		buf += " = ";
 		unp.Unparse( buf, expr );
-		ConvertDefaultIPToSocketIP(attr->c_str(),buf,*sock);
 
 		if ( ! sock->prepare_crypto_for_secret_is_noop() &&
 			compat_classad::ClassAdAttributeIsPrivate(attr->c_str()) )
 		{
-			sock->put(SECRET_MARKER);
-			sock->put_secret(buf.c_str());
+			if (!sock->put(SECRET_MARKER)) {
+				return false;
+			}
+			if (!sock->put_secret(buf.c_str())) {
+				return false;
+			}
 		}
 		else if ( ! sock->put(buf.c_str()) ){
 			return false;

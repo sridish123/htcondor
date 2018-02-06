@@ -29,7 +29,56 @@ The details of each version are described below.
 
 \begin{itemize}
 
-\item None.
+\item HTCondor now reports, in the job ad and user log, which custom machine
+resources were assigned to the slot in which the job ran.
+\Ticket{6549}
+
+\item HTCondor now reports \Attr{CPUsUsage} for each job.  This attribute is
+like \Attr{MemoryUsage} and \Attr{DiskUsage}, except it is the average number
+of CPUs used by the job.
+\Ticket{6477}
+
+\item The \MacroNI{use feature: GPUs} metaknob now causes HTCondor to report
+\Attr{GPUsUsage} for each job.  This is like \Attr{CPUsUsage}, except it is
+the average number of GPUs used by the job.  This feature only works for
+NVidia GPUs.
+\Ticket{6477}
+
+\item Administrators may now, for each custom machine resource, define a
+custom resource monitor.  Such a script reports the usage(s) of each
+instance of the corresponding machine resource since the last time it
+reported; HTCondor aggregates these reports between resource instances and
+over time to produce a \Attr{<Resource>Usage} attribute, which is like
+\Attr{GPUsUsage}, except for the custom machine resource in question.
+\Ticket{6477}
+
+\item The \Condor{startd} now periodically writes a file to each job's
+sandbox named ``.update.ad''.  This file is a copy of the slot's machine ad,
+but unlike ``.machine.ad'', it is regularly updated.  Jobs may read this
+file to observe their own usage attributes.
+\Ticket{6477}
+
+\item Removed configuration parameters \MacroNI{ENABLE\_ADDRESS\_REWRITING}
+and \MacroNI{SHARED\_PORT\_ADDRESS\_REWRITING}.
+\Ticket{6525}
+
+\item An IPv6 address can now be specified in the configuration file
+either with or without square brackets in most cases.
+If specifying a port number in the same value, the square brackets are
+required.
+If using a wildcard to specify a range of possible addresses, square
+brackets are not allowed.
+\Ticket{5697}
+
+\item Improved support for IPv6 link-local addresses, in particular
+using the correct scope id.
+Using a wildcard or device name in \MacroNI{NETWORK\_INTERFACE} now
+works properly when \MacroNI{NO\_DNS} is set to \Expr{True}.
+\Ticket{6518}
+
+\item Open MPI jobs launched in the parallel universe via \File{openmpiscript}
+now work with shared file systems (again).
+\Ticket{6556}
 
 \end{itemize}
 
@@ -37,7 +86,13 @@ The details of each version are described below.
 
 \begin{itemize}
 
-\item None.
+\item Fixed a bug where HTCondor would misreport the number of custom
+machine resources (GPUs) allocated to a job in certain cases.
+\Ticket{6549}
+
+\item IPv4 addresses are now ignored when resolving a hostname and
+\MacroNI{ENABLE\_IPV4} is set to \Expr{False}.
+\Ticket{4881}
 
 \end{itemize}
 

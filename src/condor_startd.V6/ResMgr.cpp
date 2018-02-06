@@ -771,14 +771,14 @@ ResMgr::adlist_replace( const char *name, ClassAd *newAd, bool report_diff, cons
 
 
 int
-ResMgr::adlist_publish( unsigned r_id, ClassAd *resAd, amask_t mask )
+ResMgr::adlist_publish( unsigned r_id, ClassAd *resAd, amask_t mask, const char * r_id_str )
 {
 	// Check the mask
 	if (  ( mask & ( A_PUBLIC | A_UPDATE ) ) != ( A_PUBLIC | A_UPDATE )  ) {
 		return 0;
 	}
 
-	return extra_ads.Publish( resAd, r_id );
+	return extra_ads.Publish( resAd, r_id, r_id_str );
 }
 
 
@@ -2568,4 +2568,14 @@ void
 ResMgr::addToDrainingBadput( int badput )
 {
 	total_draining_badput += badput;
+}
+
+void
+ResMgr::adlist_reset_monitors( unsigned r_id, ClassAd * forWhom ) {
+	extra_ads.reset_monitors( r_id, forWhom );
+}
+
+void
+ResMgr::adlist_unset_monitors( unsigned r_id, ClassAd * forWhom ) {
+	extra_ads.unset_monitors( r_id, forWhom );
 }
