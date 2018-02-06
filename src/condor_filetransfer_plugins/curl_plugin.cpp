@@ -31,6 +31,7 @@ main( int argc, char **argv ) {
     if ( argc == 2 ) {
         if ( strcmp( argv[1], "-classad" ) == 0 ) {
             printf( "%s",
+                "MultipleFileSupport = true\n"
                 "PluginVersion = \"0.2\"\n"
                 "PluginType = \"FileTransfer\"\n"
                 "SupportedMethods = \"http,https,ftp,file\"\n"

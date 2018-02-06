@@ -64,6 +64,7 @@ typedef HashTable <MyString, FileTransfer *> TranskeyHashTable;
 typedef HashTable <int, FileTransfer *> TransThreadHashTable;
 typedef HashTable <MyString, CatalogEntry *> FileCatalogHashTable;
 typedef HashTable <MyString, MyString> PluginHashTable;
+typedef HashTable <MyString, bool> PluginMultipleFileSupportHashTable;
 
 typedef int		(Service::*FileTransferHandlerCpp)(FileTransfer *);
 typedef int		(*FileTransferHandler)(FileTransfer *);
@@ -289,7 +290,7 @@ class FileTransfer: public Service {
 	int InitializePlugins( CondorError &e );
 	MyString DetermineFileTransferPlugin( CondorError &error, const char* source, const char* dest );
 	int InvokeFileTransferPlugin( CondorError &e, const char* URL, const char* dest, ClassAd* plugin_stats, const char* proxy_filename = NULL );
-	int InvokeMultipleFileCurlPlugin( CondorError &e, std::string transfer_files_string, ClassAd* plugin_stats, const char* proxy_filename );
+	int InvokeMultipleFileTransferPlugin( CondorError &e, std::string plugin_path, std::string transfer_files_string, ClassAd* plugin_stats, const char* proxy_filename );
 	int OutputFileTransferStats( ClassAd &stats );
 	MyString GetSupportedMethods();
 
@@ -406,7 +407,7 @@ class FileTransfer: public Service {
 	bool ClientCallbackWantsStatusUpdates;
 	FileTransferInfo Info;
 	PluginHashTable* plugin_method_table;
-	PluginHashTable* plugin_version_table;
+	PluginMultipleFileSupportHashTable* plugin_multiple_file_support_table;
 	bool I_support_filetransfer_plugins;
 #ifdef WIN32
 	perm* perm_obj;

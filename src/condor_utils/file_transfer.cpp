@@ -189,7 +189,7 @@ FileTransfer::FileTransfer()
 	m_sec_session_id = NULL;
 	I_support_filetransfer_plugins = false;
 	plugin_method_table = NULL;
-	plugin_version_table = NULL;
+	plugin_multiple_file_support_table = NULL;
 	MaxUploadBytes = -1;  // no limit by default
 	MaxDownloadBytes = -1;
 }
@@ -248,7 +248,7 @@ FileTransfer::~FileTransfer()
 #endif
 	free(m_sec_session_id);
 	delete plugin_method_table;
-	delete plugin_version_table;
+	delete plugin_multiple_file_support_table;
 }
 
 int
@@ -1847,7 +1847,7 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	// by certain filte transfer plugins. These need to be scoped to the full
 	// function.
 	classad::ClassAdUnParser unparser;
-	std::string deferredTransfers = "";
+	std::map<std::string, std::string> deferredTransfers;
 	std::unique_ptr<classad::ClassAd> thisTransfer( new classad::ClassAd() );
 
 	bool I_go_ahead_always = false;
@@ -2224,47 +2224,37 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 				return_and_resetpriv( -1 );
 			}
 
-			// Determine which plugin to invoke, and which version is available
+			// Determine which plugin to invoke, and whether it supports multiple
+			// file transfer.
 			MyString plugin_path = DetermineFileTransferPlugin( errstack, URL.Value(), fullname.Value() );
-			MyString plugin_version;
-			if ( plugin_version_table->lookup( plugin_path, plugin_version ) ) {
+			bool plugin_multiple_file_support = false;
+			if ( plugin_multiple_file_support_table->lookup( plugin_path, plugin_multiple_file_support ) ) {
 				dprintf ( D_FULLDEBUG, "FILETRANSFER: Could not look up version "
 					"for plugin %s. Something is very wrong here! Aborting.\n", 
 					plugin_path.Value() );
 				return_and_resetpriv( -1 );
 			}
-
-			// We want just the filename of the plugin binary, not the full path.
-			// TODO: This parsing code is ugly and painful, there must be a better way
-			MyString plugin;
-			MyStringTokener plugin_tokener;
-			plugin_tokener.Tokenize( plugin_path );
-			const char* token = plugin_tokener.GetNextToken( &DIR_DELIM_CHAR, true );
-			while ( token ) {
-				plugin = token;
-				token = plugin_tokener.GetNextToken( &DIR_DELIM_CHAR, true );
-			}
-			// Trim the extension for Windows systems
-			if( plugin.FindChar( '.' ) > 0 ) {
-				plugin = plugin.substr( 0, plugin.FindChar( '.' ) );
-			}
 			
-			// curl_plugin v0.2 should not transfer the file now! Instead, 
-			// add it to a ClassAd of all files we want to transfer. We'll 
-			// transfer them all in one go after the main download loop.
-			if ( plugin == "curl_plugin" && plugin_version == "0.2" ) {
+			// If this plugin supports multiple files, do not send the file
+			// right now! Instead, add it to a deferred list, which we'll deal
+			// with after the main download loop.
+			if ( plugin_multiple_file_support ) {
 				dprintf( D_FULLDEBUG, "DoDownload: deferring transfer of URL %s "
 					" until end of download loop.\n", URL.Value() );
 				thisTransfer->Clear();
 				thisTransfer->InsertAttr( "Url", URL );
 				thisTransfer->InsertAttr( "DownloadFileName", fullname );
-
 				std::string thisTransferString;
 				unparser.Unparse( thisTransferString, thisTransfer.get() );
-				deferredTransfers += thisTransferString;
-			
+
+				// Add this result to our deferred transfers map.
+				if ( deferredTransfers.find( plugin_path ) == deferredTransfers.end() ) {
+					deferredTransfers.insert( std::pair<std::string, std::string>( plugin_path, thisTransferString ) );
+				} else {
+					deferredTransfers[plugin_path] += thisTransferString;
+				}
 			}
-			// All other file transfer plugins should transfer now.
+			// All other file transfer plugins should transfer right away.
 			else {
 				dprintf( D_FULLDEBUG, "DoDownload: preparing a URL transfer: (%s) "
 					"to (%s)\n", URL.Value(), fullname.Value() );
@@ -2493,9 +2483,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	} // end of the main download loop
 
 	// Now that we've completed the main file transfer loop, it's time to 
-	// transfer all files that needed a third party plugin.
-	if( !deferredTransfers.empty() ) {
-		rc = InvokeMultipleFileCurlPlugin( errstack, deferredTransfers, 
+	// transfer all files that needed a third party plugin. Iterate over the list
+	// of deferred transfers, and invoke each set with the appopriate plugin.
+	for ( std::map<std::string, std::string>::iterator it = deferredTransfers.begin(); it != deferredTransfers.end(); ++ it ) {
+		rc = InvokeMultipleFileTransferPlugin( errstack, it->first, it->second, 
 			&pluginStatsAd, LocalProxyName.Value() );
 		if ( rc != 0 ) {
 			dprintf(D_ALWAYS, "FILETRANSFER: Multiple file transfer failed.\n");
@@ -4457,13 +4448,13 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 	return 0;
 }
 
-// [FileTransfer::InvokeMultipleFileCurlPlugin]
+// [FileTransfer::InvokeMultipleFileTransferPlugin]
 // @description: Similar to FileTransfer::InvokeFileTransferPlugin, although 
-// 		designed to transfer multiple files at once (passed in via the 
-//		transfer_files classad) using curl_plugin.
-int FileTransfer::InvokeMultipleFileCurlPlugin( CondorError &e, 
-			std::string transfer_files_string, ClassAd* plugin_stats, 
-			const char* proxy_filename ) {
+// 		designed to transfer multiple files at once.
+// @return: 0 on success, 1 on failure.
+int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e, 
+			std::string plugin_path, std::string transfer_files_string, 
+			ClassAd* plugin_stats, const char* proxy_filename ) {
 
 	if ( plugin_method_table == NULL ) {
 		dprintf( D_FULLDEBUG, "FILETRANSFER: No plugin table defined! "
@@ -4488,28 +4479,28 @@ int FileTransfer::InvokeMultipleFileCurlPlugin( CondorError &e,
 	// If so, drop_privs should be false.  the default is to drop privs.
 	bool drop_privs = !param_boolean( "RUN_FILETRANSFER_PLUGINS_WITH_ROOT", false );
 
-	// We already assume at this point that we're using curl_plugin, but we don't
-	// know the full path. 
-	// MRC: Look it up in the plugin_method_table.
-	std::string plugin_path = "/nobackup/condor/release_dir/libexec/curl_plugin";
+	// Lookup the initial working directory
+	char buf[ATTRLIST_MAX_EXPRESSION];
+	if ( jobAd.LookupString( ATTR_JOB_IWD, buf, sizeof( buf ) ) != 1) {
+		dprintf( D_FULLDEBUG, "FileTransfer::InvokeMultipleFileTransferPlugin: "
+					"Job Ad did not have an IWD! Aborting.\n" );
+			return 1;
+	}
+	std::string iwd = strdup( buf );
 
-	// Save the transfer_files_string data (a list of classads detailing which
-	// files to download) to a temporary file in the spool directory.
-	int cluster_id, proc_id;   
-	jobAd.LookupInteger( ATTR_CLUSTER_ID, cluster_id );
-	jobAd.LookupInteger( ATTR_PROC_ID, proc_id );
-
-	std::string curl_input_filename = param( "SPOOL" );
-	curl_input_filename += "/curl_plugin_input." + std::to_string( cluster_id ) 
-		+ "." + std::to_string( proc_id );
-	FILE* curl_input_file = safe_fopen_wrapper( curl_input_filename.c_str(), "w" );
-	fputs( transfer_files_string.c_str(), curl_input_file );
-	fclose( curl_input_file );
+	// Create an input file for the plugin.
+	// Input file consists of the transfer_files_string data (list of classads)
+	// which we'll save to a temporary file in the working directory.
+	std::string plugin_name = plugin_path.substr( plugin_path.find_last_of("/\\") + 1 );
+	std::string input_filename = iwd + "/" + plugin_name + ".in";
+	FILE* input_file = safe_fopen_wrapper( input_filename.c_str(), "w" );
+	fputs( transfer_files_string.c_str(), input_file );
+	fclose( input_file );
 
 	// Prepare args for the plugin
 	ArgList plugin_args;
 	plugin_args.AppendArg( plugin_path.c_str() );
-	plugin_args.AppendArg( curl_input_filename.c_str() );
+	plugin_args.AppendArg( input_filename.c_str() );
 
 	// Invoke the plugin
 	dprintf( D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
@@ -4664,16 +4655,16 @@ int FileTransfer::InitializePlugins( CondorError &error ) {
 		return 0;
 	}
 
-	// plugin_method_table and plugin_version_table are member variables
+	// plugin_method_table and plugin_multiple_file_support_table are member variables
 	plugin_method_table = new PluginHashTable( 7, compute_filename_hash );
-	plugin_version_table = new PluginHashTable( 7, compute_filename_hash );
+	plugin_multiple_file_support_table = new PluginMultipleFileSupportHashTable( 7, compute_filename_hash );
 
 	StringList plugin_list( plugin_list_string );
 	plugin_list.rewind();
 
 	// Iterate over all the available plugins. For each one call
 	// SetPluginMappings, which will set appropriate mappings in the 
-	// plugin_method_table and plugin_version_table hashtables.
+	// plugin_method_table and plugin_multiple_file_support_table hashtables.
 	char *plugin;
 	while ( ( plugin = plugin_list.next() ) ) {
 
@@ -4741,17 +4732,15 @@ FileTransfer::SetPluginMappings( CondorError &error, const char* path )
 
 	// Extract the info we care about, and add it to the appropriate hash tables
 	char* plugin_methods = NULL;
-	char* plugin_version = NULL;
+	bool plugin_multiple_file_support = NULL;
 	if ( ad->LookupString( "SupportedMethods", &plugin_methods ) ) {
 		// Free the memory, return a MyString
 		MyString methods = plugin_methods;
 		free( plugin_methods );
 		InsertPluginMethodMappings( methods, path );
 	}
-	if ( ad->LookupString( "PluginVersion", &plugin_version ) ) {
-		MyString version = plugin_version;
-		free( plugin_version );
-		plugin_version_table->insert( path, version );
+	if ( ad->LookupBool( "MultipleFileSupport", plugin_multiple_file_support ) ) {
+		plugin_multiple_file_support_table->insert( path, plugin_multiple_file_support );
 	}
 
 	delete( ad );
