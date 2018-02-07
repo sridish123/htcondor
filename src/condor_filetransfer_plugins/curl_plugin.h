@@ -10,10 +10,12 @@ struct transfer_request {
     MyString download_file_name;
 };
 
-int send_curl_request( char** argv, int diagnostic, CURL* handle, 
-    FileTransferStats* stats );
+int send_curl_request_download( const char* url, const char* download_file_name, int diagnostic, 
+    CURL* handle, FileTransferStats* stats );
 
-int server_supports_resume( CURL* handle, char* url );
+int send_curl_request_upload( const char* url, const char* download_file_name, int diagnostic, CURL* handle, FileTransferStats* stats );
+
+int server_supports_resume( CURL* handle, const char* url );
 
 void init_stats( char* request_url );
 

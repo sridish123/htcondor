@@ -4492,7 +4492,7 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	// Input file consists of the transfer_files_string data (list of classads)
 	// which we'll save to a temporary file in the working directory.
 	std::string plugin_name = plugin_path.substr( plugin_path.find_last_of("/\\") + 1 );
-	std::string input_filename = iwd + "/" + plugin_name + ".in";
+	std::string input_filename = iwd + "/." + plugin_name + ".in";
 	FILE* input_file = safe_fopen_wrapper( input_filename.c_str(), "w" );
 	fputs( transfer_files_string.c_str(), input_file );
 	fclose( input_file );

@@ -17,7 +17,7 @@ main( int argc, char **argv ) {
     classad::ClassAd stats_ad;
     CondorClassAdFileIterator adFileIter;
     FILE* input_file;
-    int diagnostic = 0;
+    int diagnostic = 1;
     int retry_count = 0;
     int rval = 0;
     map<MyString, transfer_request> requested_files;
@@ -75,7 +75,7 @@ main( int argc, char **argv ) {
             transfer_file_ad.LookupString( "Url", url );
             request_details.download_file_name = download_file_name;
             this_request = std::make_pair( url, request_details );
-            printf("[main] inserting url=%s, download_file_name=%s\n", url.Value(), request_details.download_file_name.Value());
+            //printf("[main] inserting url=%s, download_file_name=%s\n", url.Value(), request_details.download_file_name.Value());
             requested_files.insert( this_request );
         }
     }
@@ -101,13 +101,10 @@ main( int argc, char **argv ) {
         MyString download_file_name = it->second.download_file_name;
         MyString url = it->first;
 
-        printf("[main] attempting to download %s to filename=%s\n", it->first.Value(), it->second.download_file_name.Value());
-        
         // Initialize the stats structure for this transfer.
         FileTransferStats stats;
         ft_stats = &stats;
-        init_stats( (char*) url.Value() );
-        printf("[main] initialized stats!\n");
+        init_stats( (char*)url.Value() );
         stats.TransferStartTime = time.getTimeDouble();
 
         // Enter the loop that will attempt/retry the curl request
@@ -120,7 +117,7 @@ main( int argc, char **argv ) {
                 sleep( retry_count++ );
             #endif
             
-            rval = send_curl_request( argv, diagnostic, handle, ft_stats );
+            rval = send_curl_request_download( url.Value(), download_file_name.Value(), diagnostic, handle, ft_stats );
 
             // If curl request is successful, break out of the loop
             if( rval == CURLE_OK ) {    
@@ -169,7 +166,7 @@ main( int argc, char **argv ) {
     Perform the curl request, and output the results either to file to stdout.
 */
 int 
-send_curl_request( char** argv, int diagnostic, CURL* handle, FileTransferStats* stats ) {
+send_curl_request_download( const char* url, const char* download_file_name, int diagnostic, CURL* handle, FileTransferStats* stats ) {
 
     char error_buffer[CURL_ERROR_SIZE];
     char partial_range[20];
@@ -183,186 +180,96 @@ send_curl_request( char** argv, int diagnostic, CURL* handle, FileTransferStats*
     static int partial_file = 0;
     static long partial_bytes = 0;
 
-    // Input transfer: URL -> file
-    if ( !strncasecmp( argv[1], "http://", 7 ) ||
-         !strncasecmp( argv[1], "https://", 8 ) ||
-         !strncasecmp( argv[1], "ftp://", 6 ) ||
-         !strncasecmp( argv[1], "file://", 7 ) ) {
 
-        int close_output = 1;
-        if ( ! strcmp(argv[2],"-") ) {
-            file = stdout;
-            close_output = 0;
-            if ( diagnostic ) { 
-                fprintf( stderr, "fetching %s to stdout\n", argv[1] ); 
-            }
-        } 
-        else {
-            file = partial_file ? fopen( argv[2], "a+" ) : fopen(argv[2], "w" ); 
-            close_output = 1;
-            if ( diagnostic ) { 
-                fprintf( stderr, "fetching %s to %s\n", argv[1], argv[2] ); 
-            }
-        }
-
-        if( file ) {
-            // Libcurl options that apply to all transfer protocols
-            curl_easy_setopt( handle, CURLOPT_URL, argv[1] );
-            curl_easy_setopt( handle, CURLOPT_CONNECTTIMEOUT, 60 );
-            curl_easy_setopt( handle, CURLOPT_WRITEDATA, file );
-
-            // Libcurl options for HTTP, HTTPS and FILE
-            if( !strncasecmp( argv[1], "http://", 7 ) || 
-                                !strncasecmp( argv[1], "https://", 8 ) || 
-                                !strncasecmp( argv[1], "file://", 7 ) ) {
-                curl_easy_setopt( handle, CURLOPT_FOLLOWLOCATION, 1 );
-                curl_easy_setopt( handle, CURLOPT_HEADERFUNCTION, header_callback );
-            }
-            // Libcurl options for FTP
-            else if( !strncasecmp( argv[1], "ftp://", 6 ) ) {
-                curl_easy_setopt( handle, CURLOPT_WRITEFUNCTION, ftp_write_callback );
-            }
-
-            // * If the following option is set to 0, then curl_easy_perform()
-            // returns 0 even on errors (404, 500, etc.) So we can't identify
-            // some failures. I don't think it's supposed to do that?
-            // * If the following option is set to 1, then something else bad
-            // happens? 500 errors fail before we see HTTP headers but I don't
-            // think that's a big deal.
-            // * Let's keep it set to 1 for now.
-            curl_easy_setopt( handle, CURLOPT_FAILONERROR, 1 );
-            
-            if( diagnostic ) {
-                curl_easy_setopt( handle, CURLOPT_VERBOSE, 1 );
-            }
-
-            // If we are attempting to resume a download, set additional flags
-            if( partial_file ) {
-                sprintf( partial_range, "%lu-", partial_bytes );
-                curl_easy_setopt( handle, CURLOPT_RANGE, partial_range );
-            }
-
-            // Setup a buffer to store error messages. For debug use.
-            error_buffer[0] = 0;
-            curl_easy_setopt( handle, CURLOPT_ERRORBUFFER, error_buffer ); 
-
-            // Does curl protect against redirect loops otherwise?  It's
-            // unclear how to tune this constant.
-            // curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 1000);
-            
-            // Update some statistics
-            stats->TransferType = "download";
-            stats->TransferTries += 1;
-
-            // Perform the curl request
-            rval = curl_easy_perform( handle );
-
-            // Check if the request completed partially. If so, set some
-            // variables so we can attempt a resume on the next try.
-            if( rval == CURLE_PARTIAL_FILE ) {
-                if( server_supports_resume( handle, argv[1] ) ) {
-                    partial_file = 1;
-                    partial_bytes = ftell( file );
-                }
-            }
-
-            // Gather more statistics
-            curl_easy_getinfo( handle, CURLINFO_SIZE_DOWNLOAD, &bytes_downloaded );
-            curl_easy_getinfo( handle, CURLINFO_CONNECT_TIME, &transfer_connection_time );
-            curl_easy_getinfo( handle, CURLINFO_TOTAL_TIME, &transfer_total_time );
-            curl_easy_getinfo( handle, CURLINFO_RESPONSE_CODE, &return_code );
-            
-            stats->TransferTotalBytes += ( long ) bytes_downloaded;
-            stats->ConnectionTimeSeconds +=  ( transfer_total_time - transfer_connection_time );
-            stats->TransferReturnCode = return_code;
-
-            if( rval == CURLE_OK ) {
-                stats->TransferSuccess = true;
-                stats->TransferError = "";
-                stats->TransferFileBytes = ftell( file );
-            }
-            else {
-                stats->TransferSuccess = false;
-                stats->TransferError = error_buffer;
-            }
-
-            // Error handling and cleanup
-            if( diagnostic && rval ) {
-                fprintf(stderr, "curl_easy_perform returned CURLcode %d: %s\n", 
-                        rval, curl_easy_strerror( ( CURLcode ) rval ) ); 
-            }
-            if( close_output ) {
-                fclose( file ); 
-                file = NULL;
-            }
-        }
-        else {
-            fprintf( stderr, "ERROR: could not open output file %s\n", argv[2] ); 
+    int close_output = 1;
+    if ( !strcmp( download_file_name, "-" ) ) {
+        file = stdout;
+        close_output = 0;
+        if ( diagnostic ) { 
+            fprintf( stderr, "fetching %s to stdout\n", url ); 
         }
     } 
-    
-    // Output transfer: file -> URL
     else {
-        int close_input = 1;
-        int content_length = 0;
-        struct stat file_info;
-
-        if ( !strcmp(argv[1], "-") ) {
-            fprintf( stderr, "ERROR: must provide a filename for curl_plugin uploads\n" ); 
-            exit(1);
-        } 
-
-        // Verify that the specified file exists, and check its content length 
-        file = fopen( argv[1], "r" );
-        if( !file ) {
-            fprintf( stderr, "ERROR: File %s could not be opened\n", argv[1] );
-            exit(1);
-        }
-        if( fstat( fileno( file ), &file_info ) == -1 ) {
-            fprintf( stderr, "ERROR: fstat failed to read file %s\n", argv[1] );
-            exit(1);
-        }
-        content_length = file_info.st_size;
-        close_input = 1;
+        file = partial_file ? fopen( download_file_name, "a+" ) : fopen( download_file_name, "w" ); 
+        close_output = 1;
         if ( diagnostic ) { 
-            fprintf( stderr, "sending %s to %s\n", argv[1], argv[2] ); 
+            fprintf( stderr, "fetching %s to %s\n", url, download_file_name ); 
+        }
+    }
+
+    if( file ) {
+        // Libcurl options that apply to all transfer protocols
+        curl_easy_setopt( handle, CURLOPT_URL, url );
+        curl_easy_setopt( handle, CURLOPT_CONNECTTIMEOUT, 60 );
+        curl_easy_setopt( handle, CURLOPT_WRITEDATA, file );
+
+        // Libcurl options for HTTP, HTTPS and FILE
+        if( !strncasecmp( url, "http://", 7 ) || 
+                            !strncasecmp( url, "https://", 8 ) || 
+                            !strncasecmp( url, "file://", 7 ) ) {
+            curl_easy_setopt( handle, CURLOPT_FOLLOWLOCATION, 1 );
+            curl_easy_setopt( handle, CURLOPT_HEADERFUNCTION, header_callback );
+        }
+        // Libcurl options for FTP
+        else if( !strncasecmp( url, "ftp://", 6 ) ) {
+            curl_easy_setopt( handle, CURLOPT_WRITEFUNCTION, ftp_write_callback );
         }
 
-        // Set curl upload options
-        curl_easy_setopt( handle, CURLOPT_URL, argv[2] );
-        curl_easy_setopt( handle, CURLOPT_UPLOAD, 1 );
-        curl_easy_setopt( handle, CURLOPT_READDATA, file );
-        curl_easy_setopt( handle, CURLOPT_FOLLOWLOCATION, -1 );
-        curl_easy_setopt( handle, CURLOPT_INFILESIZE_LARGE, 
-                                        (curl_off_t) content_length );
+        // * If the following option is set to 0, then curl_easy_perform()
+        // returns 0 even on errors (404, 500, etc.) So we can't identify
+        // some failures. I don't think it's supposed to do that?
+        // * If the following option is set to 1, then something else bad
+        // happens? 500 errors fail before we see HTTP headers but I don't
+        // think that's a big deal.
+        // * Let's keep it set to 1 for now.
         curl_easy_setopt( handle, CURLOPT_FAILONERROR, 1 );
+        
         if( diagnostic ) {
             curl_easy_setopt( handle, CURLOPT_VERBOSE, 1 );
         }
-    
+
+        // If we are attempting to resume a download, set additional flags
+        if( partial_file ) {
+            sprintf( partial_range, "%lu-", partial_bytes );
+            curl_easy_setopt( handle, CURLOPT_RANGE, partial_range );
+        }
+
+        // Setup a buffer to store error messages. For debug use.
+        error_buffer[0] = 0;
+        curl_easy_setopt( handle, CURLOPT_ERRORBUFFER, error_buffer ); 
+
         // Does curl protect against redirect loops otherwise?  It's
         // unclear how to tune this constant.
         // curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 1000);
-
-        // Gather some statistics
-        stats->TransferType = "upload";
+        
+        // Update some statistics
+        stats->TransferType = "download";
         stats->TransferTries += 1;
 
         // Perform the curl request
         rval = curl_easy_perform( handle );
 
+        // Check if the request completed partially. If so, set some
+        // variables so we can attempt a resume on the next try.
+        if( rval == CURLE_PARTIAL_FILE ) {
+            if( server_supports_resume( handle, url ) ) {
+                partial_file = 1;
+                partial_bytes = ftell( file );
+            }
+        }
+
         // Gather more statistics
-        curl_easy_getinfo( handle, CURLINFO_SIZE_UPLOAD, &bytes_uploaded );
+        curl_easy_getinfo( handle, CURLINFO_SIZE_DOWNLOAD, &bytes_downloaded );
         curl_easy_getinfo( handle, CURLINFO_CONNECT_TIME, &transfer_connection_time );
         curl_easy_getinfo( handle, CURLINFO_TOTAL_TIME, &transfer_total_time );
         curl_easy_getinfo( handle, CURLINFO_RESPONSE_CODE, &return_code );
         
-        stats->TransferTotalBytes += ( long ) bytes_uploaded;
-        stats->ConnectionTimeSeconds += transfer_total_time - transfer_connection_time;
+        stats->TransferTotalBytes += ( long ) bytes_downloaded;
+        stats->ConnectionTimeSeconds +=  ( transfer_total_time - transfer_connection_time );
         stats->TransferReturnCode = return_code;
 
         if( rval == CURLE_OK ) {
-            stats->TransferSuccess = true;    
+            stats->TransferSuccess = true;
             stats->TransferError = "";
             stats->TransferFileBytes = ftell( file );
         }
@@ -372,16 +279,114 @@ send_curl_request( char** argv, int diagnostic, CURL* handle, FileTransferStats*
         }
 
         // Error handling and cleanup
-        if ( diagnostic && rval ) {
-            fprintf( stderr, "curl_easy_perform returned CURLcode %d: %s\n",
-                    rval, curl_easy_strerror( ( CURLcode )rval ) );
+        if( diagnostic && rval ) {
+            fprintf(stderr, "curl_easy_perform returned CURLcode %d: %s\n", 
+                    rval, curl_easy_strerror( ( CURLcode ) rval ) ); 
         }
-        if ( close_input ) {
+        if( close_output ) {
             fclose( file ); 
             file = NULL;
         }
-
     }
+    else {
+        system("ls -alp /nobackup/condor/release_dir/local.baphomet/execute/");
+        fprintf( stderr, "ERROR: could not open output file %s, error %d (%s)\n", download_file_name, errno, strerror(errno) ); 
+    }
+
+    return rval;
+}
+
+int 
+send_curl_request_upload( const char* url, const char* download_file_name, int diagnostic, CURL* handle, FileTransferStats* stats ) {
+
+    char error_buffer[CURL_ERROR_SIZE];
+    double bytes_uploaded; 
+    double transfer_connection_time;
+    double transfer_total_time;
+    FILE *file = NULL;
+    long return_code;
+    int rval = -1;
+
+    // Output transfer: file -> URL
+    int close_input = 1;
+    int content_length = 0;
+    struct stat file_info;
+
+    if ( !strcmp( url, "-" ) ) {
+        fprintf( stderr, "ERROR: must provide a filename for curl_plugin uploads\n" ); 
+        exit(1);
+    } 
+
+    // Verify that the specified file exists, and check its content length 
+    file = fopen( url, "r" );
+    if( !file ) {
+        fprintf( stderr, "ERROR: File %s could not be opened\n", url );
+        exit(1);
+    }
+    if( fstat( fileno( file ), &file_info ) == -1 ) {
+        fprintf( stderr, "ERROR: fstat failed to read file %s\n", url );
+        exit(1);
+    }
+    content_length = file_info.st_size;
+    close_input = 1;
+    if ( diagnostic ) { 
+        fprintf( stderr, "sending %s to %s\n", url, download_file_name ); 
+    }
+
+    // Set curl upload options
+    curl_easy_setopt( handle, CURLOPT_URL, url );
+    curl_easy_setopt( handle, CURLOPT_UPLOAD, 1 );
+    curl_easy_setopt( handle, CURLOPT_READDATA, file );
+    curl_easy_setopt( handle, CURLOPT_FOLLOWLOCATION, -1 );
+    curl_easy_setopt( handle, CURLOPT_INFILESIZE_LARGE, 
+                                    (curl_off_t) content_length );
+    curl_easy_setopt( handle, CURLOPT_FAILONERROR, 1 );
+    if( diagnostic ) {
+        curl_easy_setopt( handle, CURLOPT_VERBOSE, 1 );
+    }
+
+    // Does curl protect against redirect loops otherwise?  It's
+    // unclear how to tune this constant.
+    // curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 1000);
+
+    // Gather some statistics
+    stats->TransferType = "upload";
+    stats->TransferTries += 1;
+
+    // Perform the curl request
+    rval = curl_easy_perform( handle );
+
+    // Gather more statistics
+    curl_easy_getinfo( handle, CURLINFO_SIZE_UPLOAD, &bytes_uploaded );
+    curl_easy_getinfo( handle, CURLINFO_CONNECT_TIME, &transfer_connection_time );
+    curl_easy_getinfo( handle, CURLINFO_TOTAL_TIME, &transfer_total_time );
+    curl_easy_getinfo( handle, CURLINFO_RESPONSE_CODE, &return_code );
+    
+    stats->TransferTotalBytes += ( long ) bytes_uploaded;
+    stats->ConnectionTimeSeconds += transfer_total_time - transfer_connection_time;
+    stats->TransferReturnCode = return_code;
+
+    if( rval == CURLE_OK ) {
+        stats->TransferSuccess = true;    
+        stats->TransferError = "";
+        stats->TransferFileBytes = ftell( file );
+    }
+    else {
+        stats->TransferSuccess = false;
+        stats->TransferError = error_buffer;
+    }
+
+    // Error handling and cleanup
+    if ( diagnostic && rval ) {
+        fprintf( stderr, "curl_easy_perform returned CURLcode %d: %s\n",
+                rval, curl_easy_strerror( ( CURLcode )rval ) );
+    }
+    if ( close_input ) {
+        fclose( file ); 
+        file = NULL;
+    }
+
+   
     return rval;    // 0 on success
 }
 
@@ -392,7 +397,7 @@ send_curl_request( char** argv, int diagnostic, CURL* handle, FileTransferStats*
     Return 1 if resume is supported, 0 if not.
 */
 int 
-server_supports_resume( CURL* handle, char* url ) {
+server_supports_resume( CURL* handle, const char* url ) {
 
     int rval = -1;
 
@@ -433,26 +438,27 @@ server_supports_resume( CURL* handle, char* url ) {
 void 
 init_stats( char* request_url ) {
     
+    char* url = strdup( request_url );
     char* url_token;
     
-     // Set the transfer protocol. If it's not http, ftp and file, then just
+    // Set the transfer protocol. If it's not http, ftp and file, then just
     // leave it blank because this transfer will fail quickly.
-    if ( !strncasecmp( request_url, "http://", 7 ) ) {
+    if ( !strncasecmp( url, "http://", 7 ) ) {
         ft_stats->TransferProtocol = "http";
     }
-    else if ( !strncasecmp( request_url, "https://", 8 ) ) {
+    else if ( !strncasecmp( url, "https://", 8 ) ) {
         ft_stats->TransferProtocol = "https";
     }
-    else if ( !strncasecmp( request_url, "ftp://", 6 ) ) {
+    else if ( !strncasecmp( url, "ftp://", 6 ) ) {
         ft_stats->TransferProtocol = "ftp";
     }
-    else if ( !strncasecmp( request_url, "file://", 7 ) ) {
+    else if ( !strncasecmp( url, "file://", 7 ) ) {
         ft_stats->TransferProtocol = "file";
     }
     
     // Set the request host name by parsing it out of the URL
-    ft_stats->TransferUrl = request_url;
-    url_token = strtok( request_url, ":/" );
+    ft_stats->TransferUrl = url;
+    url_token = strtok( url, ":/" );
     url_token = strtok( NULL, "/" );
     ft_stats->TransferHostName = url_token;
 
