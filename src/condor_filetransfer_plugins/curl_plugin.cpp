@@ -10,18 +10,19 @@
 using namespace std;
 
 CurlPlugin::CurlPlugin( int diagnostic ) :
-    _diagnostic ( diagnostic )
+    _handle ( NULL ),
+    _diagnostic ( diagnostic ),
+    _all_stats ( "" )
 {
     // Initialize win32 + SSL socket libraries.
     // Do not initialize these separately! Doing so causes https:// transfers
     // to segfault.
     int init = curl_global_init( CURL_GLOBAL_DEFAULT );
     if ( init != 0 ) {
-        fprintf( stderr, "Error: curl_plugin initialization failed with error"
-                                                " code %d\n", init ); 
+        cerr << "Error: curl_plugin initialization failed with error code " << init << endl;
     }
     if ( ( _handle = curl_easy_init() ) == NULL ) {
-        fprintf( stderr, "Error: failed to initialize CurlPlugin._handle, exiting" );
+        cerr << "Error: failed to initialize CurlPlugin._handle" << endl;
     }
 }
 
@@ -30,11 +31,8 @@ CurlPlugin::~CurlPlugin() {
     curl_global_cleanup();
 }
 
-/*
-    Perform the curl request, and output the results either to file to stdout.
-*/
 int 
-CurlPlugin::DownloadFile( const char* url, const char* download_file_name ) {
+CurlPlugin::DownloadFile( const char* url, const char* local_file_name ) {
 
     char error_buffer[CURL_ERROR_SIZE];
     char partial_range[20];
@@ -47,20 +45,19 @@ CurlPlugin::DownloadFile( const char* url, const char* download_file_name ) {
     static int partial_file = 0;
     static long partial_bytes = 0;
 
-
     int close_output = 1;
-    if ( !strcmp( download_file_name, "-" ) ) {
+    if ( !strcmp( local_file_name, "-" ) ) {
         file = stdout;
         close_output = 0;
         if ( _diagnostic ) { 
-            fprintf( stderr, "fetching %s to stdout\n", url ); 
+            fprintf( stderr, "Fetching %s to stdout\n", url ); 
         }
     } 
     else {
-        file = partial_file ? fopen( download_file_name, "a+" ) : fopen( download_file_name, "w" ); 
+        file = partial_file ? fopen( local_file_name, "a+" ) : fopen( local_file_name, "w" ); 
         close_output = 1;
         if ( _diagnostic ) { 
-            fprintf( stderr, "fetching %s to %s\n", url, download_file_name ); 
+            fprintf( stderr, "Fetching %s to %s\n", url, local_file_name ); 
         }
     }
 
@@ -75,11 +72,11 @@ CurlPlugin::DownloadFile( const char* url, const char* download_file_name ) {
                             !strncasecmp( url, "https://", 8 ) || 
                             !strncasecmp( url, "file://", 7 ) ) {
             curl_easy_setopt( _handle, CURLOPT_FOLLOWLOCATION, 1 );
-            curl_easy_setopt( _handle, CURLOPT_HEADERFUNCTION, this->header_callback );
+            curl_easy_setopt( _handle, CURLOPT_HEADERFUNCTION, this->HeaderCallback );
         }
         // Libcurl options for FTP
         else if( !strncasecmp( url, "ftp://", 6 ) ) {
-            curl_easy_setopt( _handle, CURLOPT_WRITEFUNCTION, this->ftp_write_callback );
+            curl_easy_setopt( _handle, CURLOPT_WRITEFUNCTION, this->FtpWriteCallback );
         }
 
         // * If the following option is set to 0, then curl_easy_perform()
@@ -119,7 +116,7 @@ CurlPlugin::DownloadFile( const char* url, const char* download_file_name ) {
         // Check if the request completed partially. If so, set some
         // variables so we can attempt a resume on the next try.
         if( rval == CURLE_PARTIAL_FILE ) {
-            if( server_supports_resume( url ) ) {
+            if( ServerSupportsResume( url ) ) {
                 partial_file = 1;
                 partial_bytes = ftell( file );
             }
@@ -156,7 +153,7 @@ CurlPlugin::DownloadFile( const char* url, const char* download_file_name ) {
         }
     }
     else {
-        fprintf( stderr, "ERROR: could not open output file %s, error %d (%s)\n", download_file_name, errno, strerror(errno) ); 
+        fprintf( stderr, "ERROR: could not open output file %s, error %d (%s)\n", local_file_name, errno, strerror(errno) ); 
     }
 
     return rval;
@@ -193,17 +190,17 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
         // requested_files map, with the key: url, value: additional details 
         // about the transfer.
         ClassAd transfer_file_ad;
-        MyString download_file_name;
+        MyString local_file_name;
         MyString url;
         transfer_request request_details;
         std::pair<MyString, transfer_request> this_request;
         
         while ( adFileIter.next( transfer_file_ad ) > 0 ) {
-            transfer_file_ad.LookupString( "DownloadFileName", download_file_name );
+            transfer_file_ad.LookupString( "DownloadFileName", local_file_name );
             transfer_file_ad.LookupString( "Url", url );
-            request_details.download_file_name = download_file_name;
+            request_details.local_file_name = local_file_name;
             this_request = std::make_pair( url, request_details );
-            //printf("[main] inserting url=%s, download_file_name=%s\n", url.Value(), request_details.download_file_name.Value());
+            //cout << "[CurlPlugin::DownloadMultipleFiles] inserting url=" << url << ", local_file_name=" << local_file_name << endl;
             requested_files.insert( this_request );
         }
     }
@@ -212,13 +209,13 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
     // Iterate over the map of files to transfer.
     for ( std::map<MyString, transfer_request>::iterator it = requested_files.begin(); it != requested_files.end(); ++it ) {
 
-        MyString download_file_name = it->second.download_file_name;
+        MyString local_file_name = it->second.local_file_name;
         MyString url = it->first;
 
         // Initialize the stats structure for this transfer.
         _file_transfer_stats = new FileTransferStats();
         _global_ft_stats = _file_transfer_stats;
-        init_stats( (char*)url.Value() );
+        InitializeStats( (char*)url.Value() );
         _file_transfer_stats->TransferStartTime = time.getTimeDouble();
         
         // Enter the loop that will attempt/retry the curl request
@@ -231,7 +228,7 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
                 sleep( retry_count++ );
             #endif
             
-            rval = DownloadFile( url.Value(), download_file_name.Value() );
+            rval = DownloadFile( url.Value(), local_file_name.Value() );
 
             // If curl request is successful, break out of the loop
             if( rval == CURLE_OK ) {    
@@ -272,7 +269,7 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
 }
 
 int 
-CurlPlugin::UploadFile( const char* url, const char* download_file_name ) {
+CurlPlugin::UploadFile( const char* url, const char* local_file_name ) {
 
     char error_buffer[CURL_ERROR_SIZE];
     double bytes_uploaded; 
@@ -305,7 +302,7 @@ CurlPlugin::UploadFile( const char* url, const char* download_file_name ) {
     content_length = file_info.st_size;
     close_input = 1;
     if ( _diagnostic ) { 
-        fprintf( stderr, "sending %s to %s\n", url, download_file_name ); 
+        fprintf( stderr, "sending %s to %s\n", url, local_file_name ); 
     }
 
     // Set curl upload options
@@ -369,10 +366,10 @@ CurlPlugin::UploadFile( const char* url, const char* download_file_name ) {
     Check if this server supports resume requests using the HTTP "Range" header
     by sending a Range request and checking the return code. Code 206 means
     resume is supported, code 200 means not supported. 
-    Return 1 if resume is supported, 0 if not.
+    Return: 1 if resume is supported, 0 if not.
 */
 int 
-CurlPlugin::server_supports_resume( const char* url ) {
+CurlPlugin::ServerSupportsResume( const char* url ) {
 
     int rval = -1;
 
@@ -407,11 +404,8 @@ CurlPlugin::server_supports_resume( const char* url ) {
     return 0;    
 }
 
-/*
-    Initialize the stats ClassAd
-*/
 void 
-CurlPlugin::init_stats( char* request_url ) {
+CurlPlugin::InitializeStats( char* request_url ) {
 
     char* url = strdup( request_url );
     char* url_token;
@@ -460,12 +454,8 @@ CurlPlugin::init_stats( char* request_url ) {
     freeaddrinfo( info );
 }
 
-/*
-    Callback function provided by libcurl, which is called upon receiving
-    HTTP headers. We use this to gather statistics.
-*/
 size_t 
-CurlPlugin::header_callback( char* buffer, size_t size, size_t nitems ) {
+CurlPlugin::HeaderCallback( char* buffer, size_t size, size_t nitems ) {
     const char* delimiters = " \r\n";
     size_t numBytes = nitems * size;
 
@@ -493,26 +483,25 @@ CurlPlugin::header_callback( char* buffer, size_t size, size_t nitems ) {
     return numBytes;
 }
 
-/*
-    Write callback function for FTP file transfers.
-*/
 size_t 
-CurlPlugin::ftp_write_callback( void* buffer, size_t size, size_t nmemb, void* stream ) {
-    printf("[ftp_write_callback] called!\n");
+CurlPlugin::FtpWriteCallback( void* buffer, size_t size, size_t nmemb, void* stream ) {
     FILE* outfile = ( FILE* ) stream;
     return fwrite( buffer, size, nmemb, outfile); 
 }
 
+
 int 
 main( int argc, char **argv ) {
  
+    bool valid_inputs = true;
+    FILE* output_file;
     int diagnostic = 0;
     int rval = 0;
     string input_filename;
+    string output_filename;
     string transfer_files;
 
-     // Make sure there is only one command-line argument, and it's either
-    // -classad or the name of an input file
+    // Check if this is a -classad request
     if ( argc == 2 ) {
         if ( strcmp( argv[1], "-classad" ) == 0 ) {
             printf( "%s",
@@ -523,23 +512,61 @@ main( int argc, char **argv ) {
             );
             return 0;
         }
-        else {
-            input_filename = argv[1];
+    }
+    // If not, iterate over command-line arguments and set variables appropriately
+    else {
+        for( int i = 1; i < argc; i ++ ) {
+            if ( strcmp( argv[i], "-infile" ) == 0 ) {
+                if ( i < ( argc - 1 ) ) {
+                    input_filename = argv[i+1];
+                }
+                else {
+                    valid_inputs = false;
+                }
+            }
+            if ( strcmp( argv[i], "-outfile" ) == 0 ) {
+                if ( i < ( argc - 1 ) ) {
+                    output_filename = argv[i+1];
+                }
+                else {
+                    valid_inputs = false;
+                }
+            }
+            if ( strcmp( argv[i], "-diagnostic" ) == 0 ) {
+                diagnostic = 1;
+            }
         }
     }
-    if ( ( argc > 3 ) && ! strcmp( argv[3],"-diagnostic" ) ) {
-        diagnostic = 1;
-    } 
+
+    if ( !valid_inputs ) {
+        cerr << "Error: invalid arguments" << endl;
+        cerr << "Usage: curl_plugin -infile <input-filename> -outfile <output-filename> [general-opts]" << endl << endl;
+        cerr << "[general-opts] are:" << endl;
+        cerr << "\t-diagnostic\t\tRun the plugin in diagnostic (verbose) mode" << endl << endl;
+        return -1;
+    }
 
     // Instantiate a CurlPlugin object and handle the request
     CurlPlugin curl_plugin( diagnostic );
+    if( !curl_plugin.GetHandle() ) {
+        cerr << "ERROR: curl_plugin failed to initialize. Aborting." << endl;
+        return -1;
+    }
     rval = curl_plugin.DownloadMultipleFiles( input_filename );
 
-    // Now that we've finished all transfers, write all the statistics we
-    // gathered to stdout, with an individual classad to represent each file
-    // transferred. They'll be read and processed by the FileTransfer object.
-    // MRC: Implement this!
-    printf("%s", curl_plugin.GetStats().c_str());
+    // Now that we've finished all transfers, write statistics to output file
+    if( !output_filename.empty() ) {
+        output_file = safe_fopen_wrapper( output_filename.c_str(), "w" );
+        if( output_file == NULL ) {
+            cerr << "Unable to open curl_plugin output file: " << output_filename << endl;
+            return -1;
+        }
+        fprintf( output_file, curl_plugin.GetStats().c_str() );
+        fclose( output_file );
+    }
+    else {
+        cout << curl_plugin.GetStats() << endl;
+    }
 
     return rval;    // 0 on success
 }

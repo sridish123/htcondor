@@ -7,7 +7,7 @@
 using namespace std;
 
 struct transfer_request {
-    MyString download_file_name;
+    MyString local_file_name;
 };
 
 static FileTransferStats* _global_ft_stats;
@@ -19,21 +19,23 @@ class CurlPlugin {
     CurlPlugin( int diagnostic );
     ~CurlPlugin();
 
-    int DownloadFile( const char* url, const char* download_file_name );
+    int DownloadFile( const char* url, const char* local_file_name );
     int DownloadMultipleFiles( string input_filename );
-    int UploadFile( const char* url, const char* download_file_name );
-    int server_supports_resume( const char* url );
-    static size_t header_callback( char* buffer, size_t size, size_t nitems );
-    static size_t ftp_write_callback( void* buffer, size_t size, size_t nmemb, void* stream );
+    int UploadFile( const char* url, const char* local_file_name );
+    int ServerSupportsResume( const char* url );
+    static size_t HeaderCallback( char* buffer, size_t size, size_t nitems );
+    static size_t FtpWriteCallback( void* buffer, size_t size, size_t nmemb, void* stream );
+    void InitializeStats( char* request_url );
+
+    CURL* GetHandle() { return _handle; };
     string GetStats() { return _all_stats; }
-    void init_stats( char* request_url );
-    void SetDiagnostic( int diagnostic ) { _diagnostic = diagnostic; };
     
+
   private:
 
-    CURL* _handle = NULL;
+    CURL* _handle;
     FileTransferStats* _file_transfer_stats;
-    int _diagnostic = 0;
-    string _all_stats = "";
+    int _diagnostic;
+    string _all_stats;
 
 };

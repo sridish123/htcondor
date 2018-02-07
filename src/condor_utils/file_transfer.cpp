@@ -4498,9 +4498,13 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	fclose( input_file );
 
 	// Prepare args for the plugin
+	std::string output_filename = iwd + "/." + plugin_name + ".out";
 	ArgList plugin_args;
 	plugin_args.AppendArg( plugin_path.c_str() );
+	plugin_args.AppendArg( "-infile" );
 	plugin_args.AppendArg( input_filename.c_str() );
+	plugin_args.AppendArg( "-outfile" );
+	plugin_args.AppendArg( output_filename.c_str() );
 
 	// Invoke the plugin
 	dprintf( D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
