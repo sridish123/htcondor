@@ -7,7 +7,7 @@
 using namespace std;
 
 struct transfer_request {
-    MyString local_file_name;
+    string local_file_name;
 };
 
 static FileTransferStats* _global_ft_stats;
@@ -25,17 +25,17 @@ class CurlPlugin {
     int ServerSupportsResume( const char* url );
     static size_t HeaderCallback( char* buffer, size_t size, size_t nitems );
     static size_t FtpWriteCallback( void* buffer, size_t size, size_t nmemb, void* stream );
-    void InitializeStats( char* request_url );
+    void InitializeStats( string request_url );
 
     CURL* GetHandle() { return _handle; };
-    string GetStats() { return _all_stats; }
+    string GetStats() { return _all_files_stats; }
     
 
   private:
 
     CURL* _handle;
-    FileTransferStats* _file_transfer_stats;
+    FileTransferStats* _this_file_stats;
     int _diagnostic;
-    string _all_stats;
+    string _all_files_stats;
 
 };

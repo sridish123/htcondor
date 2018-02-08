@@ -1846,6 +1846,7 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	// Variable for deferred transfers, used to transfer multiple files at once
 	// by certain filte transfer plugins. These need to be scoped to the full
 	// function.
+	bool isDeferredTransfer = false;
 	classad::ClassAdUnParser unparser;
 	std::map<std::string, std::string> deferredTransfers;
 	std::unique_ptr<classad::ClassAd> thisTransfer( new classad::ClassAd() );
@@ -2129,6 +2130,8 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		thisFileStats.TransferStartTime = utcTime.getTimeDouble();
 		thisFileStats.TransferType = "download";
 
+		isDeferredTransfer = false;
+
 		if (reply == 999) {
 			// filename already received:
 			// .  verify that it is the same as FileName attribute in following classad
@@ -2250,9 +2253,12 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 				// Add this result to our deferred transfers map.
 				if ( deferredTransfers.find( plugin_path ) == deferredTransfers.end() ) {
 					deferredTransfers.insert( std::pair<std::string, std::string>( plugin_path, thisTransferString ) );
-				} else {
+				} 
+				else {
 					deferredTransfers[plugin_path] += thisTransferString;
 				}
+
+				isDeferredTransfer = true;
 			}
 			// All other file transfer plugins should transfer right away.
 			else {
@@ -2474,7 +2480,9 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		thisFileStatsAd.Update(pluginStatsAd);
 
 		// Write stats to disk
-		OutputFileTransferStats(thisFileStatsAd);
+		if ( !isDeferredTransfer ) {
+			OutputFileTransferStats(thisFileStatsAd);
+		}
 
 		// Get rid of compiler set-but-not-used warnings on Linux
 		// Hopefully the compiler can just prune out the emitted code.
@@ -4456,6 +4464,14 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 			std::string plugin_path, std::string transfer_files_string, 
 			ClassAd* plugin_stats, const char* proxy_filename ) {
 
+	ArgList plugin_args;
+	CondorClassAdFileIterator adFileIter;
+	FILE* input_file;
+	FILE* output_file;
+	std::string input_filename;
+	std::string output_filename;
+	std::string plugin_name;
+
 	if ( plugin_method_table == NULL ) {
 		dprintf( D_FULLDEBUG, "FILETRANSFER: No plugin table defined! "
 				"(requesting multi-file transfer)\n" );
@@ -4491,15 +4507,14 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	// Create an input file for the plugin.
 	// Input file consists of the transfer_files_string data (list of classads)
 	// which we'll save to a temporary file in the working directory.
-	std::string plugin_name = plugin_path.substr( plugin_path.find_last_of("/\\") + 1 );
-	std::string input_filename = iwd + "/." + plugin_name + ".in";
-	FILE* input_file = safe_fopen_wrapper( input_filename.c_str(), "w" );
+	plugin_name = plugin_path.substr( plugin_path.find_last_of("/\\") + 1 );
+	input_filename = iwd + "/." + plugin_name + ".in";
+	input_file = safe_fopen_wrapper( input_filename.c_str(), "w" );
 	fputs( transfer_files_string.c_str(), input_file );
 	fclose( input_file );
 
 	// Prepare args for the plugin
-	std::string output_filename = iwd + "/." + plugin_name + ".out";
-	ArgList plugin_args;
+	output_filename = iwd + "/." + plugin_name + ".out";	
 	plugin_args.AppendArg( plugin_path.c_str() );
 	plugin_args.AppendArg( "-infile" );
 	plugin_args.AppendArg( input_filename.c_str() );
@@ -4509,16 +4524,6 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	// Invoke the plugin
 	dprintf( D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
 	FILE* plugin_pipe = my_popen( plugin_args, "r", FALSE, &plugin_env, drop_privs );
-
-	// Capture stdout from the plugin and dump it to the stats file
-	char single_stat[1024];
-	while( fgets( single_stat, sizeof( single_stat ), plugin_pipe ) ) {
-		if( !plugin_stats->Insert( single_stat ) ) {
-			dprintf ( D_ALWAYS, "FILETRANSFER: error importing statistic %s\n", single_stat );
-		}
-	}
-
-	// Close the plugin
 	int plugin_status = my_pclose( plugin_pipe );
 	dprintf ( D_ALWAYS, "FILETRANSFER: plugin returned %i (%s)\n", 
 		plugin_status, strerror( plugin_status ) );
@@ -4540,12 +4545,29 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 			"location controlled by root. Good luck!\n");
 	}
 
-	// Any non-zero exit from plugin indicates error.  
-	// Return -1 on error, or 0 otherwise, so map plugin_status to the
-	// proper value.
-	// MRC: This error handling code only applies to single files, change it
-	// to accommodate multiple files.
-	if (plugin_status != 0) {
+	// If plugin succeeded at downloading all files, update stats
+	if ( plugin_status == 0 ) {
+		output_file = safe_fopen_wrapper( output_filename.c_str(), "r" );
+		if( output_file == NULL ) {
+			fprintf( stderr, "Unable to open curl_plugin output file %s.\n", 
+				input_filename.c_str() );
+			return -1;
+		}
+		if( !adFileIter.begin( output_file, false, CondorClassAdFileParseHelper::Parse_new )) {
+			fprintf( stderr, "Failed to iterate over file transfer output.\n" );
+			return -1;
+		} 
+		else {
+			// Iterate over the classads in the file, and output each one
+			// to our transfer_history log file.
+			ClassAd this_file_stats_ad;
+			while ( adFileIter.next( this_file_stats_ad ) > 0 ) {
+				OutputFileTransferStats( this_file_stats_ad );
+			}
+		}
+		fclose(output_file);
+	}
+	else {
 		std::string errorMessage;
 		std::string transferUrl;
 		plugin_stats->LookupString( "TransferError", errorMessage );
