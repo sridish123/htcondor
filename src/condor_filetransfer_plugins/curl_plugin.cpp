@@ -180,12 +180,12 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
     if( input_file == NULL ) {
         fprintf( stderr, "Unable to open curl_plugin input file %s.\n", 
             input_filename.c_str() );
-        return -1;
+        return 1;
     }
     
     if( !adFileIter.begin( input_file, false, CondorClassAdFileParseHelper::Parse_new )) {
 		fprintf( stderr, "Failed to start parsing classad input.\n" );
-		return -1;
+		return 1;
     } 
     else {
         // Iterate over the classads in the file, and insert each one into our
@@ -258,15 +258,16 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
         
         _this_file_stats->TransferEndTime = time.getTimeDouble();
 
-        // If the transfer was successful, append the stats 
-        if( rval != -1 ) {
-            _this_file_stats->Publish( stats_ad );
-            unparser.Unparse( stats_string, &stats_ad );
-            _all_files_stats += stats_string;
-            delete _this_file_stats;
-            stats_ad.Clear();
-            stats_string = "";
-        }
+        // Regardless of success/failure, update the stats
+        _this_file_stats->Publish( stats_ad );
+        unparser.Unparse( stats_string, &stats_ad );
+        _all_files_stats += stats_string;
+        delete _this_file_stats;
+        stats_ad.Clear();
+        stats_string = "";
+        
+        // If the transfer did fail, break out of the loop immediately
+        if ( rval > 0 ) break;
     }
 
     return rval;
@@ -362,8 +363,8 @@ CurlPlugin::UploadFile( const char* url, const char* local_file_name ) {
         file = NULL;
     }
 
-
-    return rval;    // 0 on success
+    // 0 on success, error code >= 1 on failure
+    return rval;
 }
 
 /*
@@ -547,14 +548,14 @@ main( int argc, char **argv ) {
         fprintf( stderr, "Usage: curl_plugin -infile <input-filename> -outfile <output-filename> [general-opts]\n\n" );
         fprintf( stderr, "[general-opts] are:\n" );
         fprintf( stderr, "\t-diagnostic\t\tRun the plugin in diagnostic (verbose) mode\n\n" );
-        return -1;
+        return 1;
     }
 
     // Instantiate a CurlPlugin object and handle the request
     CurlPlugin curl_plugin( diagnostic );
     if( !curl_plugin.GetHandle() ) {
         fprintf( stderr, "ERROR: curl_plugin failed to initialize. Aborting.\n" );
-        return -1;
+        return 1;
     }
     rval = curl_plugin.DownloadMultipleFiles( input_filename );
 
@@ -563,7 +564,7 @@ main( int argc, char **argv ) {
         output_file = safe_fopen_wrapper( output_filename.c_str(), "w" );
         if( output_file == NULL ) {
             fprintf( stderr, "Unable to open curl_plugin output file: %s\n", output_filename.c_str() );
-            return -1;
+            return 1;
         }
         fprintf( output_file, curl_plugin.GetStats().c_str() );
         fclose( output_file );
@@ -572,7 +573,8 @@ main( int argc, char **argv ) {
         printf( "%s\n", curl_plugin.GetStats().c_str() );
     }
 
-    return rval;    // 0 on success
+    // 0 on success, error code >= 1 on failure
+    return rval;
 }
 
 

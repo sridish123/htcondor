@@ -1910,11 +1910,8 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
     }
 
 
-
-	// Start the main download loop. Reads reply codes and filenames off a
-	// socket wire, s, then handles downloads according to the reply code.
-	// We also gather a list of files to be transfered using a third party file
-	// transfer plugin; wait until after this loop to actually do the transfers.
+	// Start the main download loop. Read reply codes + filenames off a
+	// socket wire, s, then handle downloads according to the reply code.
 	for (;;) {
 		if( !s->code(reply) ) {
 			dprintf(D_FULLDEBUG,"DoDownload: exiting at %d\n",__LINE__);
@@ -1955,7 +1952,6 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		filename = tmp_buf;
 		free( tmp_buf );
 		tmp_buf = NULL;
-
 
 			/*
 			  if we want to change priv states but haven't done so
@@ -2495,9 +2491,15 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	// of deferred transfers, and invoke each set with the appopriate plugin.
 	for ( std::map<std::string, std::string>::iterator it = deferredTransfers.begin(); it != deferredTransfers.end(); ++ it ) {
 		rc = InvokeMultipleFileTransferPlugin( errstack, it->first, it->second, 
-			&pluginStatsAd, LocalProxyName.Value() );
+			LocalProxyName.Value() );
 		if ( rc != 0 ) {
-			dprintf(D_ALWAYS, "FILETRANSFER: Multiple file transfer failed.\n");
+			dprintf( D_ALWAYS, "FILETRANSFER: Multiple file transfer failed: %s\n",
+				errstack.getFullText().c_str() );
+			download_success = false;
+			hold_code = CONDOR_HOLD_CODE_DownloadFileError;
+			hold_subcode = rc;
+			try_again = false;
+			error_buf.formatstr( errstack.getFullText().c_str() );
 		}
 	}
 
@@ -4457,12 +4459,12 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 }
 
 // [FileTransfer::InvokeMultipleFileTransferPlugin]
-// @description: Similar to FileTransfer::InvokeFileTransferPlugin, although 
-// 		designed to transfer multiple files at once.
-// @return: 0 on success, 1 on failure.
+// Similar to FileTransfer::InvokeFileTransferPlugin, modified to transfer 
+// 	multiple files in a single plugin invocation.
+// Returns 0 on success, error code >= 1 on failure.
 int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e, 
 			std::string plugin_path, std::string transfer_files_string, 
-			ClassAd* plugin_stats, const char* proxy_filename ) {
+			const char* proxy_filename ) {
 
 	ArgList plugin_args;
 	CondorClassAdFileIterator adFileIter;
@@ -4545,35 +4547,41 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 			"location controlled by root. Good luck!\n");
 	}
 
-	// If plugin succeeded at downloading all files, update stats
-	if ( plugin_status == 0 ) {
-		output_file = safe_fopen_wrapper( output_filename.c_str(), "r" );
-		if( output_file == NULL ) {
-			fprintf( stderr, "Unable to open curl_plugin output file %s.\n", 
-				input_filename.c_str() );
-			return -1;
-		}
-		if( !adFileIter.begin( output_file, false, CondorClassAdFileParseHelper::Parse_new )) {
-			fprintf( stderr, "Failed to iterate over file transfer output.\n" );
-			return -1;
-		} 
-		else {
-			// Iterate over the classads in the file, and output each one
-			// to our transfer_history log file.
-			ClassAd this_file_stats_ad;
-			while ( adFileIter.next( this_file_stats_ad ) > 0 ) {
-				OutputFileTransferStats( this_file_stats_ad );
+	// Output stats regardless of success or failure
+	output_file = safe_fopen_wrapper( output_filename.c_str(), "r" );
+	if ( output_file == NULL ) {
+		fprintf( stderr, "FILETRANSFER: Unable to open curl_plugin output file "
+			"%s.\n", input_filename.c_str() );
+		return -1;
+	}
+	if ( !adFileIter.begin( output_file, false, CondorClassAdFileParseHelper::Parse_new )) {
+		fprintf( stderr, "FILETRANSFER: Failed to iterate over file transfer output.\n" );
+		return -1;
+	} 
+	else {
+		// Iterate over the classads in the file, and output each one
+		// to our transfer_history log file.
+		ClassAd this_file_stats_ad;
+		while ( adFileIter.next( this_file_stats_ad ) > 0 ) {
+
+			OutputFileTransferStats( this_file_stats_ad );
+			
+			// If this classad represents a failed transfer, produce an error
+			bool transfer_success;
+			this_file_stats_ad.LookupBool( "TransferSuccess", transfer_success );
+			if ( !transfer_success ) {
+				std::string error_message;
+				std::string transfer_url;
+				this_file_stats_ad.LookupString( "TransferError", error_message );
+				this_file_stats_ad.LookupString( "TransferUrl", transfer_url );
+				e.pushf( "FILETRANSFER", 1, "non-zero exit (%i) from %s. Error: %s (%s)", 
+					plugin_status, plugin_path.c_str(), error_message.c_str(), transfer_url.c_str() );
 			}
 		}
-		fclose(output_file);
 	}
-	else {
-		std::string errorMessage;
-		std::string transferUrl;
-		plugin_stats->LookupString( "TransferError", errorMessage );
-		plugin_stats->LookupString( "TransferUrl", transferUrl );
-		e.pushf( "FILETRANSFER", 1, "non-zero exit (%i) from %s. Error: %s (%s)", 
-			plugin_status, plugin_path.c_str(), errorMessage.c_str(), transferUrl.c_str() );
+	fclose(output_file);
+
+	if ( plugin_status != 0 ) {
 		return GET_FILE_PLUGIN_FAILED;
 	}
 

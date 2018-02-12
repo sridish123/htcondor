@@ -290,7 +290,7 @@ class FileTransfer: public Service {
 	int InitializePlugins( CondorError &e );
 	MyString DetermineFileTransferPlugin( CondorError &error, const char* source, const char* dest );
 	int InvokeFileTransferPlugin( CondorError &e, const char* URL, const char* dest, ClassAd* plugin_stats, const char* proxy_filename = NULL );
-	int InvokeMultipleFileTransferPlugin( CondorError &e, std::string plugin_path, std::string transfer_files_string, ClassAd* plugin_stats, const char* proxy_filename );
+	int InvokeMultipleFileTransferPlugin( CondorError &e, std::string plugin_path, std::string transfer_files_string, const char* proxy_filename );
 	int OutputFileTransferStats( ClassAd &stats );
 	MyString GetSupportedMethods();
 
