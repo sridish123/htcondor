@@ -4673,8 +4673,8 @@ int FileTransfer::InitializePlugins( CondorError &error ) {
 	}
 
 	// plugin_method_table and plugin_multiple_file_support_table are member variables
-	plugin_method_table = new PluginHashTable( 7, compute_filename_hash );
-	plugin_multiple_file_support_table = new PluginMultipleFileSupportHashTable( 7, compute_filename_hash );
+	plugin_method_table = new PluginHashTable( hashFunction );
+	plugin_multiple_file_support_table = new PluginMultipleFileSupportHashTable( hashFunction );
 
 	StringList plugin_list( plugin_list_string );
 	plugin_list.rewind();
