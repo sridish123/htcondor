@@ -192,7 +192,7 @@ void UpdateJobProxyAttrs( PROC_ID job_id, const ClassAd &proxy_attrs )
 	classad::ClassAdUnParser unparse;
 	unparse.SetOldClassAd(true, true);
 
-	for (AttrList::const_iterator attr_it = proxy_attrs.begin(); attr_it != proxy_attrs.end(); ++attr_it)
+	for (ClassAd::const_iterator attr_it = proxy_attrs.begin(); attr_it != proxy_attrs.end(); ++attr_it)
 	{
 		std::string attr_value_buf;
 		unparse.Unparse(attr_value_buf, attr_it->second);
@@ -1837,10 +1837,6 @@ int Scheduler::command_query_ads(int, Stream* stream)
         dprintf( D_ALWAYS, "Failed to receive query on TCP: aborting\n" );
 		return FALSE;
 	}
-
-#if defined(ADD_TARGET_SCOPING)
-	AddExplicitTargetRefs( queryAd );
-#endif
 
 		// Construct a list of all our ClassAds. we pass queryAd 
 		// through so that if there is a STATISTICS_TO_PUBLISH attribute
@@ -7144,6 +7140,7 @@ Scheduler::negotiate(int command, Stream* s)
 	int consider_jobprio_max = INT_MAX;
 	ClassAd negotiate_ad;
 	MyString submitter_tag;
+	ExprTree *neg_constraint = NULL;
 	s->decode();
 	if( command == NEGOTIATE ) {
 		if( !getClassAd( s, negotiate_ad ) ) {
@@ -7169,6 +7166,7 @@ Scheduler::negotiate(int command, Stream* s)
 			// jobprio_min and jobprio_max are optional
 		negotiate_ad.LookupInteger("JOBPRIO_MIN",consider_jobprio_min);
 		negotiate_ad.LookupInteger("JOBPRIO_MAX",consider_jobprio_max);
+		neg_constraint = negotiate_ad.Lookup(ATTR_NEGOTIATOR_JOB_CONSTRAINT);
 	}
 	else {
 			// old NEGOTIATE_WITH_SIGATTRS protocol
@@ -7344,6 +7342,7 @@ Scheduler::negotiate(int command, Stream* s)
 	ResourceRequestList *resource_requests = new ResourceRequestList;
 	ResourceRequestCluster *cluster = NULL;
 	int next_cluster = 0;
+	int skipped_auto_cluster = -1;
 
 	for(job_index = 0; job_index < N_PrioRecs && !skip_negotiation; job_index++) {
 		prio_rec *prec = &PrioRec[job_index];
@@ -7372,8 +7371,19 @@ Scheduler::negotiate(int command, Stream* s)
 			auto_cluster_id = prec->auto_cluster_id;
 		}
 
+		if ( auto_cluster_id == skipped_auto_cluster ) {
+			continue;
+		}
+
 		if( !cluster || cluster->getAutoClusterId() != auto_cluster_id )
 		{
+			if ( neg_constraint ) {
+				JobQueueJob* job_ad = GetJobAd( prec->id );
+				if ( job_ad == NULL || EvalBool( job_ad, neg_constraint ) == false ) {
+					skipped_auto_cluster = auto_cluster_id;
+					continue;
+				}
+			}
 			cluster = new ResourceRequestCluster( auto_cluster_id );
 			resource_requests->push_back( cluster );
 		}
@@ -12990,14 +13000,8 @@ Scheduler::Init()
 	}
 	tmp = param( "START_LOCAL_UNIVERSE" );
 	if ( tmp && ParseClassAdRvalExpr( tmp, tmp_expr ) == 0 ) {
-#if defined (ADD_TARGET_SCOPING)
-		ExprTree *tmp_expr2 = AddTargetRefs( tmp_expr, TargetJobAttrs );
-		this->StartLocalUniverse = strdup( ExprTreeToString( tmp_expr2 ) );
-		delete tmp_expr2;
-#else
 		this->StartLocalUniverse = tmp;
 		tmp = NULL;
-#endif
 		delete tmp_expr;
 	} else {
 		// Default Expression
@@ -13018,14 +13022,8 @@ Scheduler::Init()
 	}
 	tmp = param( "START_SCHEDULER_UNIVERSE" );
 	if ( tmp && ParseClassAdRvalExpr( tmp, tmp_expr ) == 0 ) {
-#if defined (ADD_TARGET_SCOPING)
-		ExprTree *tmp_expr2 = AddTargetRefs( tmp_expr, TargetJobAttrs );
-		this->StartSchedulerUniverse = strdup( ExprTreeToString( tmp_expr2 ) );
-		delete tmp_expr2;
-#else
 		this->StartSchedulerUniverse = tmp;
 		tmp = NULL;
-#endif
 		delete tmp_expr;
 	} else {
 		// Default Expression

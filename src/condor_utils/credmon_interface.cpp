@@ -87,7 +87,11 @@ bool credmon_fill_watchfile_name(char* watchfilename, const char* user) {
 			strncpy(username, user, 255);
 			username[255] = 0;
 		}
-		sprintf(watchfilename, "%s%c%s.cc", cred_dir.ptr(), DIR_DELIM_CHAR, username);
+		if(param_boolean("TOKENS", false)) {
+			sprintf(watchfilename, "%s%c%s.use", cred_dir.ptr(), DIR_DELIM_CHAR, username);
+		} else {
+			sprintf(watchfilename, "%s%c%s.cc", cred_dir.ptr(), DIR_DELIM_CHAR, username);
+		}
 	}
 
 	return true;
@@ -105,7 +109,7 @@ bool credmon_poll_setup(const char* user, bool force_fresh, bool send_signal) {
 
 	// this will be the filename we poll for
 	char watchfilename[PATH_MAX];
-	if (credmon_fill_watchfile_name(const_cast<char*>(watchfilename), user) == false) {
+	if (credmon_fill_watchfile_name(watchfilename, user) == false) {
 		return false;
 	}
 

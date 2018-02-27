@@ -41,6 +41,15 @@ The details of each version are described below.
 
 \begin{itemize}
 
+\item Fixed a bug which mischaracterized the \Attr{MemoryUsage} of VM
+universe jobs.  This should allow VM universe jobs to run when
+\MacroNI{feature : Hold\_If\_Memory\_Exceeded} is enabled.
+\Ticket{6577}
+
+\item Fixed a bug where the \Condor{shadow} could accidentally kill itself
+by not checking it it was attempting to change immutable attributes.
+\Ticket{6557}
+
 \item Fixed a bug that could cause the \Condor{collector} to exit with an 
 		assertion error under certain (rare) conditions when it has no
 		outgoing connectivity to the Internet.
@@ -49,6 +58,14 @@ The details of each version are described below.
 \item Fixed a bug that would cause any daemons interfacing with the CREDMON to
 retry indefinitely when polling for credentials.
 \Ticket{6523}
+
+\item Improved the systemd configuration to clean up HTCondor processes
+on shutdown in the event that the \Condor{master} fails to do so.
+\Ticket{6539}
+
+\item Fixed a bug that caused \Condor{preen} to crash before it finished
+cleaning the spool directory (leaving unwanted files behind)
+\Ticket{6521}
 
 \end{itemize}
 

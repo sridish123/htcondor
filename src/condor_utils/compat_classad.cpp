@@ -30,6 +30,8 @@
 #include "condor_arglist.h"
 #define CLASSAD_USER_MAP_RETURNS_STRINGLIST 1
 
+#include <sstream>
+
 class MapFile;
 extern int reconfig_user_maps();
 extern bool user_map_do_mapping(const char * mapname, const char * input, MyString & output);
@@ -1890,8 +1892,9 @@ int CondorClassAdListWriter::writeFooter(FILE* out, bool xml_always_write_header
 	return 0;
 }
 
+
 bool
-ClassAdAttributeIsPrivate( char const *name )
+ClassAdAttributeIsPrivate( const std::string &name )
 {
 	return ClassAdPrivateAttrs.find( name ) != ClassAdPrivateAttrs.end();
 }
@@ -2546,7 +2549,7 @@ sPrintAd( MyString &output, const classad::ClassAd &ad, bool exclude_private, St
 				continue; // attribute exists in child ad; we will print it below
 			}
 			if ( !exclude_private ||
-				 !ClassAdAttributeIsPrivate( itr->first.c_str() ) ) {
+				 !ClassAdAttributeIsPrivate( itr->first ) ) {
 				value = "";
 				unp.Unparse( value, itr->second );
 				output.formatstr_cat( "%s = %s\n", itr->first.c_str(),
@@ -2560,7 +2563,7 @@ sPrintAd( MyString &output, const classad::ClassAd &ad, bool exclude_private, St
 			continue; // not in white-list
 		}
 		if ( !exclude_private ||
-			 !ClassAdAttributeIsPrivate( itr->first.c_str() ) ) {
+			 !ClassAdAttributeIsPrivate( itr->first ) ) {
 			value = "";
 			unp.Unparse( value, itr->second );
 			output.formatstr_cat( "%s = %s\n", itr->first.c_str(),
@@ -2595,7 +2598,7 @@ sGetAdAttrs( classad::References &attrs, const classad::ClassAd &ad, bool exclud
 			continue; // not in white-list
 		}
 		if ( !exclude_private ||
-			 !ClassAdAttributeIsPrivate( itr->first.c_str() ) ) {
+			 !ClassAdAttributeIsPrivate( itr->first ) ) {
 			attrs.insert(itr->first);
 		}
 	}
@@ -2610,7 +2613,7 @@ sGetAdAttrs( classad::References &attrs, const classad::ClassAd &ad, bool exclud
 				continue; // not in white-list
 			}
 			if ( !exclude_private ||
-				 !ClassAdAttributeIsPrivate( itr->first.c_str() ) ) {
+				 !ClassAdAttributeIsPrivate( itr->first ) ) {
 				attrs.insert(itr->first);
 			}
 		}
@@ -2791,61 +2794,6 @@ NextNameOriginal()
 	return name;
 }
 
-// Back compatibility helper methods
-
-void AddExplicitTargetRefs( classad::ClassAd &ad ) 
-{
-	set< string, classad::CaseIgnLTStr > definedAttrs;
-	for( classad::AttrList::iterator a = ad.begin( ); a != ad.end( ); a++ ) {
-		definedAttrs.insert(a->first);
-	}
-	
-	for( classad::AttrList::iterator a = ad.begin( ); a != ad.end( ); a++ ) {
-		if ( a->second->GetKind() != classad::ExprTree::LITERAL_NODE ) 
-		{
-		  classad::ExprTree * pTree = compat_classad::AddExplicitTargetRefs( a->second, definedAttrs );
-			ad.Insert( a->first, pTree ) ;
-		}
-	}
-}
-
-void RemoveExplicitTargetRefs( classad::ClassAd &ad )
-{
-	for( classad::AttrList::iterator a = ad.begin( ); a != ad.end( ); a++ ) {
-		if ( a->second->GetKind() != classad::ExprTree::LITERAL_NODE ) 
-		{
-		  classad::ExprTree * pTree = compat_classad::RemoveExplicitTargetRefs( a->second );
-			ad.Insert( a->first, pTree );
-		}
-	}
-}  
-
-
-void ClassAd:: 
-AddTargetRefs( TargetAdType /*target_type*/, bool /*do_version_check*/ )
-{
-	// Disable AddTargetRefs for now
-	return;
-
-	// Remove use of CondorVersionInfo, which would require several
-	// additional files in libcondorapi.
-#if 0
-	MyString ver_str;
-	if ( do_version_check && this->LookupString( ATTR_VERSION, ver_str ) ) {
-		CondorVersionInfo ver( ver_str.Value() );
-		if ( ver.built_since_version( 7, 5, 1 ) ) {
-			return;
-		}
-	}
-
-	for( classad::AttrList::iterator a = begin(); a != end(); a++ ) {
-		if ( a->second->GetKind() != classad::ExprTree::LITERAL_NODE ) {
-			this->Insert( a->first, 
-						  compat_classad::AddTargetRefs( a->second, target_type ) );
-		}
-	}
-#endif
-}
 
 // Determine if a value is valid to be written to the log. The value
 // is a RHS of an expression. According to LogSetAttribute::WriteBody,
@@ -3174,83 +3122,52 @@ void ClassAd::ChainCollapse()
     }
 }
 
-void ClassAd::
-GetReferences(const char* attr,
-                StringList *internal_refs,
-                StringList *external_refs) const
-{
-    ExprTree *tree;
 
-    tree = Lookup(attr);
-    if(tree != NULL)
-    {
-		_GetReferences( tree, internal_refs, external_refs );
-    }
+// the freestanding functions 
+
+bool
+GetReferences( const char* attr, const classad::ClassAd &ad,
+               classad::References *internal_refs,
+               classad::References *external_refs )
+{
+	ExprTree *tree;
+
+	tree = ad.Lookup( attr );
+	if ( tree != NULL ) {
+		return GetExprReferences( tree, ad, internal_refs, external_refs );
+	} else {
+		return false;
+	}
 }
 
-bool ClassAd::
-GetExprReferences(const char* expr,
-				  StringList *internal_refs,
-				  StringList *external_refs) const
+bool
+GetExprReferences( const char* expr, const classad::ClassAd &ad,
+                   classad::References *internal_refs,
+                   classad::References *external_refs )
 {
+	bool rv = false;
 	classad::ClassAdParser par;
 	classad::ExprTree *tree = NULL;
 	par.SetOldClassAd( true );
 
-    if ( !par.ParseExpression( expr, tree, true ) ) {
-        return false;
-    }
+	if ( !par.ParseExpression( expr, tree, true ) ) {
+		return false;
+	}
 
-	_GetReferences( tree, internal_refs, external_refs );
+	rv = GetExprReferences( tree, ad, internal_refs, external_refs );
 
 	delete tree;
 
-	return true;
+	return rv;
 }
 
-bool ClassAd::
-GetExprReferences(classad::ExprTree *tree,
-				  StringList *internal_refs,
-				  StringList *external_refs) const
-{
-	_GetReferences( tree, internal_refs, external_refs );
-	return true;
-}
-
-static void AppendReference( StringList &reflist, char const *name )
-{
-	char const *end = strchr(name,'.');
-	std::string buf;
-	if( end ) {
-			// if attribute reference is of form 'one.two.three...'
-			// only insert 'one' in the list of references
-
-		if( end == name ) {
-				// If reference is of form '.one.two.three...'
-				// only insert 'one'.  This is unlikely to be correct,
-				// because the root scope is likely to be the MatchClassAd,
-				// but inserting an empty attribute name would make it
-				// harder to understand what is going on, so it seems
-				// better to insert 'one'.
-			end = strchr(end,'.');
-		}
-
-		buf.append(name,end-name);
-		name = buf.c_str();
-	}
-
-	if( !reflist.contains_anycase(name) ) {
-		reflist.append(name);
-	}
-}
-
-void ClassAd::
-_GetReferences(classad::ExprTree *tree,
-			   StringList *internal_refs,
-			   StringList *external_refs) const
+bool
+GetExprReferences( const classad::ExprTree *tree, const classad::ClassAd &ad,
+                   classad::References *internal_refs,
+                   classad::References *external_refs )
 {
 	if ( tree == NULL ) {
-		return;
+		return false;
 	}
 
 	classad::References ext_refs_set;
@@ -3258,16 +3175,17 @@ _GetReferences(classad::ExprTree *tree,
 	classad::References::iterator set_itr;
 
 	bool ok = true;
-	if( external_refs && !GetExternalReferences(tree, ext_refs_set, true) ) {
+	if( external_refs && !ad.GetExternalReferences(tree, ext_refs_set, true) ) {
 		ok = false;
 	}
-	if( internal_refs && !GetInternalReferences(tree, int_refs_set, true) ) {
+	if( internal_refs && !ad.GetInternalReferences(tree, int_refs_set, true) ) {
 		ok = false;
 	}
 	if( !ok ) {
 		dprintf(D_FULLDEBUG,"warning: failed to get all attribute references in ClassAd (perhaps caused by circular reference).\n");
-		dPrintAd(D_FULLDEBUG, *this);
+		dPrintAd(D_FULLDEBUG, ad);
 		dprintf(D_FULLDEBUG,"End of offending ad.\n");
+		return false;
 	}
 
 		// We first process the references and save results in
@@ -3277,175 +3195,47 @@ _GetReferences(classad::ExprTree *tree,
 		// duplicates while inserting into the StringList.
 
 	if ( external_refs ) {
-		for ( set_itr = ext_refs_set.begin(); set_itr != ext_refs_set.end();
-			  set_itr++ ) {
-			const char *name = set_itr->c_str();
-			// Check for references to things in the MatchClassAd
-			// and do the right thing.  This does not cover all
-			// possible ways of referencing things in the match ad,
-			// but it covers the ones users are expected to use
-			// and the ones expected from OptimizeAdForMatchmaking.
-			if ( strncasecmp( name, "target.", 7 ) == 0 ) {
-				AppendReference( *external_refs, &set_itr->c_str()[7] );
-			} else if ( strncasecmp( name, "other.", 6 ) == 0 ) {
-				AppendReference( *external_refs, &set_itr->c_str()[6] );
-			} else if ( strncasecmp( name, ".left.", 6 ) == 0 ) {
-				AppendReference( *external_refs, &set_itr->c_str()[6] );
-			} else if ( strncasecmp( name, ".right.", 7 ) == 0 ) {
-				AppendReference( *external_refs, &set_itr->c_str()[7] );
-			} else {
-				AppendReference( *external_refs, set_itr->c_str() );
-			}
-		}
+		TrimReferenceNames( ext_refs_set, true );
+		external_refs->insert( ext_refs_set.begin(), ext_refs_set.end() );
 	}
-
 	if ( internal_refs ) {
-		for ( set_itr = int_refs_set.begin(); set_itr != int_refs_set.end();
-			  set_itr++ ) {
-			AppendReference( *internal_refs, set_itr->c_str() );
-		}
+		TrimReferenceNames( int_refs_set, false );
+		internal_refs->insert( int_refs_set.begin(), int_refs_set.end() );
 	}
+	return true;
 }
 
-
-
-// the freestanding functions 
-
-classad::ExprTree *
-AddExplicitTargetRefs(classad::ExprTree *tree,
-						std::set < std::string, classad::CaseIgnLTStr > & definedAttrs) 
+void TrimReferenceNames( classad::References &ref_set, bool external )
 {
-	if( tree == NULL ) {
-		return NULL;
-	}
-	classad::ExprTree::NodeKind nKind = tree->GetKind( );
-	switch( nKind ) {
-	case classad::ExprTree::ATTRREF_NODE: {
-		classad::ExprTree *expr = NULL;
-		string attr = "";
-		bool abs = false;
-		( ( classad::AttributeReference * )tree )->GetComponents(expr,attr,abs);
-		if( abs || expr != NULL ) {
-			return tree->Copy( );
-		}
-		else {
-			if( definedAttrs.find( attr ) == definedAttrs.end( ) ) {
-					// attribute is not defined, so insert "target"
-				classad::AttributeReference *target = NULL;
-				target = classad::AttributeReference::MakeAttributeReference(NULL,
-																	"target");
-				return classad::AttributeReference::MakeAttributeReference(target,attr);
+	classad::References new_set;
+	classad::References::iterator it;
+	for ( it = ref_set.begin(); it != ref_set.end(); it++ ) {
+		const char *name = it->c_str();
+		if ( external ) {
+			if ( strncasecmp( name, "target.", 7 ) == 0 ) {
+				name += 7;
+			} else if ( strncasecmp( name, "other.", 6 ) == 0 ) {
+				name += 6;
+			} else if ( strncasecmp( name, ".left.", 6 ) == 0 ) {
+				name += 6;
+			} else if ( strncasecmp( name, ".right.", 7 ) == 0 ) {
+				name += 7;
+			} else if ( name[0] == '.' ) {
+				name += 1;
 			}
-			else {
-				return tree->Copy( );
+		} else {
+			if ( name[0] == '.' ) {
+				name += 1;
 			}
 		}
-	}
-	case classad::ExprTree::OP_NODE: {
-		classad::Operation::OpKind oKind;
-		classad::ExprTree * expr1 = NULL;
-		classad::ExprTree * expr2 = NULL;
-		classad::ExprTree * expr3 = NULL;
-		classad::ExprTree * newExpr1 = NULL;
-		classad::ExprTree * newExpr2 = NULL;
-		classad::ExprTree * newExpr3 = NULL;
-		( ( classad::Operation * )tree )->GetComponents( oKind, expr1, expr2, expr3 );
-		if( expr1 != NULL ) {
-			newExpr1 = AddExplicitTargetRefs( expr1, definedAttrs );
+		const char *end = strchr( name, '.' );
+		if ( end ) {
+			new_set.insert( std::string( name, end-name ) );
+		} else {
+			new_set.insert( name );
 		}
-		if( expr2 != NULL ) {
-			newExpr2 = AddExplicitTargetRefs( expr2, definedAttrs );
-		}
-		if( expr3 != NULL ) {
-			newExpr3 = AddExplicitTargetRefs( expr3, definedAttrs );
-		}
-		return classad::Operation::MakeOperation( oKind, newExpr1, newExpr2, newExpr3 );
 	}
-	case classad::ExprTree::FN_CALL_NODE: {
-		std::string fn_name;
-		classad::ArgumentList old_fn_args;
-		classad::ArgumentList new_fn_args;
-		( ( classad::FunctionCall * )tree )->GetComponents( fn_name, old_fn_args );
-		for ( classad::ArgumentList::iterator i = old_fn_args.begin(); i != old_fn_args.end(); i++ ) {
-			new_fn_args.push_back( AddExplicitTargetRefs( *i, definedAttrs ) );
-		}
-		return classad::FunctionCall::MakeFunctionCall( fn_name, new_fn_args );
-	}
-	default: {
- 			// old ClassAds have no function calls, nested ClassAds or lists
-			// literals have no attrrefs in them
-		return tree->Copy( );
-	}
-	}
-} 
-
-classad::ExprTree *RemoveExplicitTargetRefs( classad::ExprTree *tree )
-{
-	if( tree == NULL ) {
-		return NULL;
-	}
-	classad::ExprTree::NodeKind nKind = tree->GetKind( );
-	switch( nKind ) {
-	case classad::ExprTree::ATTRREF_NODE: {
-		classad::ExprTree *expr = NULL;
-		string attr = "";
-		bool abs = false;
-		( ( classad::AttributeReference * )tree )->GetComponents(expr,attr,abs);
-		if(!abs && (expr != NULL)) {
-			string newAttr = "";
-			classad::ExprTree *exp = NULL;
-			abs = false;
-			( ( classad::AttributeReference * )expr )->GetComponents(exp,newAttr,abs);
-			if (strcasecmp(newAttr.c_str(), "target") == 0){
-				return classad::AttributeReference::MakeAttributeReference(NULL,attr);
-			}	 
-		} 
-		return tree->Copy();
-	}
-	case classad::ExprTree::OP_NODE: {
-		classad::Operation::OpKind oKind;
-		classad::ExprTree * expr1 = NULL;
-		classad::ExprTree * expr2 = NULL;
-		classad::ExprTree * expr3 = NULL;
-		classad::ExprTree * newExpr1 = NULL;
-		classad::ExprTree * newExpr2 = NULL;
-		classad::ExprTree * newExpr3 = NULL;
-		( ( classad::Operation * )tree )->GetComponents( oKind, expr1, expr2, expr3 );
-		if( expr1 != NULL ) {
-			newExpr1 = RemoveExplicitTargetRefs( expr1  );
-		}
-		if( expr2 != NULL ) {
-			newExpr2 = RemoveExplicitTargetRefs( expr2 );
-		}
-		if( expr3 != NULL ) {
-			newExpr3 = RemoveExplicitTargetRefs( expr3 );
-		}
-		return classad::Operation::MakeOperation( oKind, newExpr1, newExpr2, newExpr3 );
-	}
-	case classad::ExprTree::FN_CALL_NODE: {
-		std::string fn_name;
-		classad::ArgumentList old_fn_args;
-		classad::ArgumentList new_fn_args;
-		( ( classad::FunctionCall * )tree )->GetComponents( fn_name, old_fn_args );
-		for ( classad::ArgumentList::iterator i = old_fn_args.begin(); i != old_fn_args.end(); i++ ) {
-			new_fn_args.push_back( RemoveExplicitTargetRefs( *i ) );
-		}
-		return classad::FunctionCall::MakeFunctionCall( fn_name, new_fn_args );
-	}
-	default: {
- 			// old ClassAds have no function calls, nested ClassAds or lists
-			// literals have no attrrefs in them
-		return tree->Copy( );
-	}
-	}
-}	
-
-
-classad::ExprTree *AddTargetRefs( classad::ExprTree *tree, TargetAdType /*target_type*/ )
-{
-	// Disable AddTargetRefs for now
-	return tree->Copy();
-
+	ref_set.swap( new_set );
 }
 
 const char *ConvertEscapingOldToNew( const char *str )

@@ -134,9 +134,6 @@ extern "C"
  
 //----------------------------------------------------------------
 
-void
-computeProjection(ClassAd *full_ad, SimpleList<MyString> *projectionList,StringList &expanded_projection);
-
 void CollectorDaemon::Init()
 {
 	dprintf(D_ALWAYS, "In CollectorDaemon::Init()\n");
@@ -193,10 +190,6 @@ void CollectorDaemon::Init()
 		(CommandHandler)receive_query_cedar,"receive_query_cedar",NULL,READ);
 	daemonCore->Register_CommandWithPayload(QUERY_HAD_ADS,"QUERY_HAD_ADS",
 		(CommandHandler)receive_query_cedar,"receive_query_cedar",NULL,READ);
-	daemonCore->Register_CommandWithPayload(QUERY_XFER_SERVICE_ADS,"QUERY_XFER_SERVICE_ADS",
-		(CommandHandler)receive_query_cedar,"receive_query_cedar",NULL,READ);
-	daemonCore->Register_CommandWithPayload(QUERY_LEASE_MANAGER_ADS,"QUERY_LEASE_MANAGER_ADS",
-		(CommandHandler)receive_query_cedar,"receive_query_cedar",NULL,READ);
 	daemonCore->Register_CommandWithPayload(QUERY_ANY_ADS,"QUERY_ANY_ADS",
 		(CommandHandler)receive_query_cedar,"receive_query_cedar",NULL,READ);
     daemonCore->Register_CommandWithPayload(QUERY_GRID_ADS,"QUERY_GRID_ADS",
@@ -238,12 +231,6 @@ void CollectorDaemon::Init()
 	daemonCore->Register_CommandWithPayload(INVALIDATE_ADS_GENERIC,
 		"INVALIDATE_ADS_GENERIC", (CommandHandler)receive_invalidation,
 		"receive_invalidation",NULL,DAEMON);
-	daemonCore->Register_CommandWithPayload(INVALIDATE_XFER_SERVICE_ADS,
-		"INVALIDATE_XFER_ENDPOINT_ADS", (CommandHandler)receive_invalidation,
-		"receive_invalidation",NULL,DAEMON);
-	daemonCore->Register_CommandWithPayload(INVALIDATE_LEASE_MANAGER_ADS,
-		"INVALIDATE_LEASE_MANAGER_ADS", (CommandHandler)receive_invalidation,
-		"receive_invalidation",NULL,DAEMON);
     daemonCore->Register_CommandWithPayload(INVALIDATE_GRID_ADS,
         "INVALIDATE_GRID_ADS", (CommandHandler)receive_invalidation,
 		"receive_invalidation",NULL,DAEMON);
@@ -270,10 +257,6 @@ void CollectorDaemon::Init()
 	daemonCore->Register_CommandWithPayload(UPDATE_NEGOTIATOR_AD,"UPDATE_NEGOTIATOR_AD",
 		(CommandHandler)receive_update,"receive_update",NULL,NEGOTIATOR);
 	daemonCore->Register_CommandWithPayload(UPDATE_HAD_AD,"UPDATE_HAD_AD",
-		(CommandHandler)receive_update,"receive_update",NULL,DAEMON);
-	daemonCore->Register_CommandWithPayload(UPDATE_XFER_SERVICE_AD,"UPDATE_XFER_SERVICE_AD",
-		(CommandHandler)receive_update,"receive_update",NULL,DAEMON);
-	daemonCore->Register_CommandWithPayload(UPDATE_LEASE_MANAGER_AD,"UPDATE_LEASE_MANAGER_AD",
 		(CommandHandler)receive_update,"receive_update",NULL,DAEMON);
 	daemonCore->Register_CommandWithPayload(UPDATE_AD_GENERIC, "UPDATE_AD_GENERIC",
 		(CommandHandler)receive_update,"receive_update", NULL, DAEMON);
@@ -886,16 +869,6 @@ CollectorDaemon::receive_query_public( int command )
 		whichAds = HAD_AD;
 		break;
 
-	  case QUERY_XFER_SERVICE_ADS:
-		dprintf (D_FULLDEBUG,"Got QUERY_XFER_SERVICE_ADS\n");
-		whichAds = XFER_SERVICE_AD;
-		break;
-
-	  case QUERY_LEASE_MANAGER_ADS:
-		dprintf (D_FULLDEBUG,"Got QUERY_LEASE_MANAGER_ADS\n");
-		whichAds = LEASE_MANAGER_AD;
-		break;
-
 	  case QUERY_GENERIC_ADS:
 		dprintf (D_FULLDEBUG,"Got QUERY_GENERIC_ADS\n");
 		whichAds = GENERIC_AD;
@@ -942,9 +915,6 @@ int CollectorDaemon::receive_invalidation(Service* /*s*/,
 				 sock->type() == Stream::reli_sock ? "TCP" : "UDP" );
         return FALSE;
     }
-#if defined(ADD_TARGET_SCOPING)
-	RemoveExplicitTargetRefs( cad );
-#endif
 
     // cancel timeout --- collector engine sets up its own timeout for
     // collecting further information
@@ -995,16 +965,6 @@ int CollectorDaemon::receive_invalidation(Service* /*s*/,
 	  case INVALIDATE_HAD_ADS:
 		dprintf (D_ALWAYS, "Got INVALIDATE_HAD_ADS\n");
 		whichAds = HAD_AD;
-		break;
-
-	  case INVALIDATE_XFER_SERVICE_ADS:
-		dprintf (D_ALWAYS, "Got INVALIDATE_XFER_SERVICE_ADS\n");
-		whichAds = XFER_SERVICE_AD;
-		break;
-
-	  case INVALIDATE_LEASE_MANAGER_ADS:
-		dprintf (D_ALWAYS, "Got INVALIDATE_LEASE_MANAGER_ADS\n");
-		whichAds = LEASE_MANAGER_AD;
 		break;
 
 	  case INVALIDATE_STORAGE_ADS:
@@ -1339,9 +1299,6 @@ void CollectorDaemon::process_query_public (AdTypes whichAds,
 											ClassAd *query,
 											List<ClassAd>* results)
 {
-#if defined(ADD_TARGET_SCOPING)
-	RemoveExplicitTargetRefs( *query );
-#endif
 	// set up for hashtable scan
 	__query__ = query;
 	__numAds__ = 0;
@@ -1392,11 +1349,11 @@ void CollectorDaemon::process_query_public (AdTypes whichAds,
 	// If ABSENT_REQUIREMENTS is defined, rewrite filter to filter-out absent ads 
 	// if ATTR_ABSENT is not alrady referenced in the query.
 	if ( filterAbsentAds ) {	// filterAbsentAds is true if ABSENT_REQUIREMENTS defined
-		StringList machine_refs;  // machine attrs referenced by requirements
+		classad::References machine_refs;  // machine attrs referenced by requirements
 		bool checks_absent = false;
 
-		query->GetReferences(ATTR_REQUIREMENTS,NULL,&machine_refs);
-		checks_absent = machine_refs.contains_anycase( ATTR_ABSENT );
+		GetReferences(ATTR_REQUIREMENTS,*query,NULL,&machine_refs);
+		checks_absent = machine_refs.count( ATTR_ABSENT );
 		if (!checks_absent) {
 			MyString modified_filter;
 			modified_filter.formatstr("(%s) && (%s =!= True)",
@@ -2361,25 +2318,3 @@ CollectorUniverseStats::publish( const char *label, ClassAd *ad )
 	return 0;
 }
 
-	// Given a full ad, and a StringList of expressions, compute
-	// the list of all attributes those exressions depend on.
-
-	// So, if the projection is passed in "foo", and foo is an expression
-	// that expands to bar, we return bar
-	
-void
-computeProjection(ClassAd *full_ad, SimpleList<MyString> *projectionList,StringList &expanded_projection) {
-    projectionList->Rewind();
-
-		// For each expression in the list...
-	MyString attr;
-	while (projectionList->Next(attr)) {
-
-			// Get the indirect attributes
-		if( !full_ad->GetExprReferences(attr.Value(), &expanded_projection, NULL) ) {
-			dprintf(D_FULLDEBUG,
-				"computeProjection failed to parse "
-				"requested ClassAd expression: %s\n",attr.Value());
-		}
-	}
-}

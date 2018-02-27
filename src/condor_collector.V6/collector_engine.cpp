@@ -56,14 +56,12 @@ CollectorEngine::CollectorEngine (CollectorStats *stats ) :
 	LicenseAds    (&adNameHashFunction),
 	MasterAds     (&adNameHashFunction),
 	StorageAds    (&adNameHashFunction),
-	XferServiceAds(&adNameHashFunction),
 	AccountingAds (&adNameHashFunction),
 	CkptServerAds (&adNameHashFunction),
 	GatewayAds    (&adNameHashFunction),
 	CollectorAds  (&adNameHashFunction),
 	NegotiatorAds (&adNameHashFunction),
 	HadAds        (&adNameHashFunction),
-	LeaseManagerAds(&adNameHashFunction),
 	GridAds       (&adNameHashFunction),
 	GenericAds    (&hashFunction),
 	__self_ad__(0)
@@ -98,8 +96,6 @@ CollectorEngine::
 	killHashTable (CollectorAds);
 	killHashTable (NegotiatorAds);
 	killHashTable (HadAds);
-	killHashTable (XferServiceAds);
-	killHashTable (LeaseManagerAds);
 	killHashTable (GridAds);
 	GenericAds.walk(killGenericHashTable);
 
@@ -293,8 +289,6 @@ walkHashTable (AdTypes adType, int (*scanFunction)(ClassAd *))
 			NegotiatorAds.walk(scanFunction) &&
 			HadAds.walk(scanFunction) &&
 			GridAds.walk(scanFunction) &&
-			XferServiceAds.walk(scanFunction) &&
-			LeaseManagerAds.walk(scanFunction) &&
 			walkGenericTables(scanFunction);
 	}
 
@@ -540,9 +534,6 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 	{
 	  case UPDATE_STARTD_AD:
 	  case UPDATE_STARTD_AD_WITH_ACK:
-#if defined(ADD_TARGET_SCOPING)
-		  clientAd->AddTargetRefs( TargetJobAttrs );
-#endif
 		if ( repeatStartdAds > 0 ) {
 			clientAdToRepeat = new ClassAd(*clientAd);
 		}
@@ -638,9 +629,6 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 		break;
 
 	  case MERGE_STARTD_AD:
-#if defined(ADD_TARGET_SCOPING)
-		  clientAd->AddTargetRefs( TargetJobAttrs );
-#endif
 		if (!makeStartdAdHashKey (hk, clientAd))
 		{
 			dprintf (D_ALWAYS, "Could not make hashkey --- ignoring ad\n");
@@ -838,39 +826,6 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 		  break;
 	  }
 
-	  case UPDATE_XFER_SERVICE_AD:
-		if (!makeXferServiceAdHashKey (hk, clientAd))
-		{
-			dprintf (D_ALWAYS, "Could not make hashkey --- ignoring ad\n");
-			insert = -3;
-			retVal = 0;
-			break;
-		}
-		hashString.Build( hk );
-		retVal=updateClassAd (XferServiceAds, "XferServiceAd  ",
-							  "XferService",
-							  clientAd, hk, hashString, insert, from );
-		break;
-
-	  case UPDATE_LEASE_MANAGER_AD:
-		if (!makeLeaseManagerAdHashKey (hk, clientAd))
-		{
-			dprintf (D_ALWAYS, "Could not make hashkey --- ignoring ad\n");
-			insert = -3;
-			retVal = 0;
-			break;
-		}
-		hashString.Build( hk );
-			// first, purge all the existing LeaseManager ads, since we
-			// want to enforce that *ONLY* 1 manager is in the
-			// collector any given time.
-		purgeHashTable( LeaseManagerAds );
-		retVal=updateClassAd (LeaseManagerAds, "LeaseManagerAd  ",
-							  "LeaseManager",
-							  clientAd, hk, hashString, insert, from );
-		break;
-
-
 	  case QUERY_STARTD_ADS:
 	  case QUERY_SCHEDD_ADS:
 	  case QUERY_MASTER_ADS:
@@ -880,8 +835,6 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 	  case QUERY_COLLECTOR_ADS:
   	  case QUERY_NEGOTIATOR_ADS:
   	  case QUERY_HAD_ADS:
-  	  case QUERY_XFER_SERVICE_ADS:
-  	  case QUERY_LEASE_MANAGER_ADS:
 	  case QUERY_GENERIC_ADS:
 	  case INVALIDATE_STARTD_ADS:
 	  case INVALIDATE_SCHEDD_ADS:
@@ -891,8 +844,6 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 	  case INVALIDATE_COLLECTOR_ADS:
 	  case INVALIDATE_NEGOTIATOR_ADS:
 	  case INVALIDATE_HAD_ADS:
-	  case INVALIDATE_XFER_SERVICE_ADS:
-	  case INVALIDATE_LEASE_MANAGER_ADS:
 	  case INVALIDATE_ADS_GENERIC:
 		// these are not implemented in the engine, but we allow another
 		// daemon to detect that these commands have been given
@@ -949,7 +900,7 @@ int CollectorEngine::remove (AdTypes t_AddType, const ClassAd & c_query, bool *q
 	{
 		ClassAd * pAd=0;
 		// try to create a hk from the query ad if it is possible.
-		if ( (*makeKey) (hk, const_cast<ClassAd*>(&c_query)) ) {
+		if ( (*makeKey) (hk, &c_query) ) {
 			if( query_contains_hash_key ) {
 				*query_contains_hash_key = true;
 			}
@@ -974,7 +925,7 @@ int CollectorEngine::expire( AdTypes adType, const ClassAd & query, bool * query
     CollectorHashTable * hTable;
     if( LookupByAdType( adType, hTable, hFunc ) ) {
         AdNameHashKey hKey;
-        if( (* hFunc)( hKey, const_cast< ClassAd * >( & query ) ) ) {
+        if( (* hFunc)( hKey, & query ) ) {
             if( queryContainsHashKey ) { * queryContainsHashKey = true; }
 
             ClassAd * cAd = NULL;
@@ -1232,12 +1183,6 @@ housekeeper()
     dprintf (D_ALWAYS, "\tCleaning GridAds ...\n");
 	cleanHashTable (GridAds, now, makeGridAdHashKey);
 
-	dprintf (D_ALWAYS, "\tCleaning XferServiceAds ...\n");
-	cleanHashTable (XferServiceAds, now, makeXferServiceAdHashKey);
-
-	dprintf (D_ALWAYS, "\tCleaning LeaseManagerAds ...\n");
-	cleanHashTable (LeaseManagerAds, now, makeLeaseManagerAdHashKey);
-
 	dprintf (D_ALWAYS, "\tCleaning Generic Ads ...\n");
 	CollectorHashTable *cht;
 	GenericAds.startIterations();
@@ -1367,14 +1312,6 @@ CollectorEngine::LookupByAdType(AdTypes adType,
         case GRID_AD:
 			table = &GridAds;
 			func = makeGridAdHashKey;
-			break;
-		case XFER_SERVICE_AD:
-			table = &XferServiceAds;
-			func = makeXferServiceAdHashKey;
-			break;
-		case LEASE_MANAGER_AD:
-			table = &LeaseManagerAds;
-			func = makeLeaseManagerAdHashKey;
 			break;
 		default:
 			return false;

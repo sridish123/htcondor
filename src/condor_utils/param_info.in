@@ -2752,6 +2752,10 @@ type=string
 description=Constrain Negotiator Query for Startd Ads
 tags=negotiator,matchmaker
 
+[NEGOTIATOR_JOB_CONSTRAINT]
+default=
+type=string
+
 [GROUP_AUTOREGROUP]
 default=false
 type=bool
@@ -4129,8 +4133,8 @@ description=Expression to set MemoryUsage
 tags=starter
 
 [MEMORY_USAGE_METRIC_VM]
-default=VM_Memory
-version=7.7.6
+default=((ImageSize+1023)/1024)
+version=8.6.10
 type=string
 customization=expert
 description=MemoryUsage metric for VM Universe jobs
@@ -4377,7 +4381,7 @@ description=Determines if job creates their own namespace
 tags=starter
 
 [CHIRP_DELAYED_UPDATE_PREFIX]
-default=Chirp*
+default=Chirp
 version=8.1.0
 type=string
 is_macro=true
@@ -5790,7 +5794,7 @@ default : @end
 [$FEATURE.GPUsMonitor]
 description=Settings to monitor GPU usage
 default : @end
-	use feature : Monitor( GPUs, WaitForExit, 1, $(LIBEXEC)/condor_gpu_utilization, SUM:GPUs )
+	use feature : Monitor( GPUs, WaitForExit, 1, $(LIBEXEC)/condor_gpu_utilization, SUM:GPUs, PEAK:GPUsMemory )
 @end
 
 [$FEATURE.PartitionableSlot]
