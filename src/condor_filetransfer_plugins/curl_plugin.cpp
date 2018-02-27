@@ -19,10 +19,10 @@ CurlPlugin::CurlPlugin( int diagnostic ) :
     // to segfault.
     int init = curl_global_init( CURL_GLOBAL_DEFAULT );
     if ( init != 0 ) {
-        cerr << "Error: curl_plugin initialization failed with error code " << init << endl;
+        fprintf( stderr, "Error: curl_plugin initialization failed with error code %d\n", init );
     }
     if ( ( _handle = curl_easy_init() ) == NULL ) {
-        cerr << "Error: failed to initialize CurlPlugin._handle" << endl;
+        fprintf( stderr, "Error: failed to initialize CurlPlugin._handle\n" );
     }
 }
 
@@ -195,7 +195,7 @@ CurlPlugin::DownloadMultipleFiles( string input_filename ) {
         string local_file_name;
         string url;
         transfer_request request_details;
-        std::pair<string, transfer_request> this_request;
+        std::pair< string, transfer_request > this_request;
         
         while ( adFileIter.next( transfer_file_ad ) > 0 ) {
             transfer_file_ad.EvaluateAttrString( "DownloadFileName", local_file_name );

@@ -1807,7 +1807,7 @@ FileTransfer::AddDownloadFilenameRemaps(char const *remaps) {
 int
 FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 {
-	int rc;
+	int rc = 0;
 	int reply = 0;
 	filesize_t bytes=0;
 	filesize_t peer_max_transfer_bytes=0;
@@ -2455,12 +2455,12 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		// retrieved from a plugin. If we didn't use a file transfer plugin 
 		// this time, this ClassAd will just be empty.
 		ClassAd thisFileStatsAd;
-		thisFileStats.Publish(thisFileStatsAd);
-		thisFileStatsAd.Update(pluginStatsAd);
+		thisFileStats.Publish( thisFileStatsAd );
+		thisFileStatsAd.Update( pluginStatsAd );
 
 		// Write stats to disk
 		if ( !isDeferredTransfer ) {
-			OutputFileTransferStats(thisFileStatsAd);
+			OutputFileTransferStats( thisFileStatsAd );
 		}
 
 		// Get rid of compiler set-but-not-used warnings on Linux
