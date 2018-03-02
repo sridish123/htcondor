@@ -6,18 +6,32 @@ from SimpleHTTPServer import SimpleHTTPRequestHandler
 import BaseHTTPServer
 import logging
 import sys
+import time
 
 class FlakyHTTPServer(SimpleHTTPRequestHandler):
 
     num_partial_norange_requests = 0
+    num_retry_requests = 0
 
     # On GET requests, check the URL path and proceed accordingly
     def do_GET(self):
 
         # Requesting /servererror returns a 500 error code
-        if self.path == "/servererror":
+        if self.path == "/server-error":
             self.protocol_version = "HTTP/1.1"
             self.send_response(500)
+
+        # Requesting /retry
+        elif self.path == "/retry":
+            if FlakyHTTPServer.num_retry_requests >= 5:
+                self.protocol_version = "HTTP/1.1"
+                self.send_response(200, "OK")
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+            else:
+                print "Catching a retry! num_retry_requests=",FlakyHTTPServer.num_retry_requests
+                FlakyHTTPServer.num_retry_requests += 1
+                time.sleep(60)
  
         # Requesting /partial tests HTTP resume requests
         elif self.path == "/partial":
