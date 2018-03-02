@@ -23,6 +23,8 @@
 #include "condor_io.h"
 #include "condor_debug.h"
 #include "condor_daemon_core.h"
+#include "condor_classad.h"
+#include "classad_helpers.h"
 #include "daemon.h"
 #include "condor_uid.h"
 #include "lsa_mgr.h"
@@ -67,6 +69,7 @@ NEW_UNIX_STORE_CRED(const char *user, const char *pw, const int len, int mode, i
 		dprintf(D_ALWAYS, "ERROR: got STORE_CRED but SEC_CREDENTIAL_DIRECTORY not defined!\n");
 		return FAILURE;
 	}
+	// cred_dir leaked
 
 	// get username
 	char username[256];
@@ -79,18 +82,33 @@ NEW_UNIX_STORE_CRED(const char *user, const char *pw, const int len, int mode, i
 	user_cred_dir.formatstr("%s%c%s", cred_dir, DIR_DELIM_CHAR, username);
 	mkdir(user_cred_dir.Value(), 0700);
 
+	// parse the pw as a classad
+	ClassAd ad;
+	classad::ClassAdParser cap;
+	int ok = cap.ParseClassAd(pw, ad);
+	if(!ok) {
+		dprintf(D_ALWAYS, "STORE_CRED: unable to parse creds:\n%s\n", pw);
+		return FAILURE;
+	}
+
+	// extract module name and data
+	std::string module;
+	std::string cred_data;
+	ad.LookupString("Service", module);
+	ad.LookupString("Data", cred_data);
+
 	// create filenames
 	char tmpfilename[PATH_MAX];
 	char filename[PATH_MAX];
-	sprintf(tmpfilename, "%s%cscitokens.top.tmp", user_cred_dir.Value(), DIR_DELIM_CHAR);
-	sprintf(filename, "%s%cscitokens.top", user_cred_dir.Value(), DIR_DELIM_CHAR);
+	sprintf(tmpfilename, "%s%c%s.top.tmp", user_cred_dir.Value(), DIR_DELIM_CHAR, module.c_str());
+	sprintf(filename, "%s%c%s.top", user_cred_dir.Value(), DIR_DELIM_CHAR, module.c_str());
 	dprintf(D_ALWAYS, "ZKM: writing data to %s\n", tmpfilename);
 
-	// contents of pw are base64 encoded.  decode now just before they go
+	// contents of cred_data are base64 encoded.  decode now just before they go
 	// into the file.
 	int rawlen = -1;
 	unsigned char* rawbuf = NULL;
-	zkm_base64_decode(pw, &rawbuf, &rawlen);
+	zkm_base64_decode(cred_data.c_str(), &rawbuf, &rawlen);
 
 	if (rawlen <= 0) {
 		dprintf(D_ALWAYS, "ZKM: failed to decode credential!\n");

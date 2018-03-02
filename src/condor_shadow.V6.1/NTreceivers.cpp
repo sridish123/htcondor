@@ -2198,9 +2198,14 @@ case CONDOR_getdir:
 			MyString b64 = condor_base64_encode(buf, len);
 			free(buf);
 
+			// last4 points to the ".use" extension after pointer fname.  difference is length.
+			char *service = strdup(fname);
+			service[last4-fname] = 0;
+
 			ClassAd ad;
-			ad.Assign("Service", fname);
+			ad.Assign("Service", service);
 			ad.Assign("Data", b64);
+			free(service);
 
 			int more_ads = 1;
 			result = ( syscall_sock->code(more_ads) );

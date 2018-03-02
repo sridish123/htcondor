@@ -219,6 +219,24 @@ CredDaemon::refresh_all_handler( int, Stream* s)
 	r->end_of_message();
 }
 
+
+//-------------------------------------------------------------
+
+void
+configure_module(char *modname)
+{
+	dprintf(D_ALWAYS, "SEC_MODULES: configuring %s\n", modname);
+
+	// param all of the info out of the config and into a classad, which we
+	// will store in a table under the module name
+
+
+	// if there is a long-lived daemon for this module, make sure there is
+	// one instance running.
+
+}
+
+
 //-------------------------------------------------------------
 
 void
@@ -227,6 +245,20 @@ main_init(int /*argc*/, char * /*argv*/ [])
 	dprintf(D_ALWAYS, "main_init() called\n");
 
 	credd = new CredDaemon;
+
+	// figure out which modules we are going to load, read the config, and
+	// spawn a credmon for each (if needed)
+
+	std::string modules;
+	param(modules, "SEC_MODULE_LIST");
+
+	StringList mods(modules.c_str());
+	mods.rewind();
+
+	char *p;
+	while ((p = mods.next())) {
+		configure_module(p);
+	}
 }
 
 //-------------------------------------------------------------

@@ -2326,12 +2326,12 @@ int SendJobCredential()
 		ArgList args;
 		args.AppendArg(producer);
 		FILE* uber_file = my_popen(args, "r", 0);
-		unsigned char *uber_ticket = NULL;
+		char *uber_ticket = NULL;
 		if (!uber_file) {
 			fprintf(stderr, "\nERROR: (%i) invoking %s\n", errno, producer.c_str());
 			exit( 1 );
 		} else {
-			uber_ticket = (unsigned char*)malloc(65536);
+			uber_ticket = (char*)malloc(65536);
 			ASSERT(uber_ticket);
 			int bytes_read = fread(uber_ticket, 1, 65536, uber_file);
 			// what constitutes failure?
@@ -2342,6 +2342,12 @@ int SendJobCredential()
 				exit( 1 );
 			}
 
+			ClassAd ad;
+			classad::ClassAdParser cap;
+			cap.ParseClassAd(uber_ticket, ad);
+			dprintf(D_ALWAYS, "SUBMIT: got classad with creds:\n%s\n", uber_ticket);
+
+/*
 			// immediately convert to base64
 			char* ut64 = condor_base64_encode(uber_ticket, bytes_read);
 
@@ -2359,6 +2365,7 @@ int SendJobCredential()
 			preview[63]=0;
 
 			dprintf(D_FULLDEBUG | D_SECURITY, "CREDMON: read %i bytes {%s...}\n", bytes_read, preview);
+*/
 
 			// setup the username to query
 			char userdom[256];
@@ -2372,7 +2379,7 @@ int SendJobCredential()
 			Daemon my_credd(DT_CREDD);
 			int store_cred_result;
 			if (my_credd.locate()) {
-				store_cred_result = store_cred(userdom, ut64, ADD_MODE, &my_credd);
+				store_cred_result = store_cred(userdom, uber_ticket, ADD_MODE, &my_credd);
 				if ( store_cred_result != SUCCESS ) {
 					fprintf( stderr, "\nERROR: store_cred failed!\n");
 					exit( 1 );

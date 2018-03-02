@@ -2291,6 +2291,7 @@ REMOTE_CONDOR_getcreds()
 		MyString full_name = cred_dir_name;
 		full_name += DIR_DELIM_CHAR;
 		full_name += fname;
+		full_name += ".use";
 
 		MyString tmpname = full_name;
 		tmpname += ".tmp";
