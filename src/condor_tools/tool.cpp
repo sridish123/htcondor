@@ -1259,9 +1259,6 @@ resolveNames( DaemonList* daemon_list, StringList* name_list, StringList* unreso
 	case DT_CREDD:
 		adtype = CREDD_AD;
 		break;
-	case DT_LEASE_MANAGER:
-		adtype = LEASE_MANAGER_AD;
-		break;
 	case DT_GENERIC:
 		adtype = GENERIC_AD;
 		break;
@@ -1898,6 +1895,7 @@ handleSquawk( char *line, char *addr ) {
 			return TRUE;
 		}
 			/* Generic help falls thru to here: */
+			//@fallthrough@
 	default:
 		printf( "Valid commands are \"help\", \"signal\", \"command\"," );
 		printf( "\"reconnect\",\n\"dump\" (state into a ClassAd) and" );

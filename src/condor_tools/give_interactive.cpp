@@ -321,7 +321,7 @@ make_request_ad(ClassAd & requestAd, const char *rank)
 static void
 fetchSubmittorPrios()
 {
-	AttrList	al;
+	ClassAd	al;
 	char  	attrName[32], attrPrio[32];
   	char  	name[128];
   	float 	sub_priority;
@@ -474,6 +474,7 @@ main(int argc, char *argv[])
 			case 'h': 
 			      iExitUsageCode = 0;
 				  // Fall through to...
+			      //@fallthrough@
 			default:
 				usage(condor_basename(argv[0]), iExitUsageCode);
 			}		

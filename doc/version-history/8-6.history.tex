@@ -41,6 +41,31 @@ The details of each version are described below.
 
 \begin{itemize}
 
+\item Fixed a bug where \MacroNI{policy:\ want\_hold\_if} would always
+evict standard universe jobs instead of putting them on hold.  Instead,
+this policy now ignores standard universe jobs entirely.  This means
+that the metaknobs \MacroNI{policy:\ hold\_if\_memory\_exceeded} and
+\MacroNI{policy:\ hold\_if\_cpus\_exceeded} will also ignore
+standard universe jobs entirely (instead of its previous bad behavior
+of of letting standard universe jobs use more than their requested
+memory until the first time they were evicted, whereafter each restart
+would be immediately evicted).
+\Ticket{6583}
+
+\item The metaknob \MacroNI{policy:\ hold\_if\_memory\_exceeded} and
+\MacroNI{policy:\ preempt\_if\_memory\_exceeded} now ignore VM universe
+jobs.  These jobs can't exceed their requested memory.
+\Ticket{6583}
+
+\item Fixed a bug which mischaracterized the \Attr{MemoryUsage} of VM
+universe jobs.  This should allow VM universe jobs to run when
+\MacroNI{feature:\ Hold\_If\_Memory\_Exceeded} is enabled.
+\Ticket{6577}
+
+\item Fixed a bug where the \Condor{shadow} could accidentally kill itself
+by not checking it it was attempting to change immutable attributes.
+\Ticket{6557}
+
 \item Fixed a bug that could cause the \Condor{collector} to exit with an 
 		assertion error under certain (rare) conditions when it has no
 		outgoing connectivity to the Internet.
@@ -49,6 +74,32 @@ The details of each version are described below.
 \item Fixed a bug that would cause any daemons interfacing with the CREDMON to
 retry indefinitely when polling for credentials.
 \Ticket{6523}
+
+\item Improved the systemd configuration to clean up HTCondor processes
+on shutdown in the event that the \Condor{master} fails to do so.
+\Ticket{6539}
+
+\item Fixed a bug that caused \Condor{preen} to crash before it finished
+cleaning the spool directory (leaving unwanted files behind)
+\Ticket{6521}
+
+\item Fixed a bug that prevented grid-type batch jobs from being removed
+after an attempt to submit to the underlying batch system failed.
+\Ticket{6586}
+
+\item Fixed a bug in python plugin support for the \Condor{collector} that would result
+in the \Condor{collector} switching from writing from the CollectorLog to writing to
+the ToolLog after a reconfig.
+\Ticket{6588}
+
+\item Fixed a bug in the \verb@$F()@ macro expansion in submit and configuration files
+that would cause a crash if the argument to the macro was a file literal rather than
+a variable name.
+\Ticket{6531}
+
+\item Fixed a bug that allowed the \Condor{schedd} to attempt to run jobs
+on a dynamic slot that requested more resources than the slot provided.
+\Ticket{6593}
 
 \end{itemize}
 

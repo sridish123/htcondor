@@ -23,7 +23,7 @@
 #include "condor_config.h"
 #include "condor_attributes.h"
 #include "condor_state.h"
-#include "Set.h"
+#include <set>
 #include "directory.h"
 #include "view_server.h"
 #include "extArray.h"
@@ -271,19 +271,19 @@ int ViewServer::HandleQuery(Stream* sock, int command, int FromDate, int ToDate,
 	// Find out which data set type
 
 	switch(command) {
-		case QUERY_HIST_STARTD_LIST:			ListFlag=1; // fall through...
+		case QUERY_HIST_STARTD_LIST:			ListFlag=1; //@fallthrough@
 		case QUERY_HIST_STARTD:					DataSetIdx=StartdData;
 												break;
-		case QUERY_HIST_SUBMITTOR_LIST: 		ListFlag=1; // fall through...
+		case QUERY_HIST_SUBMITTOR_LIST: 		ListFlag=1; //@fallthrough@
 		case QUERY_HIST_SUBMITTOR:				DataSetIdx=SubmittorData;
 												break;
-		case QUERY_HIST_SUBMITTORGROUPS_LIST:	ListFlag=1; // fall through...
+		case QUERY_HIST_SUBMITTORGROUPS_LIST:	ListFlag=1; //@fallthrough@
 		case QUERY_HIST_SUBMITTORGROUPS:		DataSetIdx=SubmittorGroupsData;
 												break;
-		case QUERY_HIST_GROUPS_LIST:			ListFlag=1; // fall through...
+		case QUERY_HIST_GROUPS_LIST:			ListFlag=1; //@fallthrough@
 		case QUERY_HIST_GROUPS:					DataSetIdx=GroupsData;
 												break;
-		case QUERY_HIST_CKPTSRVR_LIST:			ListFlag=1; // fall through...
+		case QUERY_HIST_CKPTSRVR_LIST:			ListFlag=1; //@fallthrough@
 		case QUERY_HIST_CKPTSRVR:				DataSetIdx=CkptData;
 												break;
 	}
@@ -330,7 +330,7 @@ int ViewServer::HandleQuery(Stream* sock, int command, int FromDate, int ToDate,
 	// Read file and send Data
 
 	if (ListFlag) {
-		Set<MyString> Names;
+		std::set<std::string> Names;
 		if (OldFlag) SendListReply(sock, DataSet[DataSetIdx][HistoryLevel].OldFileName,FromDate,ToDate,Names);
 		if (NewFlag) SendListReply(sock, DataSet[DataSetIdx][HistoryLevel].NewFileName,FromDate,ToDate,Names);
 	} else {
@@ -346,7 +346,7 @@ int ViewServer::HandleQuery(Stream* sock, int command, int FromDate, int ToDate,
 // requested time range
 //---------------------------------------------------------------------
 
-int ViewServer::SendListReply(Stream* sock,const MyString& FileName, int FromDate, int ToDate, Set<MyString>& Names) 
+int ViewServer::SendListReply(Stream* sock,const MyString& FileName, int FromDate, int ToDate, std::set<std::string>& Names) 
 {
 	char InpLine[200];
 	char OutLine[200];
@@ -414,9 +414,9 @@ int ViewServer::SendListReply(Stream* sock,const MyString& FileName, int FromDat
 			continue;
 		}
 		
-		if (!Names.Exist(Arg)) {
+		if (Names.count(Arg) == 0) {
 			// dprintf(D_ALWAYS,"Adding Name=%s\n",Arg.Value());
-			Names.Add(Arg);
+			Names.insert(Arg);
 			sprintf(OutLinePtr,"%s\n",Arg.Value());
 			if (!sock->code(OutLinePtr)) {
 				dprintf(D_ALWAYS,"Can't send information to client!\n");

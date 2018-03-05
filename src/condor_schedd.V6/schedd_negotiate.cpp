@@ -483,7 +483,7 @@ ScheddNegotiate::messageReceived( DCMessenger *messenger, Sock *sock )
 	case REJECTED:
 		m_reject_reason = "Unknown reason";
 		// Fall through...
-
+		//@fallthrough@
 	case REJECTED_WITH_REASON: {
 		// To support resource request lists, the
 		// reject reason may end with "...|autocluster|cluster.proc|"
@@ -687,10 +687,6 @@ ScheddNegotiate::readMsg( DCMessenger * /*messenger*/, Sock *sock )
 					 "Can't get my match ad from negotiator\n" );
 			return false;
 		}
-#if defined(ADD_TARGET_SCOPING)
-		m_match_ad.AddTargetRefs( TargetJobAttrs );
-#endif
-
 		break;
 	}
 	case END_NEGOTIATE:

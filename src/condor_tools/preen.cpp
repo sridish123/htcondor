@@ -51,7 +51,6 @@
 #include "ipv6_hostname.h"
 #include "subsystem_info.h"
 
-#include <iostream>
 #include <map>
 
 using namespace std;
@@ -146,6 +145,7 @@ main( int argc, char *argv[] )
 			  case 'd':
                 dprintf_set_tool_debug("TOOL", 0);
 				break;
+
 			  case 'v':
 				VerboseFlag = true;
 				break;

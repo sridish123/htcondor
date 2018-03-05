@@ -43,12 +43,6 @@ class MapFile; // forward ref
 namespace compat_classad {
 
 
-typedef enum {
-	TargetMachineAttrs,
-	TargetJobAttrs,
-	TargetScheddAttrs
-} TargetAdType;
-
 class ClassAdFileParseHelper;
 
 extern classad::References ClassAdPrivateAttrs;
@@ -347,8 +341,6 @@ class ClassAd : public classad::ClassAd
 	void ResetName();
 	const char *NextNameOriginal();
 
-	void AddTargetRefs( TargetAdType target_type, bool do_version_check = true );
-
 	bool NextExpr( const char *&name, ExprTree *&value );
 
     /** Gets the next dirty expression tree
@@ -384,18 +376,6 @@ class ClassAd : public classad::ClassAd
      */
     void ChainCollapse();
 
-    void GetReferences(const char* attr,
-                StringList *internal_refs,
-                StringList *external_refs) const;
-
-    bool GetExprReferences(const char* expr,
-                StringList *internal_refs,
-                StringList *external_refs) const;
-
-    bool GetExprReferences(ExprTree * expr,
-                StringList *internal_refs,
-                StringList *external_refs) const;
-
 	static void Reconfig();
 	static bool m_initConfig;
 	static bool m_strictEvaluation;
@@ -417,10 +397,6 @@ class ClassAd : public classad::ClassAd
 
     classad::DirtyAttrList::iterator m_dirtyItr;
     bool m_dirtyItrInit;
-
-	void _GetReferences(classad::ExprTree *tree,
-						StringList *internal_refs,
-						StringList *external_refs) const;
 
 	// poison Assign of ExprTree* type for public users
 	// otherwise the compiler will resolve against the bool overload 
@@ -658,30 +634,6 @@ classad::MatchClassAd *getTheMatchAd( classad::ClassAd *source,
 void releaseTheMatchAd();
 
 
-// Modify all expressions in the given ad, such that if they refer
-// to attributes that are not in the current classad and they are not
-// scoped, then they are renamed "target.attribute"
-void AddExplicitTargetRefs( classad::ClassAd &ad );
-
-// Return a new ExprTree identical to the given one, except that for any
-// attributes referred to which are not scoped and don't appear in the
-// given set are renamed "target.attribute".
-classad::ExprTree *AddExplicitTargetRefs(classad::ExprTree *,
-						std::set < std::string, classad::CaseIgnLTStr > & );
-						
-// Modify all expressions in the given ad, removing the "target" scope
-// from all attributes references.
-void RemoveExplicitTargetRefs( classad::ClassAd &ad );
-
-// Return a new ExprTree identical to the given one, but removing any
-// "target" scope from all attribute references.
-// For example, Target.Foo will become Foo.
-classad::ExprTree *RemoveExplicitTargetRefs( classad::ExprTree * );
-
-
-classad::ExprTree *AddTargetRefs( classad::ExprTree *tree,
-								  TargetAdType target_type );
-
 const char *ConvertEscapingOldToNew( const char *str );
 
 // appends converted representation of str to buffer
@@ -699,8 +651,21 @@ bool SplitLongFormAttrValue(const char * line, std::string &attr, const char* &r
 	// returns true on successful insertion
 bool InsertLongFormAttrValue(classad::ClassAd & ad, const char * line, bool use_cache);
 
+bool GetReferences( const char* attr, const classad::ClassAd &ad,
+                    classad::References *internal_refs,
+                    classad::References *external_refs );
 
-typedef ClassAd AttrList;
+bool GetExprReferences( const char* expr, const classad::ClassAd &ad,
+                        classad::References *internal_refs,
+                        classad::References *external_refs );
+
+bool GetExprReferences( const classad::ExprTree * expr, const classad::ClassAd &ad,
+                        classad::References *internal_refs,
+                        classad::References *external_refs );
+
+void TrimReferenceNames( classad::References &ref_set, bool external = false );
+
+
 typedef classad::ExprTree ExprTree;
 
 } // namespace compat_classad

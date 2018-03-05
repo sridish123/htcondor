@@ -22,7 +22,6 @@
 
 use strict;
 use warnings;
-use FindBin;
 
 #
 # This is a basic test to determine if Custom Machine Resource monitors are
@@ -36,14 +35,12 @@ use CondorPersonal;
 
 use CustomMachineResource;
 
-my $bindir = $FindBin::Bin;
-
 #testreq: personal
 my $config = <<CONDOR_TESTREQ_CONFIG;
 NUM_CPUS = 16
 
 MACHINE_RESOURCE_INVENTORY_SQUIDs = $(TEST_DIR)/cmr-squid-discovery
-use feature : monitor( SQUIDs, Periodic, 10, $(TEST_DIR)/cmr-squid-monitor, SUM:SQUIDs, PEAK:SQUIDsMemory )
+use feature : monitor( SQUIDs, Periodic, 10, $(TEST_DIR)/cmr-squid-monitor, SUM:SQUIDs )
 
 SCHEDD_CLUSTER_INITIAL_VALUE = 2000
 
@@ -64,12 +61,12 @@ my $testDescription = 'Custom Machine Resources - Monitor Test Basic (Partitiona
 #
 # Verify the configuration before running the test.
 #
-CustomMachineResource::TestSlotAndSQUIDsCount( 1 );
+CustomMachineResource::TestSlotAndSQUIDsCount( 1, $testName );
 
 #
 # Verify that the monitor's report is being read correctly.
 #
-CustomMachineResource::TestUptimeSQUIDsSeconds();
+CustomMachineResource::TestUptimeSQUIDsSeconds( $testName );
 
 #
 # Verify that we're computing the usage correctly.

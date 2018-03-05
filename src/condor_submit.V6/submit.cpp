@@ -532,7 +532,7 @@ main( int argc, const char *argv[] )
 				// if batch_name_line is not NULL,  we will leak a bit here, but that's better than
 				// freeing something behind the back of the extraLines
 				batch_name_line = strdup(tmp.c_str());
-				extraLines.Append(const_cast<const char*>(batch_name_line));
+				extraLines.Append(batch_name_line);
 			} else if (is_dash_arg_prefix(ptr[0], "queue", 1)) {
 				if( !(--argc) || (!(*ptr[1]) || *ptr[1] == '-')) {
 					fprintf( stderr, "%s: -queue requires at least one argument\n",
@@ -2510,15 +2510,6 @@ int SendJobAd (ClassAd * job, ClassAd * ClusterAd)
 			return -1;
 		}
 	}
-
-#if defined(ADD_TARGET_SCOPING)
-	if ( JobUniverse == CONDOR_UNIVERSE_SCHEDULER ||
-		 JobUniverse == CONDOR_UNIVERSE_LOCAL ) {
-		job->AddTargetRefs( TargetScheddAttrs, false );
-	} else {
-		job->AddTargetRefs( TargetMachineAttrs, false );
-	}
-#endif
 
 	job->ResetExpr();
 	while( job->NextExpr(lhstr, tree) ) {

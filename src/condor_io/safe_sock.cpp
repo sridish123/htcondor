@@ -416,7 +416,7 @@ int SafeSock::put_bytes(const void *data, int sz)
     if (get_encryption()) {
 		int l_out;
 		unsigned char * dta = 0;
-        if (!wrap((unsigned char *)const_cast<void*>(data), sz, dta , l_out)) { 
+        if (!wrap((const unsigned char *)data, sz, dta , l_out)) {
             dprintf(D_SECURITY, "Encryption failed\n");
             return -1;  // encryption failed!
         }
@@ -655,14 +655,10 @@ int SafeSock::handle_incoming_packet()
 		dprintf(D_NETWORK, "recvfrom failed: errno = %d\n", errno);
 		return FALSE;
 	}
-    char str[50];
-    sprintf(str, "%s", sock_to_string(_sock));
-    dprintf( D_NETWORK, "RECV %d bytes at %s from %s\n",
-			 received, str, _who.to_sinful().Value());
-    //char temp_str[10000];
-    //temp_str[0] = 0;
-    //for (int i=0; i<received; i++) { sprintf(&temp_str[strlen(temp_str)], "%02x,", _shortMsg.dataGram[i]); }
-    //dprintf(D_NETWORK, "<---packet [%d bytes]: %s\n", received, temp_str);
+
+	if (IsDebugLevel(D_NETWORK))
+    	dprintf( D_NETWORK, "RECV %d bytes at %s from %s\n",
+			 received, sock_to_string(_sock), _who.to_sinful().Value());
 
 	length = received;
     _shortMsg.reset(); // To be sure

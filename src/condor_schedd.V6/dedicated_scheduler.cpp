@@ -1064,6 +1064,7 @@ DedicatedScheduler::reaper( int pid, int status )
 				// just like a condor_rm
 			srec->removed = true;
 					// no break, fall through and do the action
+					//@fallthrough@
 		case JOB_NO_CKPT_FILE:
 		case JOB_KILLED:
 		case JOB_COREDUMPED:
@@ -1093,6 +1094,7 @@ DedicatedScheduler::reaper( int pid, int status )
 					 "ERROR: Shadow had fatal error writing to its log file.\n" );
 				// We don't want to break, we want to fall through 
 				// and treat this like a shadow exception for now.
+				//@fallthrough@
 		case JOB_EXCEPTION:
 			if ( WEXITSTATUS(status) == JOB_EXCEPTION ){
 				dprintf( D_ALWAYS,
@@ -1100,6 +1102,7 @@ DedicatedScheduler::reaper( int pid, int status )
 			}
 				// We don't want to break, we want to fall through 
 				// and treat this like a shadow exception for now.
+				//@fallthrough@
 		default:
 				/* the default case is now a shadow exception in case ANYTHING
 				   goes wrong with the shadow exit status */
@@ -2539,17 +2542,6 @@ DedicatedScheduler::computeSchedule( void )
 			CAList *preempt_candidates = new CAList;
 			int nodes;
 			int proc;
-
-#if defined(ADD_TARGET_SCOPING)
-			ExprTree *tmp_expr;
-			tmp_expr = AddTargetRefs( preemption_req, TargetJobAttrs );
-			delete preemption_req;
-			preemption_req = tmp_expr;
-
-			tmp_expr = AddTargetRefs( preemption_rank, TargetJobAttrs );
-			delete preemption_rank;
-			preemption_rank = tmp_expr;
-#endif
 
 			if (nodes_per_proc) {
 				delete [] nodes_per_proc;
