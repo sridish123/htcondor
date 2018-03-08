@@ -55,7 +55,7 @@
 %define qmf 0
 
 %if 0%{?fedora}
-%define blahp 0
+%define blahp 1
 %define cream 0
 # a handful of std universe files don't seem to get built in fedora...
 %define std_univ 0
@@ -597,6 +597,8 @@ host as the DedicatedScheduler.
 %endif
 
 
+# Temporarily turn off python for Fedora
+%if ! 0%{?fedora}
 #######################
 %package python
 Summary: Python bindings for HTCondor.
@@ -618,6 +620,7 @@ Provides: htcondor.so
 %description python
 The python bindings allow one to directly invoke the C++ implementations of
 the ClassAd library and HTCondor from python
+%endif
 
 
 #######################
@@ -655,6 +658,7 @@ Includes all the files necessary to support running standard universe jobs.
 %package small-shadow
 Summary: 32-bit condor_shadow binary
 Group: Applications/System
+Requires: %name-external-libs%{?_isa} = %version-%release
 
 %description small-shadow
 Provides the 32-bit condor_shadow_s, which has a smaller private
@@ -728,7 +732,10 @@ Requires: %name-classads = %version-%release
 %if %cream
 Requires: %name-cream-gahp = %version-%release
 %endif
+# Temporarily turn off python for Fedora
+%if ! 0%{?fedora}
 Requires: %name-python = %version-%release
+%endif
 Requires: %name-bosco = %version-%release
 %if %std_univ
 Requires: %name-std-universe = %version-%release
@@ -1015,6 +1022,12 @@ rm -f %{buildroot}/%{_mandir}/man1/condor_glidein.1
 rm -rf %{buildroot}/%{_sysconfdir}/sysconfig
 rm -rf %{buildroot}/%{_sysconfdir}/init.d
 
+# Temporarily turn off python for Fedora
+%if 0%{?fedora}
+rm -f %{buildroot}/%{_bindir}/condor_top
+rm -f %{buildroot}/%{_mandir}/man1/condor_top.1.gz
+%endif
+
 %if %systemd
 # install tmpfiles.d/condor.conf
 mkdir -p %{buildroot}%{_tmpfilesdir}
@@ -1054,10 +1067,13 @@ install -m 0755 src/condor_scripts/CondorPersonal.pm %{buildroot}%{_datadir}/con
 install -m 0755 src/condor_scripts/CondorTest.pm %{buildroot}%{_datadir}/condor/
 install -m 0755 src/condor_scripts/CondorUtils.pm %{buildroot}%{_datadir}/condor/
 
+# Temporarily turn off python for Fedora
+%if ! 0%{?fedora}
 # Install python-binding libs
 mkdir -p %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/{classad,htcondor}.so %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/libpyclassad*.so %{buildroot}%{_libdir}
+%endif
 
 # we must place the config examples in builddir so %doc can find them
 mv %{buildroot}/etc/examples %_builddir/%name-%tarball_version
@@ -1306,7 +1322,10 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_gangliad
 %_libexecdir/condor/panda-plugin.so
 %_libexecdir/condor/pandad
+# Temporarily turn off python for Fedora
+%if ! 0%{?fedora}
 %_libexecdir/condor/libcollector_python_plugin.so
+%endif
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_annex.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
@@ -1690,6 +1709,8 @@ rm -rf %{buildroot}
 %config(noreplace) %_sysconfdir/condor/config.d/20dedicated_scheduler_condor.config
 %endif
 
+# Temporarily turn off python for Fedora
+%if ! 0%{?fedora}
 %files python
 %defattr(-,root,root,-)
 %_bindir/condor_top
@@ -1697,6 +1718,7 @@ rm -rf %{buildroot}
 %_libexecdir/condor/libclassad_python_user.so
 %{python_sitearch}/classad.so
 %{python_sitearch}/htcondor.so
+%endif
 
 %files bosco
 %defattr(-,root,root,-)
