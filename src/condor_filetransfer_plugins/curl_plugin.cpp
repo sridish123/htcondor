@@ -12,8 +12,17 @@ using namespace std;
 CurlPlugin::CurlPlugin( int diagnostic ) :
     _handle ( NULL ),
     _diagnostic ( diagnostic ),
-    _all_files_stats ( "" )
+    _all_files_stats ( "" ) 
 {
+}
+
+CurlPlugin::~CurlPlugin() {
+    curl_easy_cleanup( _handle );
+    curl_global_cleanup();
+}
+
+int
+CurlPlugin::Initialize() {
     // Initialize win32 + SSL socket libraries.
     // Do not initialize these separately! Doing so causes https:// transfers
     // to segfault.
@@ -24,11 +33,7 @@ CurlPlugin::CurlPlugin( int diagnostic ) :
     if ( ( _handle = curl_easy_init() ) == NULL ) {
         fprintf( stderr, "Error: failed to initialize CurlPlugin._handle\n" );
     }
-}
-
-CurlPlugin::~CurlPlugin() {
-    curl_easy_cleanup( _handle );
-    curl_global_cleanup();
+    return init;
 }
 
 int 
@@ -553,10 +558,12 @@ main( int argc, char **argv ) {
 
     // Instantiate a CurlPlugin object and handle the request
     CurlPlugin curl_plugin( diagnostic );
-    if( !curl_plugin.GetHandle() ) {
+    if( curl_plugin.Initialize() != 0 ) {
         fprintf( stderr, "ERROR: curl_plugin failed to initialize. Aborting.\n" );
         return 1;
     }
+    
+    // Do the transfer(s)
     rval = curl_plugin.DownloadMultipleFiles( input_filename );
 
     // Now that we've finished all transfers, write statistics to output file

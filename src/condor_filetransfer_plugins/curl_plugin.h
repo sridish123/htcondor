@@ -18,7 +18,8 @@ class CurlPlugin {
  
     CurlPlugin( int diagnostic );
     ~CurlPlugin();
-
+    
+    int Initialize();
     int DownloadFile( const char* url, const char* local_file_name );
     int DownloadMultipleFiles( string input_filename );
     int UploadFile( const char* url, const char* local_file_name );
@@ -29,7 +30,6 @@ class CurlPlugin {
 
     CURL* GetHandle() { return _handle; };
     string GetStats() { return _all_files_stats; }
-    
 
   private:
 

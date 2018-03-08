@@ -123,12 +123,17 @@ class FlakyHTTPServer(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
 
+    # Read in the name of the address file
+    if len(sys.argv) != 2:
+        sys.exit("Error: Invalid syntax.\nUsage: python curl_plugin_test_http_server.py [address-filename]")
+    address_filename = sys.argv[1]
+
     # Start the FlakyHTTPServer. Let the system determine an available port.
     flaky_httpd = BaseHTTPServer.HTTPServer(("127.0.0.1", 0), FlakyHTTPServer)
 
     # Output the server address to a file, which will be read in by the Perl test.
     server_address = flaky_httpd.socket.getsockname()
-    address_file = open("flaky-http-address", "w")
+    address_file = open(address_filename, "w")
     address_file.write("127.0.0.1:{0}".format(server_address[1]))
     print("127.0.0.1:{0}".format(server_address[1])) 
     address_file.close()

@@ -1,4 +1,5 @@
 #! /usr/bin/env perl
+#testreq: personal
 ##**************************************************************
 ##
 ## Copyright (C) 1990-2007, Condor Team, Computer Sciences Department,
@@ -41,30 +42,32 @@ my $localDir = cwd();
 my $partialNoRangeSize;
 my $partialSize;
 my $returnCode;
-my $submitfile = "curl-basic-transfer.sub";
-my $testname = "cmd_curl_plugin";
+my $testName = "cmd_curl_plugin_singlefile_partial";
+my $submitFile = $testName . ".sub";
+my $urlFile = $testName . ".url";
 
 
-# Start the http server then wait a second
-startFlakyWebServer();
-sleep(1);
+# Start the http server then wait a few seconds
+startTestWebServer($urlFile);
+sleep(5);
 
 # Read in the address of the http server from file
-open FILE, "$localDir/flaky-http-address";
+open FILE, "$localDir/$urlFile";
 my $url = <FILE>;
 close FILE;
+TLOG "Retrieved URL for the test web server: $url\n";
 
 # Create the submit file
 my @basesubmit = "
 	universe = vanilla
 	executable = cmd_curl_plugin_singlefile_partial.pl
-	output = cmd_curl_plugin_singlefile_partial.out
+	output = $testName.out
 	arguments = 1
-	log = $submitfile.log
+	log = $submitFile.log
 	transfer_input_files = http://$url/partial
 	should_transfer_files = YES
 	";
-open(SF,">$submitfile") or die "Failed to open '$submitfile' : $!\n";
+open(SF,">$submitFile") or die "Failed to open '$submitFile' : $!\n";
 print SF @basesubmit;
 print SF "queue\n";
 close(SF);
@@ -101,7 +104,7 @@ my $exitedFailure = sub
 	my %args = @_;
 	my $cluster = $args{"cluster"};
 	TLOG "ERROR: Job $cluster failed\n";
-	cleanupAndExit(0);
+	cleanupAndExit(1);
 };
 
 my $shadowException = sub
@@ -109,39 +112,39 @@ my $shadowException = sub
 	my %args = @_;
 	my $cluster = $args{"cluster"};
 	TLOG "ERROR: Job $cluster failed with a shadow exception\n";
-	cleanupAndExit(0);
+	cleanupAndExit(1);
 };
 
-CondorTest::RegisterSubmit($testname, $submitted);
-CondorTest::RegisterExecute($testname, $executed);
-CondorTest::RegisterExitedSuccess($testname, $exitedSuccess);
-CondorTest::RegisterExitedFailure($testname, $exitedFailure);
-CondorTest::RegisterShadow($testname, $shadowException);
+CondorTest::RegisterSubmit($testName, $submitted);
+CondorTest::RegisterExecute($testName, $executed);
+CondorTest::RegisterExitedSuccess($testName, $exitedSuccess);
+CondorTest::RegisterExitedFailure($testName, $exitedFailure);
+CondorTest::RegisterShadow($testName, $shadowException);
 
-TLOG("Submitting $submitfile to test a basic curl_plugin transfer\n");
+TLOG("Submitting $submitFile to test a basic curl_plugin transfer\n");
 
 # Run the test. If it fails, one of the handlers will catch. Otherwise it will
 # cleanup and exit with a success code (1).
-CondorTest::RunTest($testname, $submitfile, 0);
+CondorTest::RunTest($testName, $submitFile, 0);
 
 
-cleanupAndExit(1);
+cleanupAndExit(0);
 
 
 sub cleanupAndExit {
 	my $returnCode = shift;
-	unlink "$localDir/flaky-http-address";
-	unlink "$localDir/$submitfile";
-	unlink "$localDir/$submitfile.log";
-	unlink "$localDir/$submitfile.log";
-	stopFlakyWebServer();
+	unlink "$localDir/$submitFile";
+	unlink "$localDir/$submitFile.log";
+	stopTestWebServer();
 	TLOG "Exiting with return code $returnCode\n";
-	CondorTest::RegisterResult($returnCode, test_name=>"cmd_curl_plugin", check_name=>'Basic curl_plugin transfer');
+	CondorTest::RegisterResult($returnCode, test_name=>"cmd_curl_plugin_singlefile_partial", check_name=>'curl_plugin single file partial success');
 	exit($returnCode);
 }
 
 # This sub is based off http://www.perlmonks.org/?node_id=663081
-sub startFlakyWebServer {
+sub startTestWebServer {
+	my $urlFile = shift;
+	TLOG "Starting test web server with URL file: $urlFile\n";
 	# Windows
 	if ($^O eq 'MSWin32') { 
 		
@@ -157,7 +160,7 @@ sub startFlakyWebServer {
 
 		# Launch the web server process
 		Win32::Process::Create($childProcess, $pythonBinary, 
-						"$pythonBinary flaky_http_server.py", 0, 0, ".") 
+						"$pythonBinary curl_plugin_test_http_server.py $urlFile", 0, 0, ".") 
 						|| confess "Could not spawn child: $!";
 		$childPid = $childProcess->GetProcessID();
 	}
@@ -171,7 +174,7 @@ sub startFlakyWebServer {
 		if ($childPid == 0 ) { # child
 			setsid or warn "setsid cannot start a new session: $!";
 			local $| = 1;
-			unless (exec("python flaky_http_server.py")) {
+			unless (exec("python curl_plugin_test_http_server.py $urlFile")) {
 				confess "Could not start child: python: $!";
 				CORE::exit(0);
 			}
@@ -180,18 +183,19 @@ sub startFlakyWebServer {
 		$SIG{CHLD} = 'DEFAULT';
 	}
 	# Catch early child exit, e.g. if program path is incorrect
+	TLOG "Checking for early child exit...\n";
 	sleep(1.0);
 	POSIX::waitpid(-1, POSIX::WNOHANG()); # clean up any defunct child process
 	if (kill(0, $childPid)) {
-		print "Started child process id $childPid\n";
+		TLOG "Started web server with child process id $childPid\n";
 	}
 	else {
-		warn "Child process exited quickly: python: process $childPid";
+		TLOG "Web server child process exited quickly: python: process $childPid";
 	}
 }
 
 # This sub is based off http://www.perlmonks.org/?node_id=663081
-sub stopFlakyWebServer {
+sub stopTestWebServer {
 	# Windows
 	if ($^O eq 'MSWin32') {
 		Win32::Process::KillProcess($childPid,0);
@@ -200,5 +204,5 @@ sub stopFlakyWebServer {
 	else {
 		kill 9, $childPid || warn "could not kill process $childPid: $!";
 	}
-	print "Stopped child process id $childPid\n";
+	TLOG "Stopped web server child process id $childPid\n";
 }
