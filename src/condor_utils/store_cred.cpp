@@ -1127,7 +1127,7 @@ void store_pool_cred_handler(void *, int  /*i*/, Stream *s)
 	username += domain;	
 
 	// do the real work
-	if (pw) {
+	if (pw && *pw) {
 		size_t pwlen = strlen(pw)+1;
 		result = store_cred_service(username.Value(), pw, pwlen, ADD_MODE, cred_modified);
 		SecureZeroMemory(pw, strlen(pw));
@@ -1255,8 +1255,8 @@ store_cred(const char* user, const char* pw, int mode, Daemon* d, bool force) {
 		}
 		else {
 				// only need to send the domain and password for STORE_POOL_CRED
-			if (!sock->code(const_cast<char*&>(user)) ||
-				!sock->code(const_cast<char*&>(pw)) ||
+			if (!sock->put(user) ||
+				!sock->put(pw) ||
 				!sock->end_of_message()) {
 				dprintf(D_ALWAYS, "store_cred: failed to send STORE_POOL_CRED message\n");
 				delete sock;

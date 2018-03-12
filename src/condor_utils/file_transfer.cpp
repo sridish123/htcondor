@@ -1813,7 +1813,6 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 	filesize_t peer_max_transfer_bytes=0;
 	MyString filename;;
 	MyString fullname;
-	char *tmp_buf = NULL;
 	int final_transfer = 0;
 	bool download_success = true;
 	bool try_again = true;
@@ -1926,15 +1925,10 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 			}
 		}
 
-		// code() allocates memory for the string if the pointer is NULL.
-		tmp_buf = NULL;
-		if( !s->code(tmp_buf) ) {
+		if( !s->code(filename) ) {
 			dprintf(D_FULLDEBUG,"DoDownload: exiting at %d\n",__LINE__);
 			return_and_resetpriv( -1 );
 		}
-		filename = tmp_buf;
-		free( tmp_buf );
-		tmp_buf = NULL;
 
 			/*
 			  if we want to change priv states but haven't done so
