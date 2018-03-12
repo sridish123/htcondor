@@ -1,4 +1,4 @@
-# FlakyHTTPServer
+# CurlPluginTestHTTPServer
 # Allows us to test error conditions in curl requests by introducing unexpected behavior.
 
 from random import randint
@@ -8,7 +8,7 @@ import logging
 import sys
 import time
 
-class FlakyHTTPServer(SimpleHTTPRequestHandler):
+class CurlPluginTestHTTPServer(SimpleHTTPRequestHandler):
 
     num_partial_norange_requests = 0
     num_retry_requests = 0
@@ -21,18 +21,6 @@ class FlakyHTTPServer(SimpleHTTPRequestHandler):
             self.protocol_version = "HTTP/1.1"
             self.send_response(500)
 
-        # Requesting /retry
-        elif self.path == "/retry":
-            if FlakyHTTPServer.num_retry_requests >= 5:
-                self.protocol_version = "HTTP/1.1"
-                self.send_response(200, "OK")
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
-            else:
-                print "Catching a retry! num_retry_requests=",FlakyHTTPServer.num_retry_requests
-                FlakyHTTPServer.num_retry_requests += 1
-                time.sleep(60)
- 
         # Requesting /partial tests HTTP resume requests
         elif self.path == "/partial":
 
@@ -85,13 +73,13 @@ class FlakyHTTPServer(SimpleHTTPRequestHandler):
 
             # Step 1: If this is the first time requesting /partial-norange, 
             # return a random substring of partial_content
-            if FlakyHTTPServer.num_partial_norange_requests == 0:
+            if CurlPluginTestHTTPServer.num_partial_norange_requests == 0:
                 self.send_response(200, "OK")
                 self.send_header("Content-Length", len(partial_content))
                 self.end_headers()
                 partial_offset = randint(1, len(partial_content) - 1);
                 self.wfile.write(partial_content[:partial_offset])
-                FlakyHTTPServer.num_partial_norange_requests = 1
+                CurlPluginTestHTTPServer.num_partial_norange_requests = 1
 
             # Step 2: When curl_plugin sends a request with the "Range" header 
             # set with "bytes=0-0" to test if Range is supported, return a 200 OK. 
@@ -107,12 +95,12 @@ class FlakyHTTPServer(SimpleHTTPRequestHandler):
             # request without a Range specified. Send the full content. Note
             # that wget and other http clients typically don't neeed this step
             # because they already get the full content in step 2. 
-            elif FlakyHTTPServer.num_partial_norange_requests == 1:
+            elif CurlPluginTestHTTPServer.num_partial_norange_requests == 1:
                 self.send_response(200, "OK")
                 self.send_header("Content-Length", len(partial_content))
                 self.end_headers()
                 self.wfile.write(partial_content)
-                FlakyHTTPServer.num_partial_norange_requests = 0
+                CurlPluginTestHTTPServer.num_partial_norange_requests = 0
 
         # All other HTTP requests return success codes        
         else:
@@ -128,8 +116,8 @@ if __name__ == "__main__":
         sys.exit("Error: Invalid syntax.\nUsage: python curl_plugin_test_http_server.py [address-filename]")
     address_filename = sys.argv[1]
 
-    # Start the FlakyHTTPServer. Let the system determine an available port.
-    flaky_httpd = BaseHTTPServer.HTTPServer(("127.0.0.1", 0), FlakyHTTPServer)
+    # Start the CurlPluginTestHTTPServer. Let the system determine an available port.
+    flaky_httpd = BaseHTTPServer.HTTPServer(("127.0.0.1", 0), CurlPluginTestHTTPServer)
 
     # Output the server address to a file, which will be read in by the Perl test.
     server_address = flaky_httpd.socket.getsockname()
