@@ -48,11 +48,12 @@ my $testDescription = 'Test scavenging.';
 #	* the new START expression is advertised;
 #	* the new START expression is effective, that is, some jobs will start
 #	  and others will not while the startd is draining;
-#	* that the condor_drain -start option is working;
+#	* the condor_drain -start option is working;
 #	* that when the last of the 'original' jobs exit, all the scavengers
 #	  are preempted
-#	* that after the startd is drained, cancelling the draining results
-#	  in effective change to the START expression.
+#	* after the startd is drained, cancelling the draining results
+#	  in effective change to the START expression;
+#	* AcceptedWhileDraining is correct.
 #
 # It does NOT, but should, validate the following:
 #	* the condor_defrag daemon's knob to set the START expression;
@@ -161,12 +162,27 @@ my $execute = sub {
 		}
 
 		if( $longJobsRunningCount > 3 ) {
-			die( "Long jobs started more than three times.\n" );
+			die( "Original jobs started more than three times.\n" );
 		} elsif( $longJobsRunningCount < 3 ) {
 			return;
 		}
 
-		print( "All three long jobs have started.  Beginning draining...\n" );
+		print( "All three original jobs have started.  Waiting for startd to notice...\n" );
+		for( my $delay = 0; $delay <= 20; ++$delay ) {
+			if( $delay == 20 ) {
+				die( "Startd failed to notice in twenty seconds, aborting.\n" ); 
+			}
+
+			sleep( 1 );
+
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start AcceptedWhileDraining) );
+			if( scalar(@{$ads}) == 4 ) {
+				last;
+			}
+		}
+		print( "... startd noticed.\n" );
+
+		print( "Beginning draining...\n" );
 		runCommandCarefully( undef, qw( condor_drain -start ),
 			'TARGET.MaxJobRetirementTime == 0', $hostName );
 
@@ -178,13 +194,12 @@ my $execute = sub {
 
 			sleep( 1 );
 
-			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start AcceptedWhileDraining) );
 			if( scalar(@{$ads}) != 4 ) {
 				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
 				next;
 			}
 
-			# FIXME: also confirm ClaimedWhileDraining.
 			my $stateChanged = 1;
 			foreach my $ad (@{$ads}) {
 				if( $ad->{ "Name" } =~ /^slot1@/ ) { next; }
@@ -192,6 +207,7 @@ my $execute = sub {
 				if(! $ad->{ "State" } =~ /^Claimed$/i) { print( "Found unexpected state '" . $ad->{ "State" } . "', will retry.\n" ); $stateChanged = 0; last; }
 				if(! $ad->{ "Activity" } =~ /^Retiring$/i) { print( "Found unexpected activity '" . $ad->{ "Activity" } . "', will retry.\n" ); $stateChanged = 0; last; }
 				if(! $ad->{ "Start" } =~ /TARGET\.MaxJobRetirementTime == 0/i) { print( "Found unexpected START '" . $ad->{ "Start" } . "', will retry.\n" ); $stateChanged = 0; last; }
+				if(! $ad->{ "AcceptedWhileDraining" } =~ /^False$/i) { print( "Found unexpected AcceptedWhileDraining '" . $ad->{ "AcceptedWhileDraining" } . "', will retry.\n" ); $stateChanged = 0; last; }
 			}
 			if( $stateChanged == 1 ) { last; }
 		}
@@ -214,20 +230,20 @@ my $execute = sub {
 
 			sleep( 1 );
 
-			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start AcceptedWhileDraining) );
 			if( scalar(@{$ads}) != 3 ) {
 				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
 				next;
 			}
 
-			# FIXME: also confirm ClaimedWhileDraining.
 			my $stateChanged = 0;
 			foreach my $ad (@{$ads}) {
 				if( $ad->{ "Name" } =~ /^slot1@/ ) { next; }
 				print( "Considering '" . $ad->{ "Name" } . "'...\n" );
 
 				if(		$ad->{ "State" } =~ /^Claimed$/i &&
-						$ad->{ "Activity" } =~ /^Busy$/i ) {
+						$ad->{ "Activity" } =~ /^Busy$/i &&
+						$ad->{ "AcceptedWhileDraining" } =~ /^True$/i ) {
 					$stateChanged = 1;
 					last;
 				}
@@ -271,12 +287,12 @@ my $success = sub {
 		}
 
 		if( $longJobsSucceededCount > 2 ) {
-			die( "Long jobs started more than three times.\n" );
+			die( "Original jobs started more than twice times.\n" );
 		} elsif( $longJobsSucceededCount < 2 ) {
 			return;
 		}
 
-		print( "Two long jobs have succeeded, calling condor_reschedule...\n" );
+		print( "Two original jobs have succeeded, calling condor_reschedule...\n" );
 		runCommandCarefully( undef, 'condor_reschedule' );
 
 		print( "Waiting for scavenger job to start...\n" );
@@ -319,17 +335,17 @@ my $evicted = sub {
 
 			sleep( 1 );
 
-			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start AcceptedWhileDraining) );
 			if( scalar(@{$ads}) != 1 ) {
 				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
 				next;
 			}
 
-			# FIXME: also confirm ClaimedWhileDraining.
 			my $drained = 0;
 			foreach my $ad (@{$ads}) {
 				if(		$ad->{ 'State' } =~ /^Drained$/i &&
-						$ad->{ 'Activity' } =~ /^Idle$/i ) {
+						$ad->{ 'Activity' } =~ /^Idle$/i &&
+						$ad->{ 'AcceptedWhileDraining' } =~ /^False$/i ) {
 					$drained = 1;
 				}
 			}
