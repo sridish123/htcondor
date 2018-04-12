@@ -22,6 +22,8 @@
 use strict;
 use warnings;
 
+use Cwd;
+
 use CondorTest;
 use CondorUtils;
 use CustomMachineResource;
@@ -56,29 +58,49 @@ my $testDescription = 'Test scavenging.';
 # point we'll terminate it and the test.
 #
 
-my $submitBody = '
+my $jobFile = cwd() . '/condition-sleep.pl';
+my $jobContents = '#!/usr/bin/env perl
 
-executable				= /bin/sleep
+use strict;
+use warnings;
+
+my $killFile = $ARGV[0];
+my $maxSleep = $ARGV[1];
+
+for( my $i = 0; $i < $maxSleep; ++$i ) {
+	if( -e $killFile ) { exit( 0 ); }
+	sleep( 1 );
+}
+
+exit( 0 );
+';
+CondorTest::WriteFileOrDie( $jobFile, $jobContents );
+chmod( 0755, $jobFile ) || die( "Failed to make ${jobFile} executable, aborting.\n" );
+
+my $killFile = cwd() . "/killfile";
+my $submitBody = "
+
+executable				= ${jobFile}
 transfer_executable		= false
 should_transfer_files	= true
 universe				= vanilla
-arguments				= 3600
+arguments				= ${killFile}.\$(CLUSTER).\$(PROCESS) 3600
 
 log						= cmd_drain_scavenging.log
 
 queue 3
 
-arguments				= 60
+arguments				= ${killFile}.\$(CLUSTER).\$(PROCESS) 60
 MaxJobRetirementTime	= 0
 
 queue 1
 
-arguments				= 60
+arguments				= ${killFile}.\$(CLUSTER).\$(PROCESS) 60
 MaxJobRetirementTime	= 60
 
 queue 1
 
-';
+";
 
 my $clusterID;
 my $setClusterID = sub {
@@ -130,6 +152,7 @@ my $execute = sub {
 				next;
 			}
 
+			# FIXME: also confirm ClaimedWhileDraining.
 			my $stateChanged = 1;
 			foreach my $ad (@{$ads}) {
 				if( $ad->{ "Name" } =~ /^slot1@/ ) { next; }
@@ -143,11 +166,191 @@ my $execute = sub {
 		print( "... state changed successfully.\n" );
 
 		print( "Killing two of the long-running jobs...\n" );
+		touch( $killFile . ".${clusterID}.0" );
+		touch( $killFile . ".${clusterID}.1" );
+		$testingPhase = 1;
+	} elsif( $testingPhase == 2 ) {
+		if( $info{ 'job' } != 3 ) {
+			die( "Job ${ID} executed during testing phase 2, aborting.\n" );
+		}
+
+		print( "Scavenger job started.  Verifying state changes...\n" );
+		for( my $delay = 0; $delay <= 20; ++$delay ) {
+			if( $delay == 20 ) {
+				die( "State failed to change by twenty seconds after draining, aborting.\n" ); 
+			}
+
+			sleep( 1 );
+
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			if( scalar(@{$ads}) != 3 ) {
+				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
+				next;
+			}
+
+			# FIXME: also confirm ClaimedWhileDraining.
+			my $stateChanged = 0;
+			foreach my $ad (@{$ads}) {
+				if( $ad->{ "Name" } =~ /^slot1@/ ) { next; }
+				print( "Considering '" . $ad->{ "Name" } . "'...\n" );
+
+				if(		$ad->{ "State" } =~ /^Claimed$/i &&
+						$ad->{ "Activity" } =~ /^Busy$/i ) {
+					$stateChanged = 1;
+					last;
+				}
+			}
+
+			if( $stateChanged ) { last; }
+		}
+		print( "... state changed successfully.\n" );
+
+		print( "Killing the last long-running job...\n" );
+		touch( $killFile . ".${clusterID}.2" );
+		$testingPhase = 3;
+	} elsif( $testingPhase == 4 ) {
+		if( $info{ 'job' } != 4 ) {
+			die( "Job ${ID} executed during testing phase 4, aborting.\n" );
+		}
+
+		print( "Killing last job...\n" );
+		touch( $killFile . ".${clusterID}.4" );
+		$testingPhase = 5;
+	} else {
+		die( "execute() called unexpectedly in testing phase ${testingPhase}, aborting.\n" );
+	}
+};
+
+my $longJobsSucceededCount = 0;
+my $success = sub {
+	my %info = @_;
+	my $ID = $info{ 'cluster' } . "." . $info{ 'job' };
+
+	if( $info{ 'cluster' } != $clusterID ) {
+		die( "Found stale test job or log file, aborting.\n" );
+	}
+
+	if( $testingPhase == 1 ) {
+
+		if( 0 <= $info{ 'job' } && $info{ 'job' } <= 1 ) {
+			++$longJobsSucceededCount;
+		} else {
+			die( "Job ${ID} succeeded before it should have.\n" );
+		}
+
+		if( $longJobsSucceededCount > 2 ) {
+			die( "Long jobs started more than three times.\n" );
+		} elsif( $longJobsSucceededCount < 2 ) {
+			return;
+		}
+
+		print( "Two long jobs have succeeded, calling condor_reschedule...\n" );
+		runCommandCarefully( undef, 'condor_reschedule' );
+
+		print( "Waiting for scavenger job to start...\n" );
+		$testingPhase = 2;
+	} elsif( $testingPhase == 3 || $testingPhase == 4 ) {
+		# We /should/ get the succeeded event before the eviction event,
+		# but it's OK if they happen in the other order.
+		if( $info{ 'job' } != 2 ) {
+			die( "Job ${ID} succeeded during testing phase 3 or 4, aborting.\n" );
+		}
+	} elsif( $testingPhase == 5 ) {
+		if( $info{ 'job' } != 4 ) {
+			die( "Job ${ID} succeeded during testing phase 5, aborting.\n" );
+		}
+
+		RegisterResult( 1, check_name => 'normal/drain/scavenge/drained/normal cycle', test_name => $testName );
+	} else {
+		die( "success() called unexpectedly in testing phase ${testingPhase}, aborting.\n" );
+	}
+};
+
+my $evicted = sub {
+	my %info = @_;
+	my $ID = $info{ 'cluster' } . "." . $info{ 'job' };
+
+	if( $info{ 'cluster' } != $clusterID ) {
+		die( "Found stale test job or log file, aborting.\n" );
+	}
+
+	if( $testingPhase == 3 ) {
+		if( $info{ 'job' } != 3 ) {
+			die( "Job ${ID} evicted, aborting.\n" );
+		}
+
+		print( "Waiting for machine to fully drain...\n" );
+		for( my $delay = 0; $delay <= 20; ++$delay ) {
+			if( $delay == 20 ) {
+				die( "State failed to change by twenty seconds after draining, aborting.\n" ); 
+			}
+
+			sleep( 1 );
+
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			if( scalar(@{$ads}) != 1 ) {
+				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
+				next;
+			}
+
+			# FIXME: also confirm ClaimedWhileDraining.
+			my $drained = 0;
+			foreach my $ad (@{$ads}) {
+				if(		$ad->{ 'State' } =~ /^Drained$/i &&
+						$ad->{ 'Activity' } =~ /^Idle$/i ) {
+					$drained = 1;
+				}
+			}
+			if( $drained ) { last; }
+		}
+		print( "... machine fully drained.\n" );
+
+		print( "Cancelling draining state...\n" );
+		runCommandCarefully( undef, "condor_drain -cancel ${hostName}" );
+
+		print( "Removing evicted job...\n" );
+		runCommandCarefully( undef, 'condor_rm', $ID );
+
+		print( "Calling condor_reschedule...\n" );
+		runCommandCarefully( undef, 'condor_reschedule' );
+
+		print( "Waiting for last job to start...\n" );
+		$testingPhase = 4;
+	} else {
+		die( "evicted() called unexpectedly in testing phase ${testingPhase}, aborting.\n" );
+	}
+};
+
+my $aborted = sub {
+	my %info = @_;
+	my $ID = $info{ 'cluster' } . "." . $info{ 'job' };
+
+	if( $info{ 'cluster' } != $clusterID ) {
+		die( "Found stale test job or log file, aborting.\n" );
+	}
+
+	if( $testingPhase == 4 ) {
+		if( $info{ 'job' } != 3 ) {
+			die( "Job ${ID} evicted, aborting.\n" );
+		}
+	} else {
+		die( "aborted() called unexpectedly in testing phase ${testingPhase}, aborting.\n" );
 	}
 };
 
 CondorTest::RegisterExecute( $testName, $execute );
+CondorTest::RegisterExitedSuccess( $testName, $success );
+CondorTest::RegisterEvictedWithoutCheckpoint( $testName, $evicted );
+CondorTest::RegisterAbort( $testName, $aborted );
 CondorTest::RunTest2( name => $testName, want_checkpoint => 0,
 	submit_body => $submitBody, callback => $setClusterID );
 
 exit( 0 );
+
+sub touch {
+	my( $filename ) = @_;
+
+	my $rv = open( my $fh, ">", $filename );
+	close( $fh );
+	return $rv;
+}
