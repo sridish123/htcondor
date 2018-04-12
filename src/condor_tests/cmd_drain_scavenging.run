@@ -42,20 +42,52 @@ my $testName = 'cmd_drain_scavenging';
 my $testDescription = 'Test scavenging.';
 
 #
-# We'll submit three long jobs and two short jobs, in that order.  After the
-# three long jobs have started, we'll begin draining
-# with a start expression of 'TARGET.MaxJobRetirementTime == 0'.  Then we'll
-# verify that the slots have all changed state & activity, and that the new
-# START expression is being advertised.  Then we'll terminate two of the
-# long jobs and call condor_reschedule.  Within $(NEGOTIATOR_INTERVAL) seconds,
-# only and only one should match; well wait twenty seconds for it to actually
-# start.  Then we'll verify the new slot's state & activity.  Then we'll
-# terminate the last long job and verify that the running short job is
-# immediately evicted.  (Wait twenty seconds?)  When it is, we'll wait
-# (no more than twenty seconds) until the machine is fully drained.  Then
-# we'll cancel the draining, at which point we'll verify the old START
-# expression, and then wait for the last (short) job to start, at which
-# point we'll terminate it and the test.
+# This test validates the new scavenging functionality of the drain state.
+# In particular, that:
+#
+#	* the new START expression is advertised;
+#	* the new START expression is effective, that is, some jobs will start
+#	  and others will not while the startd is draining;
+#	* that the condor_drain -start option is working;
+#	* that when the last of the 'original' jobs exit, all the scavengers
+#	  are preempted
+#	* that after the startd is drained, cancelling the draining results
+#	  in effective change to the START expression.
+#
+# It does NOT, but should, validate the following:
+#	* the condor_defrag daemon's knob to set the START expression;
+#	* that when the last of the 'original' jobs exit, the startd sets
+#	  MaxJobRetirementTime, but not MaxMachineVacateTime to 0;
+#	* that when the last of the 'original' jobs exit, the startd invalidates
+#	  all claim IDs;
+#	* that when the draining is cancelled, MaxJobRetirementTime returns
+#	  to original value (both advertised and effective);
+#	* that after the startd is drained, cancelling the draining results
+#	  in the original START expression being advertised (and used).
+#
+# FIXME: setting MaxJobRetirementTime to 0 when evicting the scavengers is
+# rather important, so we need to make sure that it happens.
+#
+
+#
+# To do the validation, we submit five jobs (which have durations which should
+# never matter): the first three don't mention MaxJobRetirementTime at all,
+# the fourth sets it to zero, and the fifth to nonzero.  This is so that
+# the fourth and fifth jobs will look start (or not start) only on the basis
+# of the (recommended) START expression we use when we begin draining.
+#
+# After the first three jobs have started, we'll begin draining with a START
+# expression of 'TARGET.MaxJobRetirementTime == 0'.  Then we'll verify that
+# the slots have all changed state & activity, and that the new START
+# expression is being advertised.  Then we'll terminate two of the original
+# jobs and call condor_reschedule.
+#
+# One and only one should match; we'll wait for it to actually start.  Then
+# we'll verify the new slot's state & activity.  Then we'll terminate the
+# last original job and verify that the running job is evicted.  When it is,
+# we'll wait until the machine is fully drained.  Then we'll cancel the
+# draining, and then wait for the last job to start, at which point we'll
+# terminate it and declare the test a success.
 #
 
 my $jobFile = cwd() . '/condition-sleep.pl';
