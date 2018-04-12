@@ -1,0 +1,153 @@
+#!/usr/bin/env perl
+
+##**************************************************************
+##
+## Copyright (C) 1990-2018, Condor Team, Computer Sciences Department,
+## University of Wisconsin-Madison, WI.
+##
+## Licensed under the Apache License, Version 2.0 (the "License"); you
+## may not use this file except in compliance with the License.  You may
+## obtain a copy of the License at
+##
+##    http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+##**************************************************************
+
+use strict;
+use warnings;
+
+use CondorTest;
+use CondorUtils;
+use CustomMachineResource;
+
+#testreq: personal
+my $config = <<CONDOR_TESTREQ_CONFIG;
+use feature : PartitionableSlot
+NEGOTIATOR_INTERVAL = 5
+MaxJobRetirementTime = 120
+MachineMaxVacateTime = 5
+NUM_CPUS = 3
+CONDOR_TESTREQ_CONFIG
+#endtestreq
+
+my $testName = 'cmd_drain_scavenging';
+my $testDescription = 'Test scavenging.';
+
+#
+# We'll submit three long jobs and two short jobs, in that order.  After the
+# three long jobs have started, we'll begin draining
+# with a start expression of 'TARGET.MaxJobRetirementTime == 0'.  Then we'll
+# verify that the slots have all changed state & activity, and that the new
+# START expression is being advertised.  Then we'll terminate two of the
+# long jobs and call condor_reschedule.  Within $(NEGOTIATOR_INTERVAL) seconds,
+# only and only one should match; well wait twenty seconds for it to actually
+# start.  Then we'll verify the new slot's state & activity.  Then we'll
+# terminate the last long job and verify that the running short job is
+# immediately evicted.  (Wait twenty seconds?)  When it is, we'll wait
+# (no more than twenty seconds) until the machine is fully drained.  Then
+# we'll cancel the draining, at which point we'll verify the old START
+# expression, and then wait for the last (short) job to start, at which
+# point we'll terminate it and the test.
+#
+
+my $submitBody = '
+
+executable				= /bin/sleep
+transfer_executable		= false
+should_transfer_files	= true
+universe				= vanilla
+arguments				= 3600
+
+log						= cmd_drain_scavenging.log
+
+queue 3
+
+arguments				= 60
+MaxJobRetirementTime	= 0
+
+queue 1
+
+arguments				= 60
+MaxJobRetirementTime	= 60
+
+queue 1
+
+';
+
+my $clusterID;
+my $setClusterID = sub {
+	my( $cID ) = @_;
+	$clusterID = $cID;
+};
+
+my $hostName = `condor_config_val full_hostname`;
+CondorUtils::fullchomp( $hostName );
+
+my $testingPhase = 0;
+my $longJobsRunningCount = 0;
+my $execute = sub {
+	my %info = @_;
+	my $ID = $info{ 'cluster' } . "." . $info{ 'job' };
+
+	if( $info{ 'cluster' } != $clusterID ) {
+		die( "Found stale test job or log file, aborting.\n" );
+	}
+
+	if( $testingPhase == 0 ) {
+		if( 0 <= $info{ 'job' } && $info{ 'job' } <= 2 ) {
+			++$longJobsRunningCount;
+		} else {
+			die( "Job ${ID} executed before it should have.\n" );
+		}
+
+		if( $longJobsRunningCount > 3 ) {
+			die( "Long jobs started more than three times.\n" );
+		} elsif( $longJobsRunningCount < 3 ) {
+			return;
+		}
+
+		print( "All three long jobs have started.  Beginning draining...\n" );
+		runCommandCarefully( undef, qw( condor_drain -start ),
+			'TARGET.MaxJobRetirementTime == 0', $hostName );
+
+		print( "Verifying state changes...\n" );
+		for( my $delay = 0; $delay <= 20; ++$delay ) {
+			if( $delay == 20 ) {
+				die( "State failed to change by twenty seconds after draining, aborting.\n" ); 
+			}
+
+			sleep( 1 );
+
+			my $ads = CustomMachineResource::parseMachineAds( qw(Name State Activity Start) );
+			if( scalar(@{$ads}) != 4 ) {
+				print( "Found unexpected number of ads: " . scalar(@{$ads}) . ", will retry.\n" );
+				next;
+			}
+
+			my $stateChanged = 1;
+			foreach my $ad (@{$ads}) {
+				if( $ad->{ "Name" } =~ /^slot1@/ ) { next; }
+				print( "Considering '" . $ad->{ "Name" } . "'...\n" );
+				if(! $ad->{ "State" } =~ /^Claimed$/i) { print( "Found unexpected state '" . $ad->{ "State" } . "', will retry.\n" ); $stateChanged = 0; last; }
+				if(! $ad->{ "Activity" } =~ /^Retiring$/i) { print( "Found unexpected activity '" . $ad->{ "Activity" } . "', will retry.\n" ); $stateChanged = 0; last; }
+				if(! $ad->{ "Start" } =~ /TARGET\.MaxJobRetirementTime == 0/i) { print( "Found unexpected START '" . $ad->{ "Start" } . "', will retry.\n" ); $stateChanged = 0; last; }
+			}
+			if( $stateChanged == 1 ) { last; }
+		}
+		print( "... state changed successfully.\n" );
+
+		print( "Killing two of the long-running jobs...\n" );
+	}
+};
+
+CondorTest::RegisterExecute( $testName, $execute );
+CondorTest::RunTest2( name => $testName, want_checkpoint => 0,
+	submit_body => $submitBody, callback => $setClusterID );
+
+exit( 0 );
