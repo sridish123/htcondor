@@ -57,7 +57,8 @@ my $res = count_jobs(\@content);
 if ($res eq 1) {
 	RegisterResult(1, check_name=>"simple test", test_name=>$testname);
 } else {
-	print "ERROR: should be able to submit 4 jobs successfully\n";
+	print "ERROR: there should be 4 jobs in the queue\n";
+	print @content;
 	RegisterResult(0, check_name=>"simple test", test_name=>$testname);
 }
 
@@ -110,20 +111,22 @@ $res = count_jobs(\@content);
 if ($res eq 10) {
 	RegisterResult(1, check_name=>"max_materialize = 10", test_name=>$testname);
 } else {
-	print "ERROR: should be able to submit 10 jobs successfully\n";
+	print "ERROR: there should be 10 jobs in the queue:\n";
+	print @content;
 	RegisterResult(0, check_name=>"max_materialize = 10", test_name=>$testname);
 }
 `condor_rm -all`;
 
 sub count_jobs {
 	my @content = @{$_[0]};
-	my $index = 0;
-	my $res;
-	while (! ($content[$index] =~ /([0-9]+)\s*job\(?s\)?/)) {
-		$index++;
+	my $res = -1;
+	for my $i (0..(scalar @content)-1) {
+		# extract count of jobs N from the line that says "submitted N jobs"
+		if ($content[$i] =~ /([0-9]+)\s*job\(?s\)?/) {
+			$res = $1;
+			last;
+		}
 	}
-	$content[$index] =~ /([0-9]+)\s*job\(?s\)?/;
-	$res = $1;
 	return $res;
 }
 

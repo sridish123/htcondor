@@ -34,9 +34,6 @@
 #include <map>
 #include <algorithm>
 
-/* FILESQL include */
-#include "file_sql.h"
-
 typedef struct MapEntry {
 	char *remoteHost;
 	int sequenceNum;
@@ -44,8 +41,6 @@ typedef struct MapEntry {
 } MapEntry;
 /* ODBC object extern */
 //extern ODBC *DBObj;
-/* FILESQL object extern */
-extern FILESQL *FILEObj;
 
 struct GroupEntry {
     typedef vector<int>::size_type size_type;
@@ -146,9 +141,12 @@ class Matchmaker : public Service
 		bool getGroupInfoFromUserId(const char* user, string& groupName, float& groupQuota, float& groupUsage);
 
 		void forwardAccountingData(std::set<std::string> &names);
-		void forwardGroupAccounting(DCCollector &collector, GroupEntry *ge);
+		void forwardGroupAccounting(CollectorList *cl, GroupEntry *ge);
 
 		void calculateRanks(ClassAd &request, ClassAd *offer, PreemptState candidatePreemptState, double &candidateRankValue, double &candidatePreJobRankValue, double &candidatePostJobRankValue, double &candidatePreemptRankValue);
+
+		void setDryRun(bool d) {m_dryrun = d;}
+		bool getDryRun() const {return m_dryrun;}
 
     protected:
 		char * NegotiatorName;
@@ -319,8 +317,7 @@ class Matchmaker : public Service
 		void insertNegotiatorMatchExprs( ClassAdListDoesNotDeleteAds &cal );
 		void reeval( ClassAd *ad );
 		void updateNegCycleEndTime(time_t startTime, ClassAd *submitter);
-		static unsigned int HashFunc(const MyString &Key);
-		friend int comparisonFunction (AttrList *, AttrList *,
+		friend int comparisonFunction (ClassAd *, ClassAd *,
 										void *);
 		bool pslotMultiMatch(ClassAd *job, ClassAd *machine, double preemptPrio, string &dslot_claims);
 
@@ -382,6 +379,8 @@ class Matchmaker : public Service
                                          // constraint before calculating quotas
                                          // formerly DynQuotaMachConstraint Added for CDF.
 
+		std::string m_JobConstraintStr;
+
 		bool m_staticRanks;
 
 		StringList NegotiatorMatchExprNames;
@@ -429,6 +428,7 @@ class Matchmaker : public Service
 		int rejForSubmitterLimit;   //   - not enough group quota?
 	std::set<std::string> rejectedConcurrencyLimits;
 	std::string lastRejectedConcurrencyString;
+		bool m_dryrun;
 
 
 		// Class used to store each individual entry in the

@@ -480,16 +480,27 @@ RemoteCommitTransaction(SetAttributeFlags_t flags, CondorError *errstack)
 	}
 	neg_on_error( qmgmt_sock->end_of_message() );
 
+
+	ClassAd reply;
 	qmgmt_sock->decode();
 	neg_on_error( qmgmt_sock->code(rval) );
 	if( rval < 0 ) {
 		neg_on_error( qmgmt_sock->code(terrno) );
-		const CondorVersionInfo *vers = qmgmt_sock->get_peer_version();
-		if (vers && vers->built_since_version(8, 3, 4))
-		{
-			ClassAd reply;
-			neg_on_error( getClassAd( qmgmt_sock, reply ) );
+	}
 
+	// In some situations, we (the client) won't know the server's version,
+	// but the server will know our version.  To handle that, we have to
+	// look at what's on the wire, rather than what we should expect.
+	// Luckily, the only thing after the terrno, if any, is a classad, so
+	// this shouldn't cause future version incompabilities.
+	bool gotClassAd = false;
+	if(! qmgmt_sock->peek_end_of_message()) {
+		neg_on_error( getClassAd( qmgmt_sock, reply ) );
+		gotClassAd = true;
+	}
+
+	if( rval < 0 ) {
+		if( gotClassAd ) {
 			std::string errmsg;
 			if( errstack && reply.LookupString( "ErrorReason", errmsg ) ) {
 				int errCode = terrno;
@@ -500,6 +511,13 @@ RemoteCommitTransaction(SetAttributeFlags_t flags, CondorError *errstack)
 		neg_on_error( qmgmt_sock->end_of_message() );
 		errno = terrno;
 		return rval;
+	} else if( gotClassAd ) {
+		std::string warningReason;
+		if( errstack && reply.LookupString( "WarningReason", warningReason ) ) {
+			if(! warningReason.empty()) {
+				errstack->push( "SCHEDD", 0, warningReason.c_str() );
+			}
+		}
 	}
 	neg_on_error( qmgmt_sock->end_of_message() );
 
@@ -528,7 +546,7 @@ GetAttributeFloat( int cluster_id, int proc_id, char *attr_name, float *value )
 			errno = terrno;
 			return rval;
 		}
-		neg_on_error( qmgmt_sock->code(value) );
+		neg_on_error( qmgmt_sock->code(*value) );
 		neg_on_error( qmgmt_sock->end_of_message() );
 
 	return rval;
@@ -557,7 +575,7 @@ GetAttributeInt( int cluster_id, int proc_id, char const *attr_name, int *value 
 			errno = terrno;
 			return rval;
 		}
-		neg_on_error( qmgmt_sock->code(value) );
+		neg_on_error( qmgmt_sock->code(*value) );
 		neg_on_error( qmgmt_sock->end_of_message() );
 
 	return rval;

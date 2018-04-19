@@ -202,11 +202,11 @@ class MyString
 	//@{ 
 
 	/** Returns a new MyString that is the portion of the string from 
-	 *  pos1 to pos2 (including both pos1 and pos2). 
+	 *  pos and continuing for len characters (or the end of the string).
 	 *  The first character in the string is position 0. 
 	 */
-	MyString Substr(int pos1, int pos2) const;
-    
+	MyString substr(int pos, int len) const;
+
 	/** Returns a new MyString. Q is a string of characters that need
      *  to be escaped, and the "escape" is the character to put before
      *  each character. For example, if you pass "abc" and '\' and the
@@ -218,9 +218,6 @@ class MyString
 	 * counting from FirstPos. Returns -1 if it's not found. 
 	 */
 	int FindChar(int Char, int FirstPos=0) const;
-
-	/** Calculates a hash function on the string. */
-	unsigned int Hash() const;
 
 	/** Returns the zero-based index of the first character of a
      *  substring, if it is contained within the MyString. Begins
@@ -479,8 +476,6 @@ protected:
 };
 
 
-unsigned int MyStringHash( const MyString &str );
-
 class YourString {
 protected:
 	const char *m_str;
@@ -512,9 +507,6 @@ public:
 	bool operator <(const std::string & str) const { return operator<(str.c_str()); }
 	bool operator <(const MyString & str) const { return operator<(str.Data); }
 	bool operator <(const YourString &rhs) const;
-
-	static unsigned int hashFunction(const YourString &s);
-	static unsigned int hashFunctionNoCase(const YourString &s);
 };
 
 class YourStringNoCase : public YourString {
@@ -538,8 +530,6 @@ public:
 	bool operator <(const std::string & str) const { return operator<(str.c_str()); }
 	bool operator <(const MyString & str) const { return operator<(str.Data); }
 	bool operator <(const YourStringNoCase &rhs) const { return operator<(rhs.m_str); }
-
-	static unsigned int hashFunction(const YourStringNoCase &s) { return YourString::hashFunctionNoCase(s); }
 };
 
 

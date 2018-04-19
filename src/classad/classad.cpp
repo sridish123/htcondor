@@ -336,6 +336,8 @@ InsertAttr( const string &name, long long value, Value::NumberFactor f )
 bool ClassAd::
 InsertAttr( const string &name, long long value)
 {
+	MarkAttributeDirty(name);
+
 	// Optimized insert of long long values that overwrite the destination value if the destination is a literal.
 	classad::ExprTree* & expr = attrList[name];
 	if (expr) {
@@ -400,6 +402,8 @@ InsertAttr( const string &name, double value, Value::NumberFactor f )
 bool ClassAd::
 InsertAttr( const string &name, double value)
 {
+	MarkAttributeDirty(name);
+
 	// Optimized insert of Real values that overwrite the destination value if the destination is a literal.
 	classad::ExprTree* & expr = attrList[name];
 	if (expr) {
@@ -431,6 +435,8 @@ DeepInsertAttr( ExprTree *scopeExpr, const string &name, double value,
 bool ClassAd::
 InsertAttr( const string &name, bool value )
 {
+	MarkAttributeDirty(name);
+
 	// Optimized insert of bool values that overwrite the destination value if the destination is a literal.
 	classad::ExprTree* & expr = attrList[name];
 	if (expr) {
@@ -468,6 +474,8 @@ InsertAttr( const string &name, const char *value )
 bool ClassAd::
 InsertAttr( const string &name, const char * str, size_t len)
 {
+	MarkAttributeDirty(name);
+
 	// Optimized insert of long long values that overwrite the destination value if the destination is a literal.
 	classad::ExprTree* & expr = attrList[name];
 	if (expr) {
@@ -612,6 +620,7 @@ bool ClassAd::InsertLiteral(const std::string & name, Literal* lit)
 		insert_result.first->second = lit;
 	}
 #endif
+	MarkAttributeDirty(name);
 	return true;
 }
 
@@ -2095,6 +2104,29 @@ void ClassAd::ChainToAd(ClassAd *new_chain_parent_ad)
 	return;
 }
 
+bool ClassAd::PruneChildAttr(const std::string & attrName, bool if_child_matches /*=true*/)
+{
+	if ( ! chained_parent_ad)
+		return false;
+
+	AttrList::iterator itr = attrList.find(attrName);
+	if (itr == attrList.end())
+		return false;
+
+	bool prune_it = true;
+	if (if_child_matches) {
+		ExprTree * tree = chained_parent_ad->Lookup(itr->first);
+		prune_it = (tree && tree->SameAs(itr->second));
+	}
+
+	if (prune_it) {
+		delete itr->second;
+		attrList.erase(itr);
+		return true;
+	}
+	return false;
+}
+
 int ClassAd::PruneChildAd()
 {
 	int iRet =0;
@@ -2147,14 +2179,6 @@ const ClassAd *ClassAd::GetChainedParentAd(void) const
 void ClassAd::ClearAllDirtyFlags(void)
 { 
 	dirtyAttrList.clear();
-	return;
-}
-
-void ClassAd::MarkAttributeDirty(const string &name)
-{
-	if (do_dirty_tracking) {
-		dirtyAttrList.insert(name);
-	}
 	return;
 }
 

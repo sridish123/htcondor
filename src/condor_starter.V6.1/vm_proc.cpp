@@ -74,6 +74,8 @@ VMProc::VMProc(ClassAd *jobAd) : OsProc(jobAd)
 	m_vm_max_memory = 0;
 	m_vm_memory = 0;
 
+	m_vm_last_ckpt_time = 0;
+
 	//Find the interval of sending vm status command to vmgahp server
 	m_vmstatus_interval = param_integer( "VM_STATUS_INTERVAL", 
 			VM_DEFAULT_STATUS_INTERVAL);
@@ -575,6 +577,7 @@ VMProc::StartJob()
 	//			"Can't create vm with $vmconfig" (?)
 	//			"vmconfig $vmconfig does not exist" (C)
 	//			"vmconfig $vmconfig is not readable" (C)
+	//		VMGAHP_ERR_BAD_IMAGE (U)
 	//
 
 	Gahp_Args * result = new_req->getResult();
@@ -634,7 +637,8 @@ VMProc::StartJob()
 			"VMGAHP_ERR_JOBCLASSAD_KVM_NO_DISK_PARAM",
 			"VMGAHP_ERR_JOBCLASSAD_KVM_INVALID_DISK_PARAM",
 			"VMGAHP_ERR_JOBCLASSAD_KVM_MISMATCHED_CHECKPOINT",
-			"VMGAHP_ERR_JOBCLASSAD_NO_VMWARE_VMX_PARAM"
+			"VMGAHP_ERR_JOBCLASSAD_NO_VMWARE_VMX_PARAM",
+			"VMGAHP_ERR_BAD_IMAGE"
 			};
 		unsigned holdingErrorCount = sizeof( holdingErrors ) / sizeof(  const char * const );
 		for( unsigned i = 0; i < holdingErrorCount; ++i ) {
@@ -693,7 +697,7 @@ VMProc::StartJob()
 			"VMProc::CheckStatus", this);
 
 	// Set job_start_time in user_proc.h
-	job_start_time.getTime();
+	condor_gettimestamp( job_start_time );
 	dprintf( D_ALWAYS, "StartJob for VM succeeded\n");
 
 	// If we do manage to launch, clear the FTL attributes.
@@ -1365,7 +1369,7 @@ VMProc::CkptDone(bool success)
 		// File uploading succeeded
 		// update checkpoint counter and last ckpt timestamp
 		m_vm_ckpt_count++;
-		m_vm_last_ckpt_time.getTime();
+		m_vm_last_ckpt_time = time(NULL);
 	}
 
 	if( m_is_vacate_ckpt ) {
@@ -1541,19 +1545,12 @@ VMProc::reportErrorToStartd()
 	}
 
 	// Send pid of this starter
-	MyString s_pid = IntToStr( (int)daemonCore->getpid() );
-
-	char *buffer = strdup(s_pid.Value());
-	ASSERT(buffer);
-
-	ssock.code(buffer);
+	ssock.put( IntToStr( (int)daemonCore->getpid() ) );
 
 	if( !ssock.end_of_message() ) {
 		dprintf( D_FULLDEBUG, "Failed to send EOM to local startd %s\n", addr);
-		free(buffer);
 		return false;
 	}
-	free(buffer);
 
 	sleep(1);
 	return true;
@@ -1593,25 +1590,15 @@ VMProc::reportVMInfoToStartd(int cmd, const char *value)
 	}
 
 	// Send the pid of this starter
-	MyString s_pid = IntToStr( (int)daemonCore->getpid() );
-
-	char *starter_pid = strdup(s_pid.Value());
-	ASSERT(starter_pid);
-	ssock.code(starter_pid);
+	ssock.put( IntToStr( (int)daemonCore->getpid() ) );
 
 	// Send vm info 
-	char *vm_value = strdup(value);
-	ASSERT(vm_value);
-	ssock.code(vm_value);
+	ssock.put(value);
 
 	if( !ssock.end_of_message() ) {
 		dprintf( D_FULLDEBUG, "Failed to send EOM to local startd %s\n", addr);
-		free(starter_pid);
-		free(vm_value);
 		return false;
 	}
-	free(starter_pid);
-	free(vm_value);
 
 	sleep(1);
 	return true;

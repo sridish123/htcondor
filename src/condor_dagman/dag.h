@@ -182,10 +182,8 @@ class Dag {
 	*/
 	void RunWaitingScripts();
   
-    /** Blocks until the HTCondor Log file grows.
-        @return true: log file grew, false: timeout or shrinkage
-    */
-    bool DetectCondorLogGrowth();
+    // Get the current status of the condor log file
+	ReadUserLog::FileStatus	GetCondorLogStatus();
 
     /** Force the Dag to process all new events in the condor log file.
         This may cause the state of some jobs to change.
@@ -277,6 +275,18 @@ class Dag {
 		@param The job corresponding to this event.
 	*/
 	void ProcessReleasedEvent(Job *job, const ULogEvent *event);
+
+	/** Process a factory submit event.
+	    @param The job corresponding to this event.
+		@param Whether we're in recovery mode.
+	*/
+	void ProcessFactorySubmitEvent(Job *job);
+
+		/** Process a factory remove event.
+	    @param The job corresponding to this event.
+		@param Whether we're in recovery mode.
+	*/
+	void ProcessFactoryRemoveEvent(Job *job, bool recovery);
 
     /** Get pointer to job with id jobID
         @param the handle of the job in the DAG
@@ -580,7 +590,7 @@ class Dag {
 
 	int NumIdleJobProcs() const { return _numIdleJobProcs; }
 
-	int NumHeldJobProcs() const { return _numHeldJobProcs; }
+	int NumHeldJobProcs();
 
 		/** Print the number of deferrals during the run (caused
 		    by MaxJobs, MaxIdle, MaxPre, or MaxPost).
@@ -1053,9 +1063,6 @@ private:
 		// number of idle job procs hits this limit).  Non-negative.  Zero
 		// means unlimited.
     const int _maxIdleJobProcs;
-
-		// The number of DAG job procs currently held.
-	int _numHeldJobProcs;
 
 		// If this is true, nodes for which the job submit fails are retried
 		// before any other ready nodes; otherwise a submit failure puts

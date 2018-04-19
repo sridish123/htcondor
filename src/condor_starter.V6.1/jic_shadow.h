@@ -137,7 +137,7 @@ public:
    			completely cleaned up.  We don't care, since we just wait
 			for the shadow to tell the startd to tell us to go away. 
 		*/
-	void allJobsGone( void ) {};
+	void allJobsGone( void );
 
 		/** The starter has been asked to shutdown fast.  Disable file
 			transfer, since we don't want that on fast shutdowns.
@@ -259,10 +259,13 @@ private:
 			the shadow
 			@param ad ClassAd pointer to publish into
 			@return true if success, false if failure
-		*/ 
+		*/
 	bool publishUpdateAd( ClassAd* ad );
 
 	bool publishJobExitAd( ClassAd* ad );
+
+	// Should only be called from publish[Update|JobExit]Ad().
+	bool publishStartdUpdates( ClassAd* ad );
 
 		/** Send an update ClassAd to the shadow.  The "insure_update"
 			just means do we make sure the update gets there.  It has
@@ -438,6 +441,7 @@ private:
 	void proxyExpiring();
 
 	bool refreshSandboxCredentials();
+	bool refreshSandboxCredentialsMultiple();
 
 	bool shadowDisconnected() { return syscall_sock_lost_time > 0; };
 
@@ -524,6 +528,12 @@ private:
 			job submitter. (e.g. the job's executable itself)
 		*/
 	StringList m_removed_output_files;
+
+		/** A list of attributes to copy from the update ad to the job
+			ad every time we update the shadow.
+		*/
+	bool m_job_update_attrs_set;
+	StringList m_job_update_attrs;
 };
 
 

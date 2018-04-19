@@ -91,8 +91,8 @@ std::map<std::string,KeyCache*> *SecMan::m_tagged_session_cache = NULL;
 std::string SecMan::m_tag;
 KeyCache *SecMan::session_cache = &SecMan::m_default_session_cache;
 std::string SecMan::m_pool_password;
-HashTable<MyString,MyString> SecMan::command_map(209, MyStringHash, updateDuplicateKeys);
-HashTable<MyString,classy_counted_ptr<SecManStartCommand> > SecMan::tcp_auth_in_progress(256, MyStringHash, rejectDuplicateKeys);
+HashTable<MyString,MyString> SecMan::command_map(hashFunction);
+HashTable<MyString,classy_counted_ptr<SecManStartCommand> > SecMan::tcp_auth_in_progress(hashFunction);
 int SecMan::sec_man_ref_count = 0;
 char* SecMan::_my_unique_id = 0;
 char* SecMan::_my_parent_unique_id = 0;
@@ -2225,7 +2225,7 @@ SecManStartCommand::receivePostAuthInfo_inner()
 				}
 
 				// NOTE: HashTable returns ZERO on SUCCESS!!!
-				if (m_sec_man.command_map.insert(keybuf, sesid) == 0) {
+				if (m_sec_man.command_map.insert(keybuf, sesid, true) == 0) {
 					// success
 					if (IsDebugVerbose(D_SECURITY)) {
 						dprintf (D_SECURITY, "SECMAN: command %s mapped to session %s.\n", keybuf.Value(), sesid);
@@ -2826,44 +2826,6 @@ SecMan::invalidateExpiredCache()
 	}
 }
 
-/*
-
-			// a failure here signals that the cache may be invalid.
-			// delete this entry from table and force normal auth.
-			KeyCacheEntry * ek = NULL;
-			if (session_cache->lookup(keybuf, ek) == 0) {
-				delete ek;
-			} else {
-				dprintf (D_SECURITY, "SECMAN: unable to delete KeyCacheEntry.\n");
-			}
-			session_cache->remove(keybuf);
-			m_have_session = false;
-
-			// close this connection and start a new one
-			if (!sock->close()) {
-				dprintf ( D_ALWAYS, "SECMAN: could not close socket to %s\n",
-						sin_to_string(sock->peer_addr()));
-				return false;
-			}
-
-			KeyInfo* nullp = 0;
-			if (!sock->set_crypto_key(false, nullp)) {
-				dprintf ( D_ALWAYS, "SECMAN: could not re-init crypto!\n");
-				return false;
-			}
-			if (!sock->set_MD_mode(MD_OFF, nullp)) {
-				dprintf ( D_ALWAYS, "SECMAN: could not re-init MD5!\n");
-				return false;
-			}
-			if (!sock->connect(sock->get_connect_addr(), 0)) {
-				dprintf ( D_ALWAYS, "SECMAN: could not reconnect to %s.\n",
-						sin_to_string(sock->peer_addr()));
-				return false;
-			}
-
-			goto choose_action;
-*/
-
 
 MyString SecMan::getDefaultAuthenticationMethods() {
 	MyString methods;
@@ -3155,7 +3117,7 @@ SecMan::CreateNonNegotiatedSecuritySession(DCpermission auth_level, char const *
 		}
 
 		// NOTE: HashTable returns ZERO on SUCCESS!!!
-		if (command_map.insert(keybuf, sesid) == 0) {
+		if (command_map.insert(keybuf, sesid, true) == 0) {
 			// success
 			if (IsDebugVerbose(D_SECURITY)) {
 				dprintf (D_SECURITY, "SECMAN: command %s mapped to session %s.\n", keybuf.Value(), sesid);

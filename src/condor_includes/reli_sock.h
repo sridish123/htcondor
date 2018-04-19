@@ -56,6 +56,7 @@ class BlockingModeGuard;
 class ReliSock : public Sock {
 	friend class Authentication;
 	friend class BlockingModeGuard;
+	friend class DockerProc;
 
 //	PUBLIC INTERFACE TO RELIABLE SOCKS
 //
@@ -143,7 +144,7 @@ public:
 	int accept(ReliSock *);
 
     ///
-	int put_line_raw( char *buffer );
+	int put_line_raw( const char *buffer );
     ///
 	int get_line_raw( char *buffer, int max_length );
     ///
@@ -151,7 +152,7 @@ public:
     ///
 	int get_bytes_raw( char *buffer, int length );
     ///
-	int put_bytes_nobuffer(char *buf, int length, int send_size=1);
+	int put_bytes_nobuffer(const char *buf, int length, int send_size=1);
     ///
 	int get_bytes_nobuffer(char *buffer, int max_length, int receive_size=1);
 
@@ -249,6 +250,7 @@ public:
 	//
     ///
 	virtual int put_bytes(const void *, int);
+	int put_bytes_after_encryption(const void *, int);
     ///
 	virtual int get_bytes(void *, int);
     ///

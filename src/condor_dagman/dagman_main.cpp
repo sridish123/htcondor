@@ -100,6 +100,7 @@ static void Usage() {
 #define MAX_IDLE_DEFAULT 1000
 #define MAX_SUBMITS_PER_INT_DEFAULT 5
 #define LOG_SCAN_INT_DEFAULT 5
+#define SCHEDD_UPDATE_INTERVAL_DEFAULT 120
 
 Dagman::Dagman() :
 	dag (NULL),
@@ -115,6 +116,7 @@ Dagman::Dagman() :
 	max_submits_per_interval (MAX_SUBMITS_PER_INT_DEFAULT), // so Coverity is happy
 	aggressive_submit (false),
 	m_user_log_scan_interval (LOG_SCAN_INT_DEFAULT),
+	schedd_update_interval (SCHEDD_UPDATE_INTERVAL_DEFAULT),
 	primaryDagFile (""),
 	multiDags (false),
 	startup_cycle_detect (false), // so Coverity is happy
@@ -243,6 +245,12 @@ Dagman::Config()
 		m_user_log_scan_interval, 1, INT_MAX);
 	debug_printf( DEBUG_NORMAL, "DAGMAN_USER_LOG_SCAN_INTERVAL setting: %d\n",
 				m_user_log_scan_interval );
+
+	schedd_update_interval =
+			param_integer( "DAGMAN_QUEUE_UPDATE_INTERVAL",
+			schedd_update_interval, 1, INT_MAX);
+		debug_printf( DEBUG_NORMAL, "DAGMAN_QUEUE_UPDATE_INTERVAL setting: %d\n",
+		schedd_update_interval );
 
 	_priority = param_integer( "DAGMAN_DEFAULT_PRIORITY",
 				_priority, INT_MIN, INT_MAX, false );
@@ -501,12 +509,22 @@ main_shutdown_fast()
 // shutdown gracefully; this also gets called if condor_hold is done
 // on the DAGMan job
 void main_shutdown_graceful() {
-	print_status();
+	print_status( true );
 	dagman.dag->DumpNodeStatus( true, false );
 	dagman.dag->GetJobstateLog().WriteDagmanFinished( EXIT_RESTART );
 	// Don't report metrics here because we should restart.
 	dagman.CleanUp();
 	DC_Exit( EXIT_RESTART );
+}
+
+// Special case shutdown when the log file gets corrupted
+void main_shutdown_logerror() {
+	print_status();
+	dagman.dag->DumpNodeStatus( true, false );
+	dagman.dag->GetJobstateLog().WriteDagmanFinished( EXIT_ABORT );
+	if (dagman.dag) dagman.dag->ReportMetrics( EXIT_ABORT );
+	dagman.CleanUp();
+	DC_Exit( EXIT_ABORT );
 }
 
 void main_shutdown_rescue( int exitVal, Dag::dag_status dagStatus,
@@ -566,12 +584,13 @@ void main_shutdown_rescue( int exitVal, Dag::dag_status dagStatus,
 			inShutdownRescue = false;
 			return;
 		}
-		print_status();
+		print_status( true );
 		bool removed = ( dagStatus == Dag::DAG_STATUS_RM );
 		dagman.dag->DumpNodeStatus( false, removed );
 		dagman.dag->GetJobstateLog().WriteDagmanFinished( exitVal );
 	}
 	if (dagman.dag) dagman.dag->ReportMetrics( exitVal );
+	dagman.PublishStats();
 	tolerant_unlink( lockFileName ); 
 	dagman.CleanUp();
 	inShutdownRescue = false;
@@ -591,10 +610,11 @@ int main_shutdown_remove(Service *, int) {
 }
 
 void ExitSuccess() {
-	print_status();
+	print_status( true );
 	dagman.dag->DumpNodeStatus( false, false );
 	dagman.dag->GetJobstateLog().WriteDagmanFinished( EXIT_OKAY );
 	dagman.dag->ReportMetrics( EXIT_OKAY );
+	dagman.PublishStats();
 	tolerant_unlink( lockFileName ); 
 	dagman.CleanUp();
 	DC_Exit( EXIT_OKAY );
@@ -1492,7 +1512,17 @@ Dagman::ResolveDefaultLog()
 }
 
 void
-print_status() {
+Dagman::PublishStats() {
+	ClassAd statsAd;
+	MyString statsString;
+	dagman._dagmanStats.Publish(statsAd);
+	sPrintAd( statsString, statsAd );
+	statsString.replaceString("\n", "; ");
+	debug_printf( DEBUG_VERBOSE, "DAGMan Runtime Statistics: [ %s]\n", statsString.Value() );
+}
+
+void
+print_status( bool forceScheddUpdate ) {
 	debug_printf( DEBUG_VERBOSE, "DAG status: %d (%s)\n",
 				dagman.dag->_dagStatus,
 				dagman.dag->GetStatusName() );
@@ -1518,10 +1548,24 @@ print_status() {
 				dagman.dag->NumHeldJobProcs() );
 	dagman.dag->PrintDeferrals( DEBUG_VERBOSE, false );
 
-	if ( dagman._dagmanClassad ) {
-		dagman._dagmanClassad->Update( total, done, pre, submitted, post,
-					ready, failed, unready, dagman.dag->_dagStatus,
-					dagman.dag->Recovery() );
+	dagman.PublishStats();
+
+	// Set up a static double to track the last schedd update time. On the first
+	// iteration we'll set it to the current time. On subsequent iterations it 
+	// will only be updated when we call a schedd update.
+	double currentTime = condor_gettimestamp_double();
+	static double scheddLastUpdateTime = 0.0;
+	if ( scheddLastUpdateTime <= 0.0 ) {
+		scheddLastUpdateTime = currentTime;
+	}
+	
+	if( forceScheddUpdate || ( currentTime > ( scheddLastUpdateTime + (double) dagman.schedd_update_interval ) ) ) {
+		if ( dagman._dagmanClassad ) {
+			dagman._dagmanClassad->Update( total, done, pre, submitted, post,
+						ready, failed, unready, dagman.dag->_dagStatus,
+						dagman.dag->Recovery(), dagman._dagmanStats );
+		}
+		scheddLastUpdateTime = currentTime;
 	}
 }
 
@@ -1551,13 +1595,42 @@ void condor_event_timer () {
     static int prevJobsSubmitted = 0;
     static int prevJobsReady = 0;
     static int prevScriptRunNodes = 0;
-    static int prevJobsHeld = 0;
+	static int prevJobsHeld = 0;
+	
+	static double eventTimerStartTime = 0;
+	static double eventTimerEndTime = 0;
+	
+	double logProcessCycleStartTime;
+	double logProcessCycleEndTime;
+	double submitCycleStartTime;
+	double submitCycleEndTime;
+
+	// Gather some statistics
+	eventTimerStartTime = condor_gettimestamp_double();
+	if(eventTimerEndTime > 0) {
+		dagman._dagmanStats.SleepCycleTime.Add(eventTimerStartTime - eventTimerEndTime);
+	}
+	
 
 	dagman.dag->RunWaitingScripts();
 
+	// Before submitting ready jobs, check the user log for errors or shrinking.
+	// If either happens, this is really really bad! Bail out immediately.
+	ReadUserLog::FileStatus log_status = dagman.dag->GetCondorLogStatus();
+	if( log_status == ReadUserLog::LOG_STATUS_ERROR || log_status == ReadUserLog::LOG_STATUS_SHRUNK ) {
+		debug_printf( DEBUG_NORMAL, "DAGMan exiting due to error in log file\n" );
+		dagman.dag->PrintReadyQ( DEBUG_DEBUG_1 );
+		dagman.dag->_dagStatus = Dag::DAG_STATUS_ERROR;
+		main_shutdown_logerror();
+		return;
+	}
+
 	int justSubmitted;
 	debug_printf( DEBUG_DEBUG_1, "Starting submit cycle\n" );
+	submitCycleStartTime = condor_gettimestamp_double();
 	justSubmitted = dagman.dag->SubmitReadyJobs(dagman);
+	submitCycleEndTime = condor_gettimestamp_double();
+	dagman._dagmanStats.SubmitCycleTime.Add(submitCycleEndTime - submitCycleStartTime);
 	debug_printf( DEBUG_DEBUG_1, "Finished submit cycle\n" );
 	if( justSubmitted ) {
 			// Note: it would be nice to also have the proc submit
@@ -1566,8 +1639,9 @@ void condor_event_timer () {
 				  	justSubmitted, justSubmitted == 1 ? "" : "s" );
 	}
 
-	// If the log has grown
-	if( dagman.dag->DetectCondorLogGrowth() ) {
+	// Check log status for growth. If it grew, process log events.
+	if( log_status == ReadUserLog::LOG_STATUS_GROWN ) {
+		logProcessCycleStartTime = condor_gettimestamp_double();
 		if( dagman.dag->ProcessLogEvents() == false ) {
 			debug_printf( DEBUG_NORMAL,
 						"ProcessLogEvents() returned false\n" );
@@ -1575,6 +1649,8 @@ void condor_event_timer () {
 			main_shutdown_rescue( EXIT_ERROR, Dag::DAG_STATUS_ERROR );
 			return;
 		}
+		logProcessCycleEndTime = condor_gettimestamp_double();
+		dagman._dagmanStats.LogProcessCycleTime.Add(logProcessCycleEndTime - logProcessCycleStartTime);
 	}
 
     // print status if anything's changed (or we're in a high debug level)
@@ -1698,7 +1774,12 @@ void condor_event_timer () {
 
 		main_shutdown_rescue( EXIT_ERROR, dagStatus );
 		return;
-    }
+	}
+	
+	// Statistics gathering
+	eventTimerEndTime = condor_gettimestamp_double();
+	dagman._dagmanStats.EventCycleTime.Add(eventTimerEndTime - eventTimerStartTime);
+
 }
 
 

@@ -500,32 +500,26 @@ MSC_RESTORE_WARNING(6052) // call to snprintf might not null terminate string.
  *--------------------------------------------------------------------*/
 
 MyString 
-MyString::Substr(int pos1, int pos2) const 
+MyString::substr(int pos, int len) const
 {
     MyString S;
 
-	if (Len <= 0) {
+	if ( pos >= Len || len <= 0 ) {
 	    return S;
 	}
-
-    if (pos2 >= Len) {
-		pos2 = Len - 1;
+	if ( pos < 0 ) {
+		pos = 0;
 	}
-    if (pos1 < 0) {
-		pos1=0;
+	if ( pos + len > Len ) {
+		len = Len - pos;
 	}
-    if (pos1 > pos2) {
-		return S;
-	}
-    int len = pos2-pos1+1;
-    char* tmp = new char[len+1];
-    strncpy(tmp,Data+pos1,len);
-    tmp[len]='\0';
-    S=tmp;
-    delete[] tmp;
+	S.reserve( len );
+	strncpy( S.Data, Data+pos, len );
+	S.Data[len] = '\0';
+	S.Len = len;
     return S;
 }
-    
+
 // this function escapes characters by putting some other
 // character before them.  it does NOT convert newlines to
 // the two chars '\n'.
@@ -572,17 +566,6 @@ MyString::FindChar(int Char, int FirstPos) const
     return tmp-Data;
 }
 
-unsigned int 
-MyString::Hash() const 
-{
-	int i;
-	unsigned int result = 0;
-	for(i = 0; i < Len; i++) {
-		result = (result<<5) + result + (unsigned char)Data[i];
-	}
-	return result;
-}	  
- 
 // returns the index of the first match, or -1 for no match found
 int 
 MyString::find(const char *pszToFind, int iStartPos) const
@@ -785,7 +768,7 @@ MyString::trim( void )
 	while ( end >= 0 && isspace(Data[end]) ) { --end; }
 
 	if ( begin != 0 || end != Length() - 1 ) {
-		*this = Substr(begin, end);
+		*this = substr(begin, 1 + end - begin);
 	}
 }
 
@@ -796,12 +779,10 @@ MyString::trim_quotes(const char * quote_chars)
 	if( Len < 2 ) {
 		return 0;
 	}
-	int begin = 0;
-	char ch = Data[begin];
+	char ch = Data[0];
 	if (strchr(quote_chars, ch)) {
-		int end = Length() -1;
-		if (end > begin && Data[end] == ch) {
-			*this = Substr(begin+1, end-1);
+		if (Data[Len - 1] == ch) {
+			*this = substr(1, Len - 2);
 			return ch;
 		}
 	}
@@ -1216,18 +1197,6 @@ MyStringTokener::GetNextToken(const char *delim, bool skipBlankTokens)
 
 /*--------------------------------------------------------------------
  *
- * Private
- *
- *--------------------------------------------------------------------*/
-
-unsigned int MyStringHash( const MyString &str )
-{
-	return str.Hash();
-}
-
-
-/*--------------------------------------------------------------------
- *
  * YourString
  *
  *--------------------------------------------------------------------*/
@@ -1255,34 +1224,6 @@ bool YourString::operator<(const YourString &rhs) const {
 	if ( ! m_str) { return rhs.m_str ? true : false; }
 	else if ( ! rhs.m_str) { return false; }
 	return strcmp(m_str, rhs.m_str) < 0;
-}
-unsigned int YourString::hashFunction(const YourString &s) {
-	// hash function for strings
-	// Chris Torek's world famous hashing function
-	unsigned int hash = 0;
-	if (!s.m_str) return 7; // Least random number
-
-	const char *p = s.m_str;
-	while (*p) {
-		hash = (hash<<5)+hash + (unsigned char)*p;
-		p++;
-	}
-
-	return hash;
-}
-unsigned int YourString::hashFunctionNoCase(const YourString &s) {
-	// hash function for strings
-	// Chris Torek's world famous hashing function
-	unsigned int hash = 0;
-	if (!s.m_str) return 7; // Least random number
-
-	const char *p = s.m_str;
-	while (*p) {
-		hash = (hash<<5)+hash + (unsigned char)(*p & ~0x20);
-		p++;
-	}
-
-	return hash;
 }
 
 

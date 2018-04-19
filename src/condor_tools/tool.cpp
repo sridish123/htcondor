@@ -81,7 +81,7 @@ bool IgnoreMissingDaemon = false;
 
 bool all_good = true;
 
-HashTable<MyString, bool> addresses_sent( 100, MyStringHash );
+HashTable<MyString, bool> addresses_sent( hashFunction );
 
 // The pure-tools (PureCoverage, Purify, etc) spit out a bunch of
 // stuff to stderr, which is where we normally put our error
@@ -160,9 +160,6 @@ usage( const char *str, int iExitCode )
 		fprintf( stderr, "    -collector\n" );
 		fprintf( stderr, "    -negotiator\n" );
 		fprintf( stderr, "    -kbdd\n" );
-#ifdef HAVE_EXT_POSTGRESQL
-		fprintf( stderr, "    -quill\n" );
-#endif
 	}
 	fprintf( stderr, "\n" );
 
@@ -433,12 +430,6 @@ main( int argc, char *argv[] )
 		case 'v':
 			version();
 			break;
-#ifdef HAVE_EXT_POSTGRESQL
-		case 'q':
-			subsys_check( MyName );
-			dt = DT_QUILL;
-			break;
-#endif
 		case 'h':
 			usage( MyName, 0 );
 			break;
@@ -1268,12 +1259,6 @@ resolveNames( DaemonList* daemon_list, StringList* name_list, StringList* unreso
 	case DT_CREDD:
 		adtype = CREDD_AD;
 		break;
-	case DT_QUILL:
-		adtype = QUILL_AD;
-		break;
-	case DT_LEASE_MANAGER:
-		adtype = LEASE_MANAGER_AD;
-		break;
 	case DT_GENERIC:
 		adtype = GENERIC_AD;
 		break;
@@ -1533,7 +1518,6 @@ doCommand( Daemon* d )
 			continue;
 		}
 
-		char	*psubsys = const_cast<char *>(subsys);
 		switch(real_cmd) {
 		case VACATE_CLAIM:
 			if( is_per_claim_startd_cmd ) {
@@ -1592,7 +1576,7 @@ doCommand( Daemon* d )
 			if( !d->startCommand( my_cmd, &sock, 0, &errstack) ) {
 				fprintf( stderr, "ERROR\n%s\n", errstack.getFullText(true).c_str() );
 			}
-			if( !sock.code( psubsys ) || !sock.end_of_message() ) {
+			if( !sock.put( subsys ) || !sock.end_of_message() ) {
 				fprintf( stderr, "Can't send %s command to %s\n",
 							cmdToStr(my_cmd), d->idStr() );
 				all_good = false;
@@ -1606,7 +1590,7 @@ doCommand( Daemon* d )
 			if( !d->startCommand(my_cmd, &sock, 0, &errstack) ) {
 				fprintf( stderr, "ERROR\n%s\n", errstack.getFullText(true).c_str() );
 			}
-			if( !sock.code( psubsys ) || !sock.end_of_message() ) {
+			if( !sock.put( subsys ) || !sock.end_of_message() ) {
 				fprintf( stderr, "Can't send %s command to %s\n",
 						 cmdToStr(my_cmd), d->idStr() );
 				all_good = false;
@@ -1660,11 +1644,10 @@ doCommand( Daemon* d )
 			break;
 		case SET_SHUTDOWN_PROGRAM:
 		{
-			char	*pexec = const_cast<char *>(exec_program); 
 			if( !d->startCommand(my_cmd, &sock, 0, &errstack) ) {
 				fprintf( stderr, "ERROR\n%s\n", errstack.getFullText(true).c_str() );
 			}
-			if( !sock.code( pexec ) || !sock.end_of_message() ) {
+			if( !sock.put( exec_program ) || !sock.end_of_message() ) {
 				fprintf( stderr, "Can't send %s command to %s\n",
 						 cmdToStr(my_cmd), d->idStr() );
 				all_good = false;
@@ -1910,6 +1893,7 @@ handleSquawk( char *line, char *addr ) {
 			return TRUE;
 		}
 			/* Generic help falls thru to here: */
+			//@fallthrough@
 	default:
 		printf( "Valid commands are \"help\", \"signal\", \"command\"," );
 		printf( "\"reconnect\",\n\"dump\" (state into a ClassAd) and" );

@@ -26,6 +26,7 @@
 
 #include <set>
 #include <algorithm>
+#include <sstream>
 
 #ifdef WIN32
 #include "winreg.windows.h"
@@ -1340,18 +1341,20 @@ CpuAttributes::compute( amask_t how_much )
 	if( IS_TIMEOUT(how_much) && !IS_SHARED(how_much) ) {
 
 		// Dynamic, non-shared attributes we need to actually compute
-		c_condor_load = rip->compute_condor_load();
+
+		// Update the Cpus and Memory usage values of the starter on the active claim
+		// and compute the condor load average from those numbers.
+		c_condor_load = rip->compute_condor_usage();
 
 			// If the admin is forcing DISK via param, set that here,
 			// else calculate current free disk space for exec partition
 		long long temp_disk = -1;
-		char *disk_as_str = param("DISK");
+		auto_free_ptr disk_as_str(param("DISK"));
 		if (disk_as_str && string_is_long_param(disk_as_str, temp_disk)) {
-			free(disk_as_str);
 			c_total_disk = temp_disk;
 		} else {
 			// only calculate total_disk once
-			if ((c_total_disk == 0) || (param_boolean("STARTD_RECOMPUTE_DISK_FREE", true))) {
+			if ((c_total_disk == 0) || (param_boolean("STARTD_RECOMPUTE_DISK_FREE", false))) {
 				c_total_disk = sysapi_disk_space(rip->executeDir());
 			}
 		}
@@ -1542,7 +1545,7 @@ CpuAttributes::operator-=( CpuAttributes& rhs )
 }
 
 AvailAttributes::AvailAttributes( MachAttributes* map ):
-	m_execute_partitions(500,MyStringHash,updateDuplicateKeys)
+	m_execute_partitions(hashFunction)
 {
 	a_num_cpus = map->num_cpus();
 	a_num_cpus_auto_count = 0;

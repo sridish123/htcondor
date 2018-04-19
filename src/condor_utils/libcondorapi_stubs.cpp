@@ -241,7 +241,6 @@ Stream::~Stream(){};
 	int Stream::code(float &){ return not_impl(); }
 	int Stream::code(double &){ return not_impl(); }
 	int Stream::code(char *&){ return not_impl(); }
-	int Stream::code(char *&, int &){ return not_impl(); }
 	int Stream::code_bytes(void *, int ){ return not_impl(); }
 	int Stream::code_bytes_bool(void *, int ){ return not_impl(); }
 	int Stream::code(PROC_ID &){ return not_impl(); }
@@ -268,6 +267,7 @@ Stream::~Stream(){};
 #endif
 void Stream::allow_one_empty_message() { not_impl(); }
 int Stream::put(char const *){ return not_impl(); }
+int Stream::put(char const *, int){ return not_impl(); }
 int Stream::get(char *&){ return not_impl(); }
 int Stream::get(char *,int ){ return not_impl(); }
 int Stream::get(MyString&){ return not_impl(); }
@@ -278,7 +278,6 @@ void Stream::prepare_crypto_for_secret(){not_impl();}
 void Stream::restore_crypto_after_secret(){not_impl();}
 bool Stream::prepare_crypto_for_secret_is_noop() const{not_impl();return true;}
 bool Stream::set_crypto_mode(bool /*enabled*/){not_impl();return false;}
-bool Stream::get_encryption() const{not_impl();return false;}
 int Stream::put_secret( char const * /*s*/ ){not_impl();return 0;}
 int Stream::get_secret( char *& /*s*/ ){not_impl();return 0;}
 int Stream::get_secret( const char *& /*s*/, int & /*len*/ ){not_impl();return 0;}
@@ -354,18 +353,6 @@ CondorQuery::~CondorQuery() {}
 
 const char*
 my_ip_string() {not_impl(); return 0;}
-
-void ConvertDefaultIPToSocketIP(char const *,char const *,char **,Stream& ) {
-	not_impl();
-}
-
-void ConvertDefaultIPToSocketIP(char const *,char **,Stream& ) {
-	not_impl();
-}
-
-void ConvertDefaultIPToSocketIP(char const *,std::string &,Stream&) {
-	not_impl();
-}
 
 #include "Regex.h"
 

@@ -39,11 +39,6 @@ extern bool offlineMode;
 extern bool compactMode;
 
 static int stashed_now = 0;
-
-#ifdef HAVE_EXT_POSTGRESQL
-void printQuillNormal 	(ClassAd *);
-#endif /* HAVE_EXT_POSTGRESQL */
-
 const int cchReserveForPrintingAds = 16384;
 
 void printCOD    		(ClassAd *);
@@ -53,18 +48,18 @@ void printJSON       	(ClassAd &, bool first_ad, classad::References * attrs=NUL
 void printNewClassad	(ClassAd &, bool first_ad, classad::References * attrs=NULL);
 void printCustom    	(ClassAd *);
 
-static bool renderActivityTime(long long & atime, AttrList* , Formatter &);
-static bool renderActivityCode(std::string & str, AttrList* , Formatter &);
-static bool renderDueDate(long long & atime, AttrList* , Formatter &);
-static bool renderElapsedTime(long long & etime, AttrList* , Formatter &);
-static bool renderVersion(std::string & str, AttrList*, Formatter & fmt);
-static bool renderCondorPlatform(std::string & str, AttrList*, Formatter & fmt);
-static bool renderPlatform(std::string & str, AttrList*, Formatter & fmt);
+static bool renderActivityTime(long long & atime, ClassAd* , Formatter &);
+static bool renderActivityCode(std::string & str, ClassAd* , Formatter &);
+static bool renderDueDate(long long & atime, ClassAd* , Formatter &);
+static bool renderElapsedTime(long long & etime, ClassAd* , Formatter &);
+static bool renderVersion(std::string & str, ClassAd*, Formatter & fmt);
+static bool renderCondorPlatform(std::string & str, ClassAd*, Formatter & fmt);
+static bool renderPlatform(std::string & str, ClassAd*, Formatter & fmt);
 static const char* formatVersion(const char * condorver, Formatter &);
 static const char *formatRealTime( long long , Formatter &);
 static const char *formatRealDate( long long , Formatter &);
 static const char *formatLoadAvg (double, Formatter &);
-static bool renderStringsFromList( classad::Value &, AttrList*, Formatter & );
+static bool renderStringsFromList( classad::Value &, ClassAd*, Formatter & );
 
 static const char *
 format_readable_mb(const classad::Value &val, Formatter &)
@@ -308,7 +303,7 @@ ppOption PrettyPrinter::prettyPrintHeadings (bool any_ads)
 {
 	ppOption pps = ppStyle;
 	bool no_headings = wantOnlyTotals || ! any_ads;
-	bool old_headings = (pps == PP_STARTD_COD) || (pps == PP_QUILL_NORMAL);
+	bool old_headings = (pps == PP_STARTD_COD);
 	bool long_form = PP_IS_LONGish(pps);
 	const char * newline_after_headings = "\n";
 	if ((pps == PP_CUSTOM) || using_print_format) {
@@ -416,11 +411,6 @@ void PrettyPrinter::prettyPrintAd(ppOption pps, ClassAd *ad, int output_index, S
 		case PP_CUSTOM:
 			printCustom (ad);
 			break;
-	#ifdef HAVE_EXT_POSTGRESQL
-		case PP_QUILL_NORMAL:
-			printQuillNormal (ad);
-			break;
-	#endif /* HAVE_EXT_POSTGRESQL */
 		default:
 			pm.display(stdout, ad);
 			break;
@@ -453,7 +443,7 @@ extractStringsFromList( const classad::Value & value, Formatter &, std::string &
 	return prettyList.c_str();
 }
 
-bool renderStringsFromList( classad::Value & value, AttrList*, Formatter & fmt )
+bool renderStringsFromList( classad::Value & value, ClassAd*, Formatter & fmt )
 {
 	if( ! value.IsListValue() ) {
 		return false;
@@ -512,7 +502,7 @@ extractUniqueStrings( const classad::Value & value, Formatter &, std::string &li
 	return list_out.c_str();
 }
 
-bool renderUniqueStrings( classad::Value & value, AttrList*, Formatter & fmt )
+bool renderUniqueStrings( classad::Value & value, ClassAd*, Formatter & fmt )
 {
 	if( ! value.IsListValue() ) {
 		return false;
@@ -829,37 +819,6 @@ printCOD (ClassAd *ad)
 		}
 	}
 }
-
-#ifdef HAVE_EXT_POSTGRESQL
-void
-printQuillNormal (ClassAd *ad) {
-	static bool first = true;
-	static AttrListPrintMask alpm;
-
-	if (ad)
-	{
-		// print header if necessary
-		if (first)
-		{
-			printf ("\n%-20.20s %-10.10s %-16.16s %-18.18s\n\n",
-				ATTR_NAME, ATTR_MACHINE, ATTR_QUILL_SQL_TOTAL,
-				ATTR_QUILL_SQL_LAST_BATCH);
-
-			alpm.registerFormat("%-20.20s ", ATTR_NAME,
-													"[??????????????????] ");
-			alpm.registerFormat("%-10.10s ", ATTR_MACHINE,
-													"[????????] ");
-			alpm.registerFormat("%16d ",ATTR_QUILL_SQL_TOTAL,
-													"[??????????????] ");
-			alpm.registerFormat("%18d\n",ATTR_QUILL_SQL_LAST_BATCH,
-													"[???????????]\n");
-			first = false;
-		}
-
-		alpm.display (stdout, ad);
-	}
-}
-#endif /* HAVE_EXT_POSTGRESQL */
 
 const char * const scheddNormal_PrintFormat = "SELECT\n"
 	"Name           AS Name         WIDTH AUTO\n"
@@ -1343,13 +1302,6 @@ void PrettyPrinter::ppInitPrintMask(ppOption pps, classad::References & proj, co
 		ppSetStateCols(display_width);
 		break;
 
-		case PP_QUILL_NORMAL:
-		#ifdef HAVE_EXT_POSTGRESQL
-			PRAGMA_REMIND("QUILL format needs conversion to ppSetQuillNormalCols")
-		ppSetQuillNormalCols(display_width);
-		#endif /* HAVE_EXT_POSTGRESQL */
-		break;
-
 		case PP_SCHEDD_NORMAL:
 		name_width = ppSetScheddNormalCols(display_width, machine_width);
 		machine_flags = name_flags = FormatOptionAutoWidth;
@@ -1433,7 +1385,7 @@ formatLoadAvg (double fl, Formatter &)
 }
 
 static bool
-renderActivityTime (long long & atime, AttrList *al, Formatter &)
+renderActivityTime (long long & atime, ClassAd *al, Formatter &)
 {
 	long long now = 0;
 	if (al->LookupInteger(ATTR_MY_CURRENT_TIME, now)
@@ -1461,7 +1413,7 @@ const char* digest_state_and_activity(char * sa, State st, Activity ac)
 }
 
 static bool
-renderActivityCode (std::string & act, AttrList *al, Formatter &)
+renderActivityCode (std::string & act, ClassAd *al, Formatter &)
 {
 
 	char sa[4] = "  ";
@@ -1491,7 +1443,7 @@ renderActivityCode (std::string & act, AttrList *al, Formatter &)
 }
 
 static bool
-renderDueDate (long long & dt, AttrList *al, Formatter &)
+renderDueDate (long long & dt, ClassAd *al, Formatter &)
 {
 	long long now;
 	if (al->LookupInteger(ATTR_LAST_HEARD_FROM , now)) {
@@ -1502,7 +1454,7 @@ renderDueDate (long long & dt, AttrList *al, Formatter &)
 }
 
 static bool
-renderElapsedTime (long long & tm, AttrList *al , Formatter &)
+renderElapsedTime (long long & tm, ClassAd *al , Formatter &)
 {
 	long long now;
 	if (al->LookupInteger(ATTR_LAST_HEARD_FROM, now)) {
@@ -1562,7 +1514,7 @@ formatVersion(const char * condorver, Formatter & fmt)
 	return ret;
 }
 
-static bool renderVersion(std::string & str, AttrList*, Formatter & fmt)
+static bool renderVersion(std::string & str, ClassAd*, Formatter & fmt)
 {
 	if ( ! str.empty()) {
 		str = formatVersion(str.c_str(), fmt);
@@ -1572,7 +1524,7 @@ static bool renderVersion(std::string & str, AttrList*, Formatter & fmt)
 }
 
 // reduce CondorPlatform attribute to a more useful string
-static bool renderCondorPlatform(std::string & str, AttrList*, Formatter & /*fmt*/)
+static bool renderCondorPlatform(std::string & str, ClassAd*, Formatter & /*fmt*/)
 {
 	if ( ! str.empty()) {
 		size_t ix = str.find_first_of(' ');
@@ -1593,7 +1545,7 @@ static bool renderCondorPlatform(std::string & str, AttrList*, Formatter & /*fmt
 }
 
 bool platform_includes_arch = true;
-bool renderPlatformName(std::string & str, AttrList* al)
+bool renderPlatformName(std::string & str, ClassAd* al)
 {
 	std::string opsys, arch;
 	bool got_name = false;
@@ -1617,7 +1569,7 @@ bool renderPlatformName(std::string & str, AttrList* al)
 	return false;
 }
 // render Arch, OpSys, OpSysAndVer and OpSysShortName into a NMI style platform string
-static bool renderPlatform(std::string & str, AttrList* al, Formatter & /*fmt*/)
+static bool renderPlatform(std::string & str, ClassAd* al, Formatter & /*fmt*/)
 {
 	return renderPlatformName(str, al);
 }

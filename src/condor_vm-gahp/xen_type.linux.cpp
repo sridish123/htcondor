@@ -128,7 +128,7 @@ VirshType::Start()
 			vmprintf(D_ALWAYS, "Succeeded to restart with checkpointed files\n");
 
 			// Here we manually update timestamp of all writable disk files
-			m_start_time.getTime();
+			m_start_time = time(NULL);
 			return true;
 		}else {
 			// Failed to restart with checkpointed files
@@ -160,6 +160,11 @@ VirshType::Start()
 	    // was
 	    virErrorPtr err = virConnGetLastError(m_libvirt_connection);
 	    vmprintf(D_ALWAYS, "Failed to create libvirt domain: %s\n", (err ? err->message : "No reason found"));
+
+	    if (err && err->message && (strstr(err->message, "image is not in qcow2 format") != NULL)) {
+			m_result_msg = VMGAHP_ERR_BAD_IMAGE;
+		}
+
 	    //virFreeError(err);
 	    return false;
 	  }
@@ -170,7 +175,7 @@ VirshType::Start()
 	set_priv(priv);
 
 	setVMStatus(VM_RUNNING);
-	m_start_time.getTime();
+	m_start_time = time(NULL);
 	m_cpu_time = 0;
 
 	// Here we manually update timestamp of all writable disk files
@@ -258,7 +263,7 @@ VirshType::Shutdown()
 	}
 
 	setVMStatus(VM_STOPPED);
-	m_stop_time.getTime();
+	m_stop_time = time(NULL);
 	return true;
 }
 
@@ -333,7 +338,9 @@ bool VirshType::CreateVirshConfigFile(const char*  /*filename*/)
   if(tmp != NULL)
     {
       MyString errormsg;
-      args.AppendArgsV1RawOrV2Quoted(tmp,&errormsg);
+      if (!args.AppendArgsV1RawOrV2Quoted(tmp,&errormsg)) {
+		vmprintf(D_ALWAYS, "Cannot parse LIBVIRT_XML_SCRIPT_ARGS: %s\n", tmp);
+	  }
       free(tmp);
     }
   StringList input_strings, output_strings, error_strings;
@@ -656,7 +663,7 @@ VirshType::Status()
 					}
 					if(getVMStatus() != VM_STOPPED) {
 						setVMStatus(VM_STOPPED);
-						m_stop_time.getTime();
+						m_stop_time = time(NULL);
 					}
 					m_result_msg += "Stopped";
 					return true;
@@ -672,7 +679,7 @@ VirshType::Status()
 						}
 						if(getVMStatus() != VM_STOPPED) {
 							setVMStatus(VM_STOPPED);
-							m_stop_time.getTime();
+							m_stop_time = time(NULL);
 						}
 						m_result_msg += "Stopped";
 						return true;
@@ -764,7 +771,7 @@ VirshType::Status()
 	    if(getVMStatus() != VM_STOPPED)
 	      {
 		setVMStatus(VM_STOPPED);
-		m_stop_time.getTime();
+		m_stop_time = time(NULL);
 	      }
 	    m_result_msg += "Stopped";
 	    virDomainFree(dom);
@@ -1445,7 +1452,7 @@ VirshType::killVMFast(const char* vmname, virConnectPtr libvirt_con)
 	    virErrorPtr err = virConnGetLastError(libvirt_con);
 	    if (err && err->code != VIR_ERR_NO_DOMAIN)
 	      {
-		vmprintf(D_ALWAYS, "Error finding domain %s: %s\n", vmname, (err ? err->message : "No reason found"));
+		vmprintf(D_ALWAYS, "Error finding domain %s: %s\n", vmname, (err->message ? err->message : "No reason found"));
 		return false;
 	      }
 	    else

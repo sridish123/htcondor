@@ -38,41 +38,6 @@ extern bool disable_user_print_files; // allow command line to defeat use of def
 extern const char * mode_constraint; // constraint expression set by setMode
 #endif
 
-// lookup table to convert condor AD type constants into strings.
-static const char * const adtype_names[] = {
-	QUILL_ADTYPE,
-	STARTD_ADTYPE,
-	SCHEDD_ADTYPE,
-	MASTER_ADTYPE,
-	GATEWAY_ADTYPE,
-	CKPT_SRVR_ADTYPE,
-	STARTD_PVT_ADTYPE,
-	SUBMITTER_ADTYPE,
-	COLLECTOR_ADTYPE,
-	LICENSE_ADTYPE,
-	STORAGE_ADTYPE,
-	ANY_ADTYPE,
-	BOGUS_ADTYPE,		// placeholder: NUM_AD_TYPES used wrongly to be here
-	CLUSTER_ADTYPE,
-	NEGOTIATOR_ADTYPE,
-	HAD_ADTYPE,
-	GENERIC_ADTYPE,
-	CREDD_ADTYPE,
-	DATABASE_ADTYPE,
-	DBMSD_ADTYPE,
-	TT_ADTYPE,
-	GRID_ADTYPE,
-	XFER_SERVICE_ADTYPE,
-	LEASE_MANAGER_ADTYPE,
-	DEFRAG_ADTYPE,
-	ACCOUNTING_ADTYPE,
-};
-const char * getAdTypeStr (AdTypes type) {
-	if (type < 0 || type >= (int)COUNTOF(adtype_names)) return "<Unknown type!>";
-	return adtype_names[type];
-}
-
-
 const char *
 getPPStyleStr (ppOption pps)
 {
@@ -106,7 +71,6 @@ getPPStyleStr (ppOption pps)
 		case PP_CUSTOM:			return "Custom";
 		default:				return "<Unknown!>";
 	}
-	return "<Unknown!>";
 }
 
 int PrettyPrinter::setPPstyle( ppOption pps, int arg_index, const char * argv )
@@ -130,14 +94,14 @@ int PrettyPrinter::setPPstyle( ppOption pps, int arg_index, const char * argv )
 	// If setting a 'normal' output, check to see if there is a user-defined normal output
 	if ( ! disable_user_print_files && ! explicit_format
 		&& !PP_IS_LONGish(pps) && pps != PP_CUSTOM && pps != ppStyle) {
-		MyString param_name("STATUS_DEFAULT_"); param_name += getAdTypeStr(setby.adType); param_name += "_PRINT_FORMAT_FILE";
+		MyString param_name("STATUS_DEFAULT_"); param_name += AdTypeToString(setby.adType); param_name += "_PRINT_FORMAT_FILE";
 		auto_free_ptr pf_file(param(param_name.c_str()));
 		if (pf_file) {
 			struct stat stat_buff;
 			if (0 != stat(pf_file.ptr(), &stat_buff)) {
 				// do nothing, this is not an error.
 			} else if (set_status_print_mask_from_stream(pf_file, true, &mode_constraint) < 0) {
-				fprintf(stderr, "Warning: default %s select file '%s' is invalid\n", getAdTypeStr(setby.adType), pf_file.ptr());
+				fprintf(stderr, "Warning: default %s select file '%s' is invalid\n", AdTypeToString(setby.adType), pf_file.ptr());
 			} else {
 				using_print_format = true;
 			}
@@ -168,7 +132,6 @@ const char * getOldModeStr(int sdo_mode)
 		case SDO_Startd_Avail:		return "Available (Startd)";
 		case SDO_Startd_Claimed:	return "Claimed (Startd)";
 		case SDO_Startd_Cod:		return "COD (Startd)";
-		case SDO_Quill:		return "Normal (Quill)";
 		case SDO_Schedd:	return "Normal (Schedd)";
 		case SDO_Submitters:	return "Submittors (Schedd)";
 		case SDO_Master:	return "Normal (Master)";
@@ -228,7 +191,6 @@ static const struct _sdo_mode_info {
 	SDO(SDO_Startd_Avail,  STARTD_AD, PP_STARTD_NORMAL),//  MODE_STARTD_AVAIL,
 	SDO(SDO_Startd_Claimed,STARTD_AD, PP_STARTD_RUN),	//  MODE_STARTD_RUN,
 	SDO(SDO_Startd_Cod,    STARTD_AD, PP_STARTD_COD),	//  MODE_STARTD_COD,
-	SDO(SDO_Quill,          QUILL_AD, PP_QUILL_NORMAL),	//  MODE_QUILL_NORMAL,
 	SDO(SDO_Schedd,        SCHEDD_AD, PP_SCHEDD_NORMAL),//  MODE_SCHEDD_NORMAL,
 	SDO(SDO_Schedd_Data,   SCHEDD_AD, PP_SCHEDD_DATA),     //  MODE_SCHEDD_NORMAL,
 	SDO(SDO_Schedd_Run,    SCHEDD_AD, PP_SCHEDD_RUN),      //  MODE_SCHEDD_NORMAL,
@@ -302,7 +264,7 @@ AdTypes PrettyPrinter::resetMode(int sm, int arg_index, const char * arg)
 void PrettyPrinter::dumpPPMode(FILE* out)
 {
 	const char * sdo_str = getSDOModeStr(sdo_mode);
-	const char * adtype_str = getAdTypeStr(setby.adType);
+	const char * adtype_str = AdTypeToString(setby.adType);
 	const char * style_str = getPPStyleStr(ppStyle);
 #ifdef USE_OLD_DIAGNOSTIC_NAMES
 	sdo_str = getOldModeStr(sdo_mode);
@@ -315,7 +277,7 @@ void PrettyPrinter::dumpPPMode(FILE* out)
 
 const char * PrettyPrinter::adtypeNameFromPPMode()
 {
-	return getAdTypeStr(setby.adType);
+	return AdTypeToString(setby.adType);
 }
 
 const char * paramNameFromPPMode(std::string &param_name)

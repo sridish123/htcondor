@@ -352,6 +352,12 @@ int Server::SetUpPort(u_short port)
       dprintf(D_ALWAYS, "ERROR: cannot open a server request socket\n");
       exit(CKPT_SERVER_SOCKET_ERROR);
   }
+
+  if (temp_sd < 0) {
+      dprintf(D_ALWAYS, "ERROR: cannot create server request socket\n");
+      exit(CKPT_SERVER_SOCKET_ERROR);
+  }
+
   socket_addr.set_ipv4();
   socket_addr.set_addr_any();
   socket_addr.set_port(port);
@@ -884,6 +890,13 @@ void Server::ProcessServiceReq(int             req_id,
 					close(fdc->fd);
 					return;
 				}
+
+ 				if (data_conn_sd < 0) {
+					Log("Cannot obtain a socket from server");
+					close(fdc->fd);
+					return;
+				}
+
 				server_sa.clear();
 				server_sa.set_ipv4();
 				server_sa.set_addr_any();
@@ -911,6 +924,8 @@ void Server::ProcessServiceReq(int             req_id,
 				// the reply.
 				service_reply.server_addr.s_addr = ntohl(server_addr.s_addr);
 				service_reply.port = server_sa.get_port();
+				close(data_conn_sd);
+				data_conn_sd = -1;
 			} else {
 				service_reply.server_addr.s_addr = 0;
 				service_reply.port = 0;
@@ -1012,7 +1027,7 @@ void Server::ProcessServiceReq(int             req_id,
 				key.formatstr("%s/%s/%s", inet_ntoa(shadow_IP), 
 						service_req.owner_name, service_req.file_name);
 				if (CkptClassAds) {
-					CkptClassAds->DestroyClassAd(key.Value());
+					CkptClassAds->DestroyClassAd(key);
 				}
 			}
 			break;

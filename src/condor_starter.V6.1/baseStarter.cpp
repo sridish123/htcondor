@@ -276,6 +276,7 @@ CStarter::StarterExit( int code )
 
 void CStarter::FinalCleanup()
 {
+	removeCredentials();
 	RemoveRecoveryFile();
 	removeTempExecuteDir();
 }
@@ -1073,7 +1074,7 @@ CStarter::peek(int /*cmd*/, Stream *sock)
 		size_t size = 0;
 		off_t offset = *it2;
 
-		if (it->size() && ((*it)[0] != DIR_DELIM_CHAR))
+		if ( it->size() && !fullpath(it->c_str()) )
 		{
 			*it = iwd + DIR_DELIM_CHAR + *it;
 		}
@@ -1578,9 +1579,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 	argarray = NULL;
 
 
-	ClassAd *sshd_ad = new ClassAd;
-	sshd_ad->CopyAttribute(ATTR_REMOTE_USER,jobad);
-	sshd_ad->CopyAttribute(ATTR_JOB_RUNAS_OWNER,jobad);
+	ClassAd *sshd_ad = new ClassAd(*jobad);
 	sshd_ad->Assign(ATTR_JOB_CMD,sshd.Value());
 	CondorVersionInfo ver_info;
 	if( !sshd_arglist.InsertArgsIntoClassAd(sshd_ad,&ver_info,&error_msg) ) {
@@ -1639,6 +1638,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 	}
 	if( !proc->SshStartJob(std,std_fname) ) {
 		dprintf(D_ALWAYS,"Failed to start sshd.\n");
+		delete proc;
 		return FALSE;
 	}
 	m_job_list.Append(proc);
@@ -3201,13 +3201,18 @@ CStarter::PublishToEnv( Env* proc_env )
 		}
 	}
 
+	if(param_boolean("TOKENS", false)) {
+		const char* sandbox_cred_dir = jic->getCredPath();
+		proc_env->SetEnv( "_CONDOR_CREDS", sandbox_cred_dir );
+	} else {
 		// kerberos credential cache (in sandbox)
-	const char* krb5ccname = jic->getKRB5CCNAME();
-	if( krb5ccname && (krb5ccname[0] != '\0') ) {
-		// using env_name as env_value
-		env_name = "FILE:";
-		env_name += krb5ccname;
-		proc_env->SetEnv( "KRB5CCNAME", env_name );
+		const char* krb5ccname = jic->getCredPath();
+		if( krb5ccname && (krb5ccname[0] != '\0') ) {
+			// using env_name as env_value
+			env_name = "FILE:";
+			env_name += krb5ccname;
+			proc_env->SetEnv( "KRB5CCNAME", env_name );
+		}
 	}
 
 		// path to the output ad, if any
@@ -3260,10 +3265,14 @@ CStarter::PublishToEnv( Env* proc_env )
 		// and others) look at OMP_NUM_THREADS
 		// to determine how many threads to spawn.  Force this to
 		// Cpus, to encourage jobs to stay within the number
-		// of requested cpu cores.
+		// of requested cpu cores.  But trust the user, if it has
+		// already been set in the job.
 
 	ClassAd * mach = jic->machClassAd();
-	if (mach) {
+	MyString jobNumThreads;
+
+	proc_env->GetEnv("OMP_NUM_THREADS", jobNumThreads);
+	if (mach && (jobNumThreads.Length() == 0)) {
 		int cpus = 0;
 		if (mach->LookupInteger(ATTR_CPUS, cpus)) {
 			if (cpus > 0) {
@@ -3618,6 +3627,45 @@ CStarter::updateX509Proxy( int cmd, Stream* s )
 }
 
 
+
+
+
+bool
+CStarter::removeCredentials( void )
+{
+	if (false == param_boolean("TOKENS", false)) {
+		// nothing to do...  success?
+		return true;
+	}
+
+	MyString cred_dir_name;
+	if (!param(cred_dir_name, "SEC_CREDENTIAL_DIRECTORY")) {
+		dprintf(D_ALWAYS, "CREDMON: removeCredentials doesn't have SEC_CREDENTIAL_DIRECTORY defined.\n");
+		return false;
+	}
+
+	Directory cred_dir( cred_dir_name.Value(), PRIV_ROOT );
+
+	MyString pid_name;
+	pid_name = IntToStr( daemonCore->getpid() );
+	if ( cred_dir.Find_Named_Entry( pid_name.Value() ) ) {
+		dprintf( D_FULLDEBUG, "CREDMON: Removing %s%c%s\n", cred_dir_name.Value(), DIR_DELIM_CHAR, pid_name.Value() );
+		if (!cred_dir.Remove_Current_File()) {
+			dprintf( D_ALWAYS, "CREDMON: ERROR REMOVING %s%c%s\n", cred_dir_name.Value(), DIR_DELIM_CHAR, pid_name.Value() );
+			return false;
+		}
+	} else {
+		dprintf( D_ALWAYS, "CREDMON: Couldn't find dir \"%s\" in %s\n", pid_name.Value(), cred_dir_name.Value());
+		return false;
+	}
+
+	// success
+	return true;
+}
+
+
+
+
 bool
 CStarter::removeTempExecuteDir( void )
 {
@@ -3655,32 +3703,42 @@ CStarter::removeTempExecuteDir( void )
 	}
 #endif
 
-		// Remove the directory from all possible chroots.
-	pair_strings_vector root_dirs = root_dir_list();
 	bool has_failed = false;
+
+	// since we chdir()'d to the execute directory, we can't
+	// delete it until we get out (at least on WIN32). So lets
+	// just chdir() to EXECUTE so we're sure we can remove it.
+	if (chdir(Execute)) {
+		dprintf(D_ALWAYS, "Error: chdir(%s) failed: %s\n", Execute, strerror(errno));
+	}
+
+	// Remove the directory from all possible chroots.
+	// On Windows, we expect the root_dir_list to have only a single entry - "/"
+	MyString full_exec_dir(Execute);
+	pair_strings_vector root_dirs = root_dir_list();
 	for (pair_strings_vector::const_iterator it=root_dirs.begin(); it != root_dirs.end(); ++it) {
-		const char *full_execute_dir = dirscat(it->second.c_str(), Execute);
-		if (!full_execute_dir) {
-			continue;
+		if (it->second == "/") {
+			// if the root is /, just use the execute dir.  we do this because dircat doesn't work
+			// correctly on windows when cat'ing  / + c:\condor\execute
+			full_exec_dir = Execute;
+		} else {
+			// for chroots other than the trivial one, cat the chroot to the configured execute dir
+			// we don't expect to ever get here on Windows.
+			// If we do get here on Windows, Find_Named_Entry will just fail to find a match
+			if ( ! dircat(it->second.c_str(), Execute, full_exec_dir)) {
+				continue;
+			}
 		}
-		Directory execute_dir( full_execute_dir, PRIV_ROOT );
+		Directory execute_dir( full_exec_dir.Value(), PRIV_ROOT );
 		if ( execute_dir.Find_Named_Entry( dir_name.Value() ) ) {
 
-			// since we chdir()'d to the execute directory, we can't
-			// delete it until we get out (at least on WIN32). So lets
-			// just chdir() to EXECUTE so we're sure we can remove it. 
-			if (chdir(Execute)) {
-				dprintf(D_ALWAYS, "Error: chdir(%s) failed: %s\n", Execute, strerror(errno));
-			}
-
-			dprintf( D_FULLDEBUG, "Removing %s%c%s\n", Execute,
-					 DIR_DELIM_CHAR, dir_name.Value() );
+			dprintf( D_FULLDEBUG, "Removing %s%c%s\n", full_exec_dir.Value(), DIR_DELIM_CHAR, dir_name.Value() );
 			if (!execute_dir.Remove_Current_File()) {
 				has_failed = true;
 			}
 		}
-		delete [] full_execute_dir;
 	}
+
 	return !has_failed;
 }
 
@@ -3765,6 +3823,38 @@ CStarter::WriteAdFiles()
 			fPrintAd(fp, *ad, true);
 			fclose(fp);
 		}
+	}
+
+	// Correct the bogus Provisioned* attributes in the job ad.
+	ClassAd * machineAd = this->jic->machClassAd();
+	if( machineAd ) {
+		ClassAd updateAd;
+
+		std::string machineResourcesString;
+		if(machineAd->LookupString( ATTR_MACHINE_RESOURCES, machineResourcesString)) {
+			updateAd.Assign( "ProvisionedResources", machineResourcesString );
+			dprintf( D_FULLDEBUG, "Copied machine ad's %s to ProvisionedResources\n", ATTR_MACHINE_RESOURCES );
+		} else {
+			machineResourcesString = "CPUs, Disk, Memory";
+		}
+		StringList machineResourcesList( machineResourcesString.c_str() );
+
+		machineResourcesList.rewind();
+		while( const char * resourceName = machineResourcesList.next() ) {
+			std::string provisionedResourceName;
+			formatstr( provisionedResourceName, "%sProvisioned", resourceName );
+			updateAd.CopyAttribute( provisionedResourceName.c_str(), resourceName, machineAd );
+			dprintf( D_FULLDEBUG, "Copied machine ad's %s to job ad's %s\n", resourceName, provisionedResourceName.c_str() );
+
+			std::string assignedResourceName;
+			formatstr( assignedResourceName, "Assigned%s", resourceName );
+			updateAd.CopyAttribute( assignedResourceName.c_str(), assignedResourceName.c_str(), machineAd );
+			dprintf( D_FULLDEBUG, "Copied machine ad's %s to job ad\n", assignedResourceName.c_str() );
+		}
+
+		dprintf( D_FULLDEBUG, "Updating *Provisioned and Assigned* attributes:\n" );
+		dPrintAd( D_FULLDEBUG, updateAd );
+		jic->periodicJobUpdate( & updateAd, true );
 	}
 
 	return ret_val;

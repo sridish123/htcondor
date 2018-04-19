@@ -272,8 +272,8 @@ can_switch_ids( void )
 }
 
 
-static int should_use_keyring_sessions() {
 #ifdef LINUX
+static int should_use_keyring_sessions() {
 	static int UseKeyringSessions = FALSE;
 	static int DidParamForKeyringSessions = FALSE;
 
@@ -296,10 +296,8 @@ static int should_use_keyring_sessions() {
 		DidParamForKeyringSessions = true;
 	}
 	return UseKeyringSessions;
-#else
-	return false;
-#endif
 }
+#endif
 
 static int keyring_session_creation_timeout() {
 #ifdef LINUX
@@ -335,6 +333,43 @@ gid_t get_my_gid() { return 999999; }
 int set_file_owner_ids( uid_t uid, gid_t gid ) { return FALSE; }
 void uninit_file_owner_ids() {}
 
+DWORD Logon32Type()
+{
+	static DWORD logon32_type = 0; // 0 is undefined, default is LOGON32_LOGON_INTERACTIVE, but LOGON32_LOGON_NETWORK is allowed.
+	if ( ! logon32_type) {
+		logon32_type = 1; // default to INTERACTIVE/NETWORK (i.e. try both)
+		auto_free_ptr logon(param("WINDOWS_LOGON32_TYPE"));
+		if (logon) {
+			if (YourStringNoCase("AUTO") == logon) {
+				logon32_type = 1;
+			} else if (YourStringNoCase("NETWORK") == logon) {
+				logon32_type = LOGON32_LOGON_NETWORK;
+			} else if (YourStringNoCase("INTERACTIVE") == logon) {
+				logon32_type = LOGON32_LOGON_INTERACTIVE;
+			} else if (YourStringNoCase("BATCH") == logon) {
+				logon32_type = LOGON32_LOGON_BATCH;
+			} else if (YourStringNoCase("SERVICE") == logon) {
+				logon32_type = LOGON32_LOGON_SERVICE;
+			}
+		}
+	}
+	return logon32_type;
+}
+const char * Logon32TypeName(DWORD logon)
+{
+	static const char * const names[] = {
+		"undefined (INTERACTIVE/NETWORK)", // 0
+		"auto (INTERACTIVE/NETWORK)",   // 1
+		"LOGON_INTERACTIVE", // 2 LOGON32_LOGON_INTERACTIVE
+		"LOGON_NETWORK",     // 3 LOGON32_LOGON_NETWORK
+		"LOGON_BATCH",       // 4 LOGON32_LOGON_BATCH
+		"LOGON_SERVICE",     // 5 LOGON32_LOGON_SERVICE
+	};
+	if (logon < 0 || logon > COUNTOF(names)) {
+		return "invalid";
+	}
+	return names[logon];
+}
 
 // Cover our getuid...
 uid_t getuid() { return get_my_uid(); }
@@ -513,22 +548,50 @@ init_user_ids(const char username[], const char domain[])
 			delete[](w_pw);
 			w_pw = NULL;
 
+			DWORD l32type = Logon32Type();
+			bool retry_with_network = false;
+			if (l32type < LOGON32_LOGON_INTERACTIVE) { // try both INTERACTIVE and NETWORK?
+				l32type = LOGON32_LOGON_INTERACTIVE;
+				retry_with_network = true;
+			}
+
 			// now that we got a password, see if it is good.
 			retval = LogonUser(
 				user,						// user name
 				dom,						// domain or server - local for now
 				pw,							// password
-				LOGON32_LOGON_INTERACTIVE,	// type of logon operation. 
-											// LOGON_BATCH doesn't seem to work right here.
+				l32type,					// type of logon operation.
 				LOGON32_PROVIDER_DEFAULT,	// logon provider
 				&CurrUserHandle				// receive tokens handle
-			);
+				);
 			
 			if ( !retval ) {
-				dprintf(D_FULLDEBUG,"Locally stored credential for %s@%s is stale\n",
-					user,dom);
+				DWORD err = GetLastError();
+				dprintf(D_FULLDEBUG,"Locally stored credential for %s@%s is invalid for %s. NTStatus=%d : %s\n",
+					user,dom, Logon32TypeName(l32type), err, GetLastErrorString(err));
 				// Set handle to NULL to make certain we recall LogonUser again below
-				CurrUserHandle = NULL;	
+				CurrUserHandle = NULL;
+
+				if ((err == ERROR_LOGON_TYPE_NOT_GRANTED) && retry_with_network) {
+					l32type = LOGON32_LOGON_NETWORK;
+					retval = LogonUser(
+						user,						// user name
+						dom,						// domain or server - local for now
+						pw,							// password
+						l32type,					// type of logon operation.
+						LOGON32_PROVIDER_DEFAULT,	// logon provider
+						&CurrUserHandle				// receive tokens handle
+						);
+					if ( ! retval) {
+						err = GetLastError();
+						dprintf(D_FULLDEBUG,"Locally stored credential for %s@%s is also invalid for %s. NTStatus=%d : %s\n",
+							user,dom, Logon32TypeName(l32type), err, GetLastErrorString(err));
+						// Set handle to NULL to make certain we recall LogonUser again below
+						CurrUserHandle = NULL;
+					} else {
+						got_password = true;	// so we don't bother going to a credd
+					}
+				}
 			} else {
 				got_password = true;	// so we don't bother going to a credd
 			}
@@ -540,7 +603,6 @@ init_user_ids(const char username[], const char domain[])
 
 		char *credd_host = param("CREDD_HOST");
 		if (credd_host && got_password==false) {
-#if 1
            got_password = get_password_from_credd(
               credd_host,
               username,
@@ -548,34 +610,6 @@ init_user_ids(const char username[], const char domain[])
               pw,
               sizeof(pw));
            got_password_from_credd = got_password;
-#else
-			dprintf(D_FULLDEBUG, "trying to fetch password from credd: %s\n", credd_host);
-			Daemon credd(DT_CREDD);
-			Sock * credd_sock = credd.startCommand(CREDD_GET_PASSWD,Stream::reli_sock,10);
-			if ( credd_sock ) {
-				credd_sock->set_crypto_mode(true);
-				credd_sock->put((char*)username);	// send user
-				credd_sock->put((char*)domain);		// send domain
-				credd_sock->end_of_message();
-				credd_sock->decode();
-				pw[0] = '\0';
-				int my_stupid_sizeof_int_for_damn_cedar = sizeof(pw);
-				char *my_buffer = pw;
-				if ( credd_sock->code(my_buffer,my_stupid_sizeof_int_for_damn_cedar) && pw[0] ) {
-					got_password = true;
-					got_password_from_credd = true;
-				} else {
-					dprintf(D_FULLDEBUG,
-							"credd (%s) did not have info for %s@%s\n",
-							credd_host, username,domain);
-				}
-				delete credd_sock;
-				credd_sock = NULL;
-			} else {
-				dprintf(D_FULLDEBUG,"Failed to contact credd %s: %s\n",
-					credd_host,credd.error() ? credd.error() : "");
-			}
-#endif
 		}
 		if (credd_host) free(credd_host);
 
@@ -586,6 +620,13 @@ init_user_ids(const char username[], const char domain[])
 		} else {
 			dprintf(D_FULLDEBUG, "Found credential for user '%s'\n", username);
 
+			DWORD l32type = Logon32Type();
+			bool retry_with_network = false;
+			if (l32type < LOGON32_LOGON_INTERACTIVE) { // try both INTERACTIVE and NETWORK?
+				l32type = LOGON32_LOGON_INTERACTIVE;
+				retry_with_network = true;
+			}
+
 			// If we have not yet called LogonUser, then CurrUserHandle is NULL,
 			// and we need to call it here.
 			if ( CurrUserHandle == NULL ) {
@@ -593,18 +634,36 @@ init_user_ids(const char username[], const char domain[])
 					user,						// user name
 					dom,						// domain or server - local for now
 					pw,							// password
-					LOGON32_LOGON_INTERACTIVE,	// type of logon operation. 
-												// LOGON_BATCH doesn't seem to work right here.
+					l32type,					// type of logon operation.
 					LOGON32_PROVIDER_DEFAULT,	// logon provider
 					&CurrUserHandle				// receive tokens handle
 				);
+				if ( ! retval && retry_with_network && GetLastError() == ERROR_LOGON_TYPE_NOT_GRANTED) {
+					DWORD err = GetLastError();
+					l32type = LOGON32_LOGON_NETWORK;
+					retval = LogonUser(
+						user,						// user name
+						dom,						// domain or server - local for now
+						pw,							// password
+						l32type,					// type of logon operation.
+						LOGON32_PROVIDER_DEFAULT,	// logon provider
+						&CurrUserHandle				// receive tokens handle
+					);
+					if ( ! retval) {
+						DWORD err2 = GetLastError();
+						dprintf(D_FULLDEBUG,"init_user_ids: LogonUser(%s) failed with NT Status %d : %s\n\n",
+							Logon32TypeName(l32type), err2, GetLastErrorString(err2));
+
+						// put previous error and logon type back so that we get the correct error message below
+						l32type = LOGON32_LOGON_INTERACTIVE;
+						SetLastError(err);
+					}
+				}
 			} else {
 				// we already have a good user handle from calling LogonUser to check to
 				// see if our stashed credential was stale or not, so set retval to success
 				retval = 1;	// LogonUser returns nonzero value on success
 			}
-
-			dprintf(D_FULLDEBUG, "LogonUser completed.\n");
 
 			if (UserLoginName) {
 				free(UserLoginName);
@@ -618,13 +677,15 @@ init_user_ids(const char username[], const char domain[])
 			UserDomainName = strdup(domain);
 
 			if ( !retval ) {
-				dprintf(D_ALWAYS, "init_user_ids: LogonUser failed with NT Status %ld\n", 
-					GetLastError());
+				DWORD err = GetLastError();
+				dprintf(D_ALWAYS, "init_user_ids: %s@%s LogonUser(%s) failed with NT Status %d : %s\n",
+					user, dom, Logon32TypeName(l32type), err, GetLastErrorString(err));
 				retval =  0;	// return of 0 means FAILURE
 			} else {
+				dprintf(D_FULLDEBUG, "LogonUser completed.\n");
+
 				// stash the new token in our cache
-				cached_tokens.storeToken(UserLoginName, UserDomainName,
-					   	CurrUserHandle);
+				cached_tokens.storeToken(UserLoginName, UserDomainName, CurrUserHandle);
 				UserIdsInited = true;
 
 				// if we got the password from the credd, and the admin wants passwords stashed
@@ -1513,6 +1574,36 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 	// using the really_dologging inside the new keyring session code, but perhaps all
 	// instances of dologging should be changed to really_dologging in this function.
 	//
+
+	// H   H  EEEEE  Y   Y
+	// H   H  E       Y Y
+	// HHHHH  EEEE     Y
+	// H   H  E        Y
+	// H   H  EEEEE    Y
+
+	// You do not want to call dprintf() in this function AT ALL unless you
+	// really know what you are doing.  Normally, it's not a problem to
+	// call this function in PRIV_ROOT or PRIV_USER.  But you can't do it
+	// from inside *this* function.  If you are unlucky, doing so might
+	// cause the log to rotate, and when it does, the log rotation calls
+	// _set_priv to become condor to rotate the logs.  However, this
+	// function is NOT re-entrant because of the global variables that get
+	// modified and Bad Things(TM) that are Extremely Hard To Debug(TM) can
+	// happen.  (Namely, the new log file after rotation is created with
+	// the wrong priv.  This will likely fail if attempted as the user, due
+	// to log directory permissions.  But if it happens as root, it will
+	// succeed, and the next time a daemon tries to open the file as
+	// condor, it will fail and not start up.
+
+	// It can be extremely tricky to get right, so the matter is resolved
+	// for now by declaring that NO printfing is allowed except for the few
+	// below that were carefully studied to make sure that cannot cause
+	// this issue.
+
+	// instead, use the mechanism that buffers the debug messages in RAM
+	// and then dumps them out at the end when it is safe to do so because
+	// the internal state is consistent with reality.
+
 	bool really_dologging = (dologging && (dologging != NO_PRIV_MEMORY_CHANGES));
 
 	priv_state PrevPrivState = CurrentPrivState;
@@ -1596,10 +1687,6 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 				}
 			}
 
-			key_serial_t sess_keyring = KEY_SPEC_SESSION_KEYRING;
-			if (really_dologging) dprintf(D_SECURITY|D_FULLDEBUG, "KEYCTL: New session keyring (%i)\n", sess_keyring);
-
-
 			// if we were in priv user and are switching out, we record the keyring
 			// id holding the user's AFS token, since it's likely we'll switch back
 			// to it and can avoid looking it up again.
@@ -1653,20 +1740,20 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 					if(user_keyring == -1) {
 						CurrentSessionKeyring = KEY_SPEC_INVALID_KEYRING;
 						CurrentSessionKeyringUID = KEY_SPEC_INVALID_UID;
-						if (really_dologging) dprintf(D_ALWAYS,
+						if (really_dologging) _condor_save_dprintf_line(D_ALWAYS,
 							"KEYCTL: unable to find keyring '%s', error: %s\n",
 							ring_name.Value(), strerror(errno));
 					} else {
 						CurrentSessionKeyring = user_keyring;
 						CurrentSessionKeyringUID = UserUid;
-						if (really_dologging) dprintf(D_SECURITY,
+						if (really_dologging) _condor_save_dprintf_line(D_SECURITY,
 							 "KEYCTL: found user keyring %s (%li) for uid %i.\n",
 							 ring_name.Value(), (long)user_keyring, UserUid);
 					}
 				} else {
 					CurrentSessionKeyring = PreviousSessionKeyring;
 					CurrentSessionKeyringUID = PreviousSessionKeyringUID;
-					if (really_dologging) dprintf(D_SECURITY, "KEYCTL: resuming stored keyring %i and uid %i.\n",
+					if (really_dologging) _condor_save_dprintf_line(D_SECURITY, "KEYCTL: resuming stored keyring %i and uid %i.\n",
 						CurrentSessionKeyring, CurrentSessionKeyringUID);
 				}
 
@@ -1681,10 +1768,10 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 					// link the user keyring to our session keyring
 					long link_success = condor_keyctl_link(user_keyring, sess_keyring);
 					if(link_success == -1) {
-						if (really_dologging) dprintf(D_ALWAYS, "KEYCTL: link(%li,%li) error: %s\n",
+						if (really_dologging) _condor_save_dprintf_line(D_ALWAYS, "KEYCTL: link(%li,%li) error: %s\n",
 							(long)user_keyring, (long)sess_keyring, strerror(errno));
 					} else {
-						if (really_dologging) dprintf(D_SECURITY, "KEYCTL: linked key %li to %li\n",
+						if (really_dologging) _condor_save_dprintf_line(D_SECURITY, "KEYCTL: linked key %li to %li\n",
 							(long)user_keyring, (long)sess_keyring);
 					}
 				}
@@ -1715,7 +1802,7 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 			break;
 		default:
 			if ( dologging ) {
-				dprintf( D_ALWAYS, "set_priv: Unknown priv state %d\n", (int)s);
+				_condor_save_dprintf_line( D_ALWAYS, "set_priv: Unknown priv state %d\n", (int)s);
 			}
 		}
 	}
@@ -1734,6 +1821,11 @@ _set_priv(priv_state s, const char *file, int line, int dologging)
 		CurrentPrivState = PrevPrivState;
 	}
 	else if( dologging ) {
+		// this is an okay place to dprintf, so let's dump all the
+		// stuff we've buffered (if any), and then log change in priv
+		// state.
+
+		_condor_dprintf_saved_lines();
 		log_priv(PrevPrivState, CurrentPrivState, file, line);
 	}
 

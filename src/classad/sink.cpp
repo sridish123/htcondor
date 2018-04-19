@@ -169,8 +169,7 @@ Unparse( string &buffer, const Value &val )
 		case Value::INTEGER_VALUE: {
 			long long	i;
 			val.IsIntegerValue( i );
-			sprintf( tempBuf, "%lld", i );
-			buffer += tempBuf;
+			append_long(buffer, i);
 			return;
 		}
 		case Value::REAL_VALUE: {
@@ -531,7 +530,7 @@ UnparseAux( string &buffer, vector<ExprTree*>& exprs )
  * it's unparsed either as a quoted attribute or non-quoted attribute 
  */
 void ClassAdUnParser::
-UnparseAux( string &buffer, string identifier )
+UnparseAux( string &buffer, const string &identifier )
 {
 	Value  val;
 	string idstr;

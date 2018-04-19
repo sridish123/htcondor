@@ -2197,9 +2197,8 @@ which use DaemonCore).
 
 \label{param:CoreFileName}
 \item[\Macro{CORE\_FILE\_NAME}]
-  Defines the name of the core file created.
-  Defaults to \Expr{core.\$(SUBSYSTEM)} on Unix platforms,
-  and \Expr{core.\$(SUBSYSTEM).WIN32} on Windows platforms.   
+  Defines the name of the core file created on Windows platforms.
+  Defaults to \Expr{core.\$(SUBSYSTEM).WIN32}.
 
 \label{param:PipeBufferMax}
 \item[\Macro{PIPE\_BUFFER\_MAX}]
@@ -2385,11 +2384,7 @@ to use a host name that is not the primary one.
   If \MacroNI{BIND\_ALL\_INTERFACES} is \Expr{True} (the default),
   \MacroNI{NETWORK\_INTERFACE} controls what IP address
   will be advertised as the public address of the daemon.  
-  If multiple network interfaces match the value and
-  \MacroNI{ENABLE\_ADDRESS\_REWRITING} is \Expr{True} (the default),
-  the IP address that is chosen to be advertised will be the one that
-  is used to communicate with the \Condor{collector}.
-  If \MacroNI{ENABLE\_ADDRESS\_REWRITING} is \Expr{False}, the IP address
+  If multiple network interfaces match the value, the IP address
   that is chosen to be advertised will be the one associated with the
   first device (in system-defined order) that is in a public address
   space, or a private address space, or a loopback address, in that
@@ -2488,24 +2483,6 @@ to use a host name that is not the primary one.
   from the forwarding host rather than from the real remote host, so any
   authorization settings that rely on host addresses should be
   considered accordingly.
-
-\label{param:EnableAddressRewriting}
-\item[\Macro{ENABLE\_ADDRESS\_REWRITING}]
-  A boolean value that defaults to \Expr{True}.  When
-  \MacroNI{NETWORK\_INTERFACE} matches only one IP address or
-  \MacroNI{TCP\_FORWARDING\_HOST} is defined or
-  \MacroNI{NET\_REMAP\_ENABLE} is \Expr{True}, this setting has no effect and
-  the behavior is as though it had been set to \Expr{False}.  When \Expr{True},
-  IP addresses published by HTCondor daemons are automatically rewritten to
-  match the IP address of the network interface used to make the
-  publication.  For example, if the \Condor{schedd} advertises itself to
-  two pools via flocking, and the \Condor{collector} for one pool is reached
-  by the \Condor{schedd} through a private network interface, while
-  the \Condor{collector} for the other pool is reached through a different
-  network interface, the IP address published by the \Condor{schedd}
-  daemon will match the address of the respective network interfaces
-  used in the two cases.  The intention is to make it easier for
-  HTCondor daemons to operate in a multi-homed environment.
 
 \label{param:HighPort}
 \item[\Macro{HIGHPORT}]
@@ -3950,13 +3927,12 @@ WANT_HOLD_REASON = \
 
 \label{param:IsOwner}
 \item[\Macro{IS\_OWNER}]
-  A boolean expression that defaults to being defined as
-\begin{verbatim}
-        IS_OWNER = (START =?= FALSE)
-\end{verbatim}
-  Used to describe the state of the machine with respect to its use
-  by its owner.
-  Job ClassAd attributes are not used in defining \MacroNI{IS\_OWNER},
+  A boolean expression that determines when a machine ad should enter
+  the \Expr{Owner} state.
+  While in the \Expr{Owner} state, the machine ad will not be matched to
+  any jobs.
+  The default value is \Expr{False} (never enter \Expr{Owner} state).
+  Job ClassAd attributes should not be used in defining \MacroNI{IS\_OWNER},
   as they would be \Expr{Undefined}.
 
 \label{param:StartdHistory}
@@ -5162,58 +5138,7 @@ Power Management for more details.
 
 \end{description}
 
-The following macros control the optional computation of resource
-availability statistics in the \Condor{startd}.
-
 \begin{description}
-
-\label{param:StartdComputeAvailStats}
-\item[\Macro{STARTD\_COMPUTE\_AVAIL\_STATS}]
-  A boolean value that determines if the \Condor{startd} computes resource
-  availability statistics.  The default is \Expr{False}.
-
-  If \Macro{STARTD\_COMPUTE\_AVAIL\_STATS} is \Expr{True}, 
-  the \Condor{startd} will
-  define the following ClassAd attributes for resources:
-
-  \begin{description}
-  \item[\AdAttr{AvailTime}]
-  \index{ClassAd machine attribute!AvailTime}
-    The proportion of the time (between 0.0 and 1.0)
-    that this resource has been in a state other than Owner.
-  \item[\AdAttr{LastAvailInterval}]
-  \index{ClassAd machine attribute!LastAvailInterval}
-    The duration in seconds of the last period between Owner states.
-  \end{description}
-
-  The following attributes will also be included if the resource is
-  not in the Owner state:
-
-  \begin{description}
-  \item[\AdAttr{AvailSince}]
-  \index{ClassAd machine attribute!AvailSince}
-    The time at which the resource last left the
-    Owner state.  Measured in the number of seconds since the
-    epoch (00:00:00 UTC, Jan 1, 1970).
-  \item[\AdAttr{AvailTimeEstimate}]
-  \index{ClassAd machine attribute!AvailTimeEstimate}
-    Based on past history, an estimate
-    of how long the current period between Owner states will last.
-  \end{description}
-
-\label{param:StartdAvailConfidence}
-\item[\Macro{STARTD\_AVAIL\_CONFIDENCE}]
-  A floating point number representing the confidence level of the
-  \Condor{startd} daemon's \Attr{AvailTime} estimate.
-  By default, the estimate is based on
-  the 80th percentile of past values, so the value is initially set to 0.8.
-
-\label{param:StartdMaxAvailPeriodSamples}
-\item[\Macro{STARTD\_MAX\_AVAIL\_PERIOD\_SAMPLES}]
-  An integer that limits the number of samples of past available
-  intervals stored by the \Condor{startd} to limit memory and disk consumption.
-  Each sample requires 4 bytes of memory and approximately 10 bytes of
-  disk space.
 
 \label{param:Docker}
 \item[\Macro{DOCKER}]
@@ -6616,8 +6541,10 @@ SYSTEM_PERIODIC_REMOVE = \
 \item[\Macro{SUBMIT\_REQUIREMENT\_<Name>}]
   A boolean expression 
   evaluated in the context of the \Condor{schedd} daemon ClassAd,
-  which is the \Expr{MY.} name space and the job ClassAd, 
-  which is the \Expr{TARGET.} name space.
+  which is the \Expr{SCHEDD.} or
+  \Expr{MY.} name space and the job ClassAd, 
+  which is the \Expr{JOB.} or
+  \Expr{TARGET.} name space.
   When \Expr{False}, it causes the \Condor{schedd} to reject 
   the submission of the job or cluster of jobs. 
   \MacroNI{<Name>} corresponds to a name listed in 
@@ -7210,7 +7137,7 @@ REM Run the actual job now
 
 \label{param:ChirpDelayedUpdatePrefix}
 \item[\Macro{CHIRP\_DELAYED\_UPDATE\_PREFIX}]
-  This string-valued parameter, which defaults to \AdStr{Chirp*},
+  This string-valued parameter, which defaults to \AdStr{Chirp},
   defines the allowed prefixes for attribute names which can be used with the
   \Condor{chirp} commands \Opt{set\_job\_attribute\_delayed} and 
   \Opt{get\_job\_attribute\_delayed}.  Because it must be set to the
@@ -7229,7 +7156,7 @@ REM Run the actual job now
 \item[\Macro{USE\_PSS}]
   A boolean value, that when \Expr{True} causes the \Condor{starter} to
   measure the PSS (Proportional Set Size) of each HTCondor job.
-  The default value is \Expr{True}.
+  The default value is \Expr{False}.
   When running many short lived jobs, performance problems in 
   the \Condor{procd} have been observed, and a setting of \Expr{False}
   may relieve these problems.
@@ -7375,6 +7302,12 @@ Configuration File Entries}
   or if the job is placed on hold because of a failure, 
   and not by user request. 
   If \Expr{NEVER}, the owner will not receive email. 
+
+\label{param:JobDefaultLeaseDuration}
+\item[\Macro{JOB\_DEFAULT\_LEASE\_DURATION}]
+  The default value for the \SubmitCmd{job\_lease\_duration} submit command
+  when the submit file does not specify a value. The default
+  value is 2400, which is 40 minutes.
 
 \label{param:JobDefaultRequestMemory}
 \item[\Macro{JOB\_DEFAULT\_REQUESTMEMORY}]
@@ -7596,6 +7529,13 @@ do not specify their own with:
   will use in the specification of an interactive job.
   The default is \File{\MacroUNI{RELEASE\_DIR}/libexec/interactive.sub}
   when not defined.
+
+\label{param:CredMinTimeLeft}
+\item[\Macro{CRED\_MIN\_TIME\_LEFT}]
+  When a job uses an X509 user proxy, condor\_submit will refuse to
+submit a job whose x509 expiration time is less than this many seconds
+in the future.  The default is to only refuse jobs whose expiration
+time has already passed.
 
 \end{description}
 
@@ -8372,6 +8312,15 @@ These macros affect the \Condor{negotiator}.
   An expression which constrains which machine ClassAds are fetched from the
   \Condor{collector} by the \Condor{negotiator} during a negotiation
   cycle.
+
+\label{param:NegotiatorJobConstraint}
+\item[\Macro{NEGOTIATOR\_JOB\_CONSTRAINT}]
+  An expression which constrains which job ClassAds are considered for
+  matchmaking by the \Condor{negotiator}.
+  This parameter is read by the \Condor{negotiator} and sent to the
+  \Condor{schedd} for evaluation.
+  \Condor{schedd}s older than version 8.7.7 will ignore this expression
+  and so will continue to send all jobs to the \Condor{negotiator}.
 
 \label{param:NegotiatorTrimShutdownThreshold}
 \item[\Macro{NEGOTIATOR\_TRIM\_SHUTDOWN\_THRESHOLD}] 
@@ -12668,13 +12617,11 @@ on page~\pageref{sec:daemon-classad-hooks}.
 \label{param:BenchmarksJobSlots}
 \item[\Macro{STARTD\_CRON\_<JobName>\_SLOTS} 
        and \Macro{BENCHMARKS\_<JobName>\_SLOTS}]
-  A comma separated list of slots.
-  The output of the job specified by \Expr{<JobName>}
-  is incorporated into ClassAds;
-  this list specifies which slots are to incorporate the output attributes
-  of the job.
-  If not specified, the default is to incorporate the output attributes into
-  the ClassAd of all slots.
+  Only the slots specified in this comma-separated list may incorporate
+  the output of the job specified by \Expr{<JobName>}.  If the list is
+  not specified, any slot may.  Whether or not a specific slot actually
+  incorporates the output depends on the output;
+  see \ref{sec:daemon-classad-hooks}.
 
   \Expr{<JobName>} is the logical name assigned for a job as defined by
   configuration variable \MacroNI{STARTD\_CRON\_JOBLIST} 
@@ -12716,6 +12663,76 @@ on page~\pageref{sec:daemon-classad-hooks}.
   \Expr{<JobName>} is the logical name assigned for a job as defined by
   configuration variable \MacroNI{STARTD\_CRON\_JOBLIST}, 
   \MacroNI{SCHEDD\_CRON\_JOBLIST}, or \MacroNI{BENCHMARKS\_JOBLIST}.
+
+\label{param:StartdCronJobMetrics}
+\item[\Macro{STARTD\_CRON\_<JobName>\_METRICS}]
+  A space or comma -separated list.  Each element in the list is a metric
+  type, either \Expr{SUM} or \Expr{PEAK}; a colon; and a metric name.
+
+  An attribute preceded by \Expr{SUM} is a metric which accumulates over
+  time.  The canonical example is seconds of CPU usage.
+
+  An attribute preceded by \Expr{PEAK} is a metric which instead records
+  the largest value reported over the period of use.  The canonical example
+  is megabytes of memory usage.
+
+  A job with \MacroNI{STARTD\_CRON\_<JobName>\_METRICS} set is a custom
+  machine resource monitor (CMRM),  and its output is handled differently
+  than a normal job's.  A CMRM should output one ad per custom machine
+  resource instance and use \Attr{SlotMergeConstraint}s
+  (see \ref{sec:daemon-classad-hooks}) to specify the instance to which
+  it applies.
+
+  The ad corresponding to each custom machine resource instance should have
+  an attribute for each metric named in the configuration.  For SUM metrics,
+  the attribute should be \Attr{Uptime<MetricName>Seconds}; for PEAK metrics,
+  the attribute should be \Attr{Uptime<MetricName>PeakUsage}.
+
+  Each value should be the value of the metric since the last time the
+  job reported.  The reported value may therefore go up or down; HTCondor
+  will record either the the sum or the peak value, as appropriate, for
+  % both the duration of the job running in a slot assigned resources of the
+         the duration of the job running in a slot assigned resources of the
+    corresponding type.
+  % corresponding type and the recent past, as defined by FIXME.
+
+  For example, if your custom resources are SQUIDs, and you detected four
+  of them, your monitor might output the following:
+
+\begin{verbatim}
+SlotMergeConstraint = StringListMember( "SQUID0", AssignedSQUIDs )
+UptimeSQUIDsSeconds = 5.0
+UptimeSQUIDsMemoryPeakUsage = 50
+- SQUIDsReport0
+SlotMergeConstraint = StringListMember( "SQUID1", AssignedSQUIDs )
+UptimeSQUIDsSeconds = 1.0
+UptimeSQUIDsMemoryPeakUsage = 10
+- SQUIDsReport1
+SlotMergeConstraint = StringListMember( "SQUID2", AssignedSQUIDs )
+UptimeSQUIDsSeconds = 9.0
+UptimeSQUIDsMemoryPeakUsage = 90
+- SQUIDsReport2
+SlotMergeConstraint = StringListMember( "SQUID3", AssignedSQUIDs )
+UptimeSQUIDsSeconds = 4.0
+UptimeSQUIDsMemoryPeakUsage = 40
+- SQUIDsReport3
+\end{verbatim}
+
+  The names ('SQUIDsReport0') may be anything, but must be consistent from
+  report to report and the ClassAd for each report must have a distinct
+  name.
+
+  You might specify the monitor in the example above as follows:
+
+\begin{verbatim}
+MACHINE_RESOURCE_INVENTORY_SQUIDs = /usr/local/bin/cmr-squid-discovery
+
+STARTD_CRON_JOBLIST = $(STARTD_CRON_JOBLIST) SQUIDs_MONITOR
+STARTD_CRON_SQUIDs_MONITOR_MODE = Periodic
+STARTD_CRON_SQUIDs_MONITOR_PERIOD = 10
+STARTD_CRON_SQUIDs_MONITOR_EXECUTABLE = /usr/local/bin/cmr-squid-monitor
+STARTD_CRON_SQUIDs_MONITOR_METRICS = SUM:SQUIDs, PEAK:SQUIDsMemory
+\end{verbatim}
 
 \label{param:StartdCronJobMode}
 \label{param:ScheddCronJobMode}
