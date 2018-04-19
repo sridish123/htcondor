@@ -9,16 +9,18 @@ Wants=network-online.target
 [Service]
 EnvironmentFile=-/etc/sysconfig/condor
 ExecStart=/usr/sbin/condor_master -f
-ExecStop=/usr/sbin/condor_off -master
+# In the future, we will use ExecStop with a synchronous condor_off
+KillMode=mixed
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
+Restart=on-failure
 RestartSec=1minute
 WatchdogSec=20minutes
-TimeoutStopSec=90seconds
+TimeoutStopSec=150seconds
 StandardOutput=syslog
 NotifyAccess=main
-KillSignal=SIGKILL
-LimitNOFILE=16384
+KillSignal=SIGQUIT
+LimitNOFILE=infinity
+TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target

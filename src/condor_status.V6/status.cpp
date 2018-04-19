@@ -40,6 +40,7 @@
 #include "classad_helpers.h"
 #include "prettyPrint.h"
 #include "setflags.h"
+#include "adcluster.h"
 
 #include <vector>
 #include <sstream>
@@ -187,6 +188,11 @@ bool			naturalSort = true;
 
 classad::References projList;
 StringList dashAttributes; // Attributes specifically requested via the -attributes argument
+
+bool       dash_group_by; // the "group-by" command line arguments was specified.
+AdCluster<std::string> ad_groups; // does the actually grouping 
+std::string get_ad_name_string(ClassAd &ad) { std::string name; ad.LookupString(ATTR_NAME, name); return name; }
+
 
 char *			target = NULL;
 bool			print_attrs_in_hash_order = false;
@@ -347,6 +353,13 @@ static bool process_ads_callback(void * pv,  ClassAd* ad)
 	unsigned int ord = pi->ordinal++;
 	sortSpecs.RenderKey(key, ord, ad);
 	//make_status_key(key, ord, ad);
+
+	if (dash_group_by) {
+		std::string id(key), attrs;
+		int acid = ad_groups.getClusterid(*ad, true, &attrs);
+		for (size_t ix = id.find_first_of("\n",0); ix != std::string::npos; ix = id.find_first_of("\n",ix)) { id.replace(ix,1,"/"); }
+		fprintf(stderr, "ingested '%s', got clusterid=%d attrs=%s\n", id.c_str(), acid, attrs.c_str());
+	}
 
 	// if diagnose flag is passed, unpack the key and ad and print them to the diagnostics file
 	if (pi->hfDiag) {
@@ -1051,7 +1064,6 @@ main (int argc, char *argv[])
 		switch (adType) {
 		case MASTER_AD: d = new Daemon( DT_MASTER, direct, addr ); break;
 		case STARTD_AD: d = new Daemon( DT_STARTD, direct, addr ); break;
-		case QUILL_AD:  d = new Daemon( DT_QUILL, direct, addr ); break;
 		case SCHEDD_AD:
 		case SUBMITTOR_AD: d = new Daemon( DT_SCHEDD, direct, addr ); break;
 		case NEGOTIATOR_AD:
@@ -1081,6 +1093,14 @@ main (int argc, char *argv[])
 		}
 	}
 
+	if (dash_group_by) {
+		if ( ! dashAttributes.isEmpty()) {
+			ad_groups.setSigAttrs(dashAttributes.print_to_string(), true, true);
+		} else {
+			ad_groups.setSigAttrs("Cpus Memory GPUs IOHeavy START", false, true);
+		}
+		ad_groups.keepAdKeys(get_ad_name_string);
+	}
 
 	// This awful construction is forced on us by our List class
 	// refusing to allow copying or assignment.
@@ -1274,6 +1294,24 @@ main (int argc, char *argv[])
 		if( left_ai.pmap->size() > 0 ) {
 			if(! annexMode) { fprintf( stdout, "The following ads were found only in '%s':\n", leftFileName ); }
 			doMergeOutput( left_ai );
+		}
+	}
+
+	if (dash_group_by) {
+		std::string output;
+		output.reserve(16372);
+		StringList * whitelist = NULL;
+
+		AdAggregationResults<std::string> groups(ad_groups);
+		groups.rewind();
+		ClassAd * ad;
+		while ((ad = groups.next()) != NULL) {
+			output.clear();
+			classad::References attrs;
+			sGetAdAttrs(attrs, *ad, false, whitelist);
+			sPrintAdAttrs(output, *ad, attrs);
+			output += "\n";
+			fputs(output.c_str(), stdout);
 		}
 	}
 
@@ -1557,9 +1595,6 @@ usage ()
 		"\t       auto    Guess the format from reading the input stream\n"
 		"\t-grid\t\t\tDisplay grid resources\n"
 		"\t-run\t\t\tDisplay running job stats\n"
-#ifdef HAVE_EXT_POSTGRESQL
-		"\t-quill\t\t\tDisplay attributes of quills\n"
-#endif /* HAVE_EXT_POSTGRESQL */
 		"\t-schedd\t\t\tDisplay attributes of schedds\n"
 		"\t-server\t\t\tDisplay important attributes of resources\n"
 		"\t-startd\t\t\tDisplay resource attributes\n"
@@ -1852,6 +1887,9 @@ firstPass (int argc, char *argv[])
 		if (is_dash_arg_prefix (argv[i],"json", 2)){
 			mainPP.setPPstyle (PP_JSON, i, argv[i]);
 		} else
+		if (is_dash_arg_prefix (argv[i],"group-by", 5)){
+			dash_group_by = true;
+		} else
 		if (is_dash_arg_prefix (argv[i],"attributes", 2)){
 			if( !argv[i+1] ) {
 				fprintf( stderr, "%s: -attributes requires one additional argument\n",
@@ -1968,7 +2006,6 @@ firstPass (int argc, char *argv[])
 				{"schedd", SDO_Schedd},
 				{"submitters", SDO_Submitters},
 				{"startd", SDO_Startd},
-				{"quill", SDO_Quill},
 				{"defrag", SDO_Defrag},
 				{"grid", SDO_Grid},
 				{"accounting", SDO_Accounting},
@@ -1992,11 +2029,6 @@ firstPass (int argc, char *argv[])
 				mainPP.setMode (SDO_Other, i, argv[i]);
 			}
 		} else
-#ifdef HAVE_EXT_POSTGRESQL
-		if (is_dash_arg_prefix (argv[i], "quill", 1)) {
-			mainPP.setMode (SDO_Quill, i, argv[i]);
-		} else
-#endif /* HAVE_EXT_POSTGRESQL */
 		if (is_dash_arg_prefix (argv[i], "license", 2)) {
 			mainPP.setMode (SDO_License, i, argv[i]);
 		} else
@@ -2108,16 +2140,14 @@ secondPass (int argc, char *argv[])
 		if (is_dash_arg_prefix (argv[i], "format", 1)) {
 			mainPP.pm.registerFormatF (argv[i+1], argv[i+2], FormatOptionNoTruncate);
 
-			StringList attributes;
+			classad::References attributes;
 			ClassAd ad;
-			if(!ad.GetExprReferences(argv[i+2],NULL,&attributes)){
+			if(!GetExprReferences(argv[i+2],ad,NULL,&attributes)){
 				fprintf( stderr, "Error:  Parse error of: %s\n", argv[i+2]);
 				exit(1);
 			}
 
-			for (const char * attr = attributes.first(); attr; attr = attributes.next()) {
-				projList.insert(attr);
-			}
+			projList.insert(attributes.begin(), attributes.end());
 
 			if (diagnose) {
 				printf ("Arg %d --- register format [%s] for [%s]\n",
@@ -2166,16 +2196,13 @@ secondPass (int argc, char *argv[])
 			while (argv[i+1] && *(argv[i+1]) != '-') {
 				++i;
 				ClassAd ad;
-				StringList attributes;
-				if(!ad.GetExprReferences(argv[i],NULL,&attributes)){
+				classad::References attributes;
+				if(!GetExprReferences(argv[i],ad,NULL,&attributes)){
 					fprintf( stderr, "Error:  Parse error of: %s\n", argv[i]);
 					exit(1);
 				}
 
-				//PRAGMA_REMIND("fix to use more set-based GetExprReferences")
-				for (const char * attr = attributes.first(); attr; attr = attributes.next()) {
-					projList.insert(attr);
-				}
+				projList.insert(attributes.begin(), attributes.end());
 
 				MyString lbl = "";
 				int wid = 0;
@@ -2235,6 +2262,10 @@ secondPass (int argc, char *argv[])
 			continue;
 		}
 		if (is_dash_arg_prefix (argv[i], "merge", 5)) {
+			++i;
+			continue;
+		}
+		if (is_dash_arg_prefix (argv[i], "group-by", 5)) {
 			++i;
 			continue;
 		}

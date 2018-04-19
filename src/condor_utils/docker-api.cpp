@@ -32,7 +32,7 @@ int DockerAPI::default_timeout = 120;
 // care if the image is stored locally or not (except to the extent that
 // remote image pull violates the principle of least astonishment).
 //
-int DockerAPI::run(
+int DockerAPI::createContainer(
 	ClassAd &machineAd,
 	ClassAd &jobAd,
 	const std::string & containerName,
@@ -55,7 +55,7 @@ int DockerAPI::run(
 	ArgList runArgs;
 	if ( ! add_docker_arg(runArgs))
 		return -1;
-	runArgs.AppendArg( "run" );
+	runArgs.AppendArg( "create" );
 
 	// Write out a file with the container ID.
 	// FIXME: The startd can check this to clean up after us.
@@ -75,9 +75,9 @@ int DockerAPI::run(
 	int cpuShare;
 
 	if (machineAd.LookupInteger(ATTR_CPUS, cpus)) {
-		cpuShare = 10 * cpus;
+		cpuShare = 100 * cpus;
 	} else {
-		cpuShare = 10;
+		cpuShare = 100;
 	}
 	std::string cpuShareStr;
 	formatstr(cpuShareStr, "--cpu-shares=%d", cpuShare);
@@ -183,6 +183,83 @@ int DockerAPI::run(
 
 	if( childPID == FALSE ) {
 		dprintf( D_ALWAYS | D_FAILURE, "Create_Process() failed.\n" );
+		return -1;
+	}
+	pid = childPID;
+
+	return 0;
+}
+
+int DockerAPI::startContainer(
+	const std::string &containerName,
+	int & pid,
+	int * childFDs,
+	CondorError & /* err */ ) {
+
+	ArgList startArgs;
+	if ( ! add_docker_arg(startArgs))
+		return -1;
+	startArgs.AppendArg("start");
+	startArgs.AppendArg("-a"); // start in Attached mode
+	startArgs.AppendArg(containerName);
+
+	MyString displayString;
+	startArgs.GetArgsStringForLogging( & displayString );
+	dprintf( D_ALWAYS, "Runnning: %s\n", displayString.c_str() );
+
+	FamilyInfo fi;
+	fi.max_snapshot_interval = param_integer( "PID_SNAPSHOT_INTERVAL", 15 );
+	int childPID = daemonCore->Create_Process( startArgs.GetArg(0), startArgs,
+		PRIV_CONDOR_FINAL, 1, FALSE, FALSE, NULL, "/",
+		& fi, NULL, childFDs );
+
+	if( childPID == FALSE ) {
+		dprintf( D_ALWAYS | D_FAILURE, "Create_Process() failed.\n" );
+		return -1;
+	}
+	pid = childPID;
+
+	return 0;
+}
+
+int 
+DockerAPI::execInContainer( const std::string &containerName,
+			    const std::string &command,
+			    const ArgList     &arguments,
+			    const Env &environment,
+			    int *childFDs,
+			    int reaperid,
+			    int &pid) {
+
+	ArgList execArgs;
+	if ( ! add_docker_arg(execArgs))
+		return -1;
+	execArgs.AppendArg("exec");
+	execArgs.AppendArg("-ti"); 
+
+	if ( ! add_env_to_args_for_docker(execArgs, environment)) {
+		dprintf( D_ALWAYS | D_FAILURE, "Failed to pass enviroment to docker.\n" );
+		return -8;
+	}
+
+	execArgs.AppendArg(containerName);
+	execArgs.AppendArg(command);
+
+	execArgs.AppendArgsFromArgList(arguments);
+
+
+	MyString displayString;
+	execArgs.GetArgsStringForLogging( & displayString );
+	dprintf( D_ALWAYS, "execing: %s\n", displayString.c_str() );
+
+	FamilyInfo fi;
+	fi.max_snapshot_interval = param_integer( "PID_SNAPSHOT_INTERVAL", 15 );
+	int childPID = daemonCore->Create_Process( execArgs.GetArg(0), execArgs,
+		PRIV_CONDOR_FINAL, reaperid, FALSE, FALSE, NULL, "/",
+		& fi, NULL, childFDs );
+
+	if( childPID == FALSE ) {
+		dprintf( D_ALWAYS | D_FAILURE, "Create_Process() failed to condor exec.\n" );
 		return -1;
 	}
 	pid = childPID;
@@ -513,9 +590,9 @@ DockerAPI::stats(const std::string &container, uint64_t &memUsage, uint64_t &net
 	memUsage = netIn = netOut = userCpu = sysCpu = 0;
 
 		// Would really like a real JSON parser here...
-	pos = response.find("\"max_usage\"");
+	pos = response.find("\"rss\"");
 	if (pos != std::string::npos) {
-		sscanf(response.c_str()+pos, "\"max_usage\":%" SCNu64, &memUsage);
+		sscanf(response.c_str()+pos, "\"rss\":%" SCNu64, &memUsage);
 	}
 	pos = response.find("\"tx_bytes\"");
 	if (pos != std::string::npos) {

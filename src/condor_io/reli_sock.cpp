@@ -280,7 +280,7 @@ ReliSock::connect( char	const *host, int port, bool non_blocking_flag )
 }
 
 int 
-ReliSock::put_line_raw( char *buffer )
+ReliSock::put_line_raw( const char *buffer )
 {
 	int result;
 	int length = strlen(buffer);
@@ -324,16 +324,16 @@ ReliSock::get_bytes_raw( char *buffer, int length )
 }
 
 int 
-ReliSock::put_bytes_nobuffer( char *buffer, int length, int send_size )
+ReliSock::put_bytes_nobuffer( const char *buffer, int length, int send_size )
 {
 	int i, result, l_out;
 	int pagesize = 65536;  // Optimize large writes to be page sized.
-	char * cur;
+	const char * cur;
 	unsigned char * buf = NULL;
         
 	// First, encrypt the data if necessary
 	if (get_encryption()) {
-		if (!wrap((unsigned char *) buffer, length,  buf , l_out)) { 
+		if (!wrap((const unsigned char *) buffer, length,  buf , l_out)) {
 			dprintf(D_SECURITY, "Encryption failed\n");
 			goto error;
 		}
@@ -584,14 +584,14 @@ const char * ReliSock :: isIncomingDataMD5ed()
 int 
 ReliSock::put_bytes(const void *data, int sz)
 {
-	int		tw=0, header_size = isOutgoing_MD5_on() ? MAX_HEADER_SIZE:NORMAL_HEADER_SIZE;
-	int		nw, l_out;
-        unsigned char * dta = NULL;
 
         // Check to see if we need to encrypt
         // Okay, this is a bug! H.W. 9/25/2001
+
         if (get_encryption()) {
-            if (!wrap((unsigned char *)const_cast<void*>(data), sz, dta , l_out)) { 
+        	unsigned char * dta = NULL;
+			int l_out;
+            if (!wrap((const unsigned char *)(data), sz, dta , l_out)) {
                 dprintf(D_SECURITY, "Encryption failed\n");
 				if (dta != NULL)
 				{
@@ -600,14 +600,23 @@ ReliSock::put_bytes(const void *data, int sz)
 				}
                 return -1;  // encryption failed!
             }
+			int r = put_bytes_after_encryption(dta, sz); // l_out instead?
+			free(dta);
+			return r;
         }
         else {
-            if((dta = (unsigned char *) malloc(sz)) != 0)
-		memcpy(dta, data, sz);
+			// The bytes aren't encrypted at all, just pass through
+			return put_bytes_after_encryption(data, sz);
         }
+}
 
+int 
+ReliSock::put_bytes_after_encryption(const void *dta, int sz) {
 	ignore_next_encode_eom = FALSE;
 
+	int		nw;
+	int 	tw = 0;
+	int		header_size = isOutgoing_MD5_on() ? MAX_HEADER_SIZE:NORMAL_HEADER_SIZE;
 	for(nw=0;;) {
 		
 		if (snd_msg.buf.full()) {
@@ -615,15 +624,10 @@ ReliSock::put_bytes(const void *data, int sz)
 			// This would block and the user asked us to work non-buffered - force the
 			// buffer to grow to hold the data for now.
 			if (retval == 3) {
-				nw += snd_msg.buf.put_force(&((char *)dta)[nw], sz-nw);
+				nw += snd_msg.buf.put_force(&((const char *)dta)[nw], sz-nw);
 				m_has_backlog = true;
 				break;
 			} else if (!retval) {
-				if (dta != NULL)
-				{
-					free(dta);
-					dta = NULL;
-				}
 				return FALSE;
 			}
 		}
@@ -632,9 +636,7 @@ ReliSock::put_bytes(const void *data, int sz)
 			snd_msg.buf.seek(header_size);
 		}
 		
-		if (dta && (tw = snd_msg.buf.put_max(&((char *)dta)[nw], sz-nw)) < 0) {
-			free(dta);
-		dta = NULL;
+		if (dta && (tw = snd_msg.buf.put_max(&((const char *)dta)[nw], sz-nw)) < 0) {
 			return -1;
 		}
 		
@@ -645,12 +647,6 @@ ReliSock::put_bytes(const void *data, int sz)
 	}
 	if (nw > 0) {
 		_bytes_sent += nw;
-	}
-
-	if (dta != NULL)
-	{
-		free(dta);
-		dta = NULL;
 	}
 
 	return nw;
@@ -1033,33 +1029,22 @@ ReliSock::type() const
 	return Stream::reli_sock; 
 }
 
-char * 
+char *
 ReliSock::serialize() const
 {
-	// here we want to save our state into a buffer
+	MyString state;
 
-	// first, get the state from our parent class
 	char * parent_state = Sock::serialize();
-    // now concatenate our state
-	char * outbuf = new char[50];
-    memset(outbuf, 0, 50);
-	sprintf(outbuf,"%d*%s*",_special_state,_who.to_sinful().Value());
-	strcat(parent_state,outbuf);
-
-    // Serialize crypto stuff
 	char * crypto = serializeCryptoInfo();
-    strcat(parent_state, crypto);
-    strcat(parent_state, "*");
+	char * md = serializeMdInfo();
 
-    // serialize MD info
-    char * md = serializeMdInfo();
-    strcat(parent_state, md);
-    strcat(parent_state, "*");
+	formatstr( state, "%s%d*%s*%s*%s*", parent_state, _special_state, _who.to_sinful().Value(), crypto, md );
 
-	delete []outbuf;
-    delete []crypto;
-    delete []md;
-	return( parent_state );
+	delete[] parent_state;
+	delete[] crypto;
+	delete[] md;
+
+	return state.detach_buffer();
 }
 
 const char *
@@ -1262,11 +1247,6 @@ ReliSock::authenticate(const char* methods, CondorError* errstack, int auth_time
 
 bool
 ReliSock::connect_socketpair_impl( ReliSock & sock, condor_protocol proto, bool isLoopback ) {
-	if( ! bind( proto, false, 0, isLoopback ) ) {
-		dprintf( D_ALWAYS, "connect_socketpair(): failed to bind() this.\n" );
-		return false;
-	}
-
 	ReliSock tmp;
 	if( ! tmp.bind( proto, false, 0, isLoopback ) ) {
 		dprintf( D_ALWAYS, "connect_socketpair(): failed to bind() that.\n" );
@@ -1278,11 +1258,17 @@ ReliSock::connect_socketpair_impl( ReliSock & sock, condor_protocol proto, bool 
 		return false;
 	}
 
+	if( ! bind( proto, false, 0, isLoopback ) ) {
+		dprintf( D_ALWAYS, "connect_socketpair(): failed to bind() this.\n" );
+		return false;
+	}
+
 	if( !connect( tmp.my_ip_str(), tmp.get_port() ) ) {
 		dprintf( D_ALWAYS, "connect_socketpair(): failed to connect() to that.\n" );
 		return false;
 	}
 
+	tmp.timeout( 1 );
 	if( ! tmp.accept( sock ) ) {
 		dprintf( D_ALWAYS, "connect_socketpair(): failed to accept() that.\n" );
 		return false;

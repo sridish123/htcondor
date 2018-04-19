@@ -71,6 +71,8 @@ static bool test_get_references_complex_true_internal(void);
 static bool test_get_references_complex_true_external(void);
 static bool test_get_references_complex_false_internal(void);
 static bool test_get_references_complex_false_external(void);
+static bool test_reference_name_trimming_internal(void);
+static bool test_reference_name_trimming_external(void);
 static bool test_next_dirty_expr_clear(void);
 static bool test_next_dirty_expr_insert(void);
 static bool test_next_dirty_expr_insert_two_calls(void);
@@ -340,6 +342,8 @@ bool OTEST_Old_Classads(void) {
 	driver.register_function(test_get_references_complex_true_external);
 	driver.register_function(test_get_references_complex_false_internal);
 	driver.register_function(test_get_references_complex_false_external);
+	driver.register_function(test_reference_name_trimming_internal);
+	driver.register_function(test_reference_name_trimming_external);
 	driver.register_function(test_next_dirty_expr_clear);
 	driver.register_function(test_next_dirty_expr_insert);
 	driver.register_function(test_next_dirty_expr_insert_two_calls);
@@ -576,7 +580,7 @@ static bool test_copy_constructor_actuals() {
 	classad->initFromString(classad_string, NULL);
 	compat_classad::ClassAd* classadCopy = new ClassAd(*classad);
 	int actual1 = -1, actual2 = -1;
-	char actual3[1024];
+	std::string actual3;
 	classadCopy->EvalInteger("A", NULL, actual1);
 	classadCopy->EvalBool("B", NULL, actual2);
 	classadCopy->EvalString("C", NULL, actual3);
@@ -589,8 +593,8 @@ static bool test_copy_constructor_actuals() {
 	emit_output_actual_header();
 	emit_param("A", "%d", actual1);
 	emit_param("B", "%d", actual2);
-	emit_param("C", actual3);
-	if(actual1 != 1 || actual2 != 1 || strcmp(actual3, "String") != MATCH) {
+	emit_param("C", "%s", actual3.c_str());
+	if(actual1 != 1 || actual2 != 1 || strcmp(actual3.c_str(), "String") != MATCH) {
 		delete classad; delete classadCopy;
 		FAIL;
 	}
@@ -628,7 +632,7 @@ static bool test_assignment_actuals() {
 	compat_classad::ClassAd* classadAssign = new ClassAd;
 	*classadAssign = *classad;
 	int actual1 = -1, actual2 = -1;
-	char actual3[1024];
+	std::string actual3;
 	classadAssign->EvalInteger("A", NULL, actual1);
 	classadAssign->EvalBool("B", NULL, actual2);
 	classadAssign->EvalString("C", NULL, actual3);
@@ -641,8 +645,8 @@ static bool test_assignment_actuals() {
 	emit_output_actual_header();
 	emit_param("A", "%d", actual1);
 	emit_param("B", "%d", actual2);
-	emit_param("C", actual3);
-	if(actual1 != 1 || actual2 != 1 || strcmp(actual3, "String") != MATCH) {
+	emit_param("C", "%s", actual3.c_str());
+	if(actual1 != 1 || actual2 != 1 || strcmp(actual3.c_str(), "String") != MATCH) {
 		delete classad; delete classadAssign;
 		FAIL;
 	}
@@ -662,7 +666,7 @@ static bool test_assignment_actuals_before() {
 	classadAssign->initFromString(classad_string2, NULL);
 	*classadAssign = *classad;
 	int actual1 = -1, actual2 = -1;
-	char actual3[1024];
+	std::string actual3;
 	classadAssign->EvalInteger("A", NULL, actual1);
 	classadAssign->EvalBool("B", NULL, actual2);
 	classadAssign->EvalString("C", NULL, actual3);
@@ -675,8 +679,8 @@ static bool test_assignment_actuals_before() {
 	emit_output_actual_header();
 	emit_param("A", "%d", actual1);
 	emit_param("B", "%d", actual2);
-	emit_param("C", actual3);
-	if(actual1 != 1 || actual2 != 1 || strcmp(actual3, "String") != MATCH) {
+	emit_param("C", "%s", actual3.c_str());
+	if(actual1 != 1 || actual2 != 1 || strcmp(actual3.c_str(), "String") != MATCH) {
 		delete classad; delete classadAssign;
 		FAIL;
 	}
@@ -1396,20 +1400,20 @@ static bool test_expr_tree_to_string_big() {
 
 static bool test_get_references_simple_true_internal() {
 	emit_test("Test that GetReferences() puts the references of the classad "
-		"into the StringList for internal references.");
+		"into the set for internal references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
 		"(AvailableDisk > Disk) && (AvailableDisk > Memory) && (ImageSize > "
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = true;
-	bool result = internal_references->contains("Memory") &&
-		internal_references->contains("Disk");
+	bool result = internal_references.count("Memory") &&
+		internal_references.count("Disk");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1421,30 +1425,28 @@ static bool test_get_references_simple_true_internal() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_simple_true_external() {
 	emit_test("Test that GetReferences() puts the references of the classad "
-		"into the StringList for external references.");
+		"into the set for external references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
 		"(AvailableDisk > Disk) && (AvailableDisk > Memory) && (ImageSize > "
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = true;
-	bool result = external_references->contains("ImageSize") &&
-		external_references->contains("AvailableDisk") &&
-		external_references->contains("XX");
+	bool result = external_references.count("ImageSize") &&
+		external_references.count("AvailableDisk") &&
+		external_references.count("XX");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1456,16 +1458,14 @@ static bool test_get_references_simple_true_external() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_simple_false_internal() {
 	emit_test("Test that GetReferences() doesn't put the references of the "
-		"classad into the incorrect references StringList for internal "
+		"classad into the incorrect references set for internal "
 		"references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
@@ -1473,14 +1473,14 @@ static bool test_get_references_simple_false_internal() {
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = false;
-	bool result = internal_references->contains("ImageSize") &&
-		internal_references->contains("AvailableDisk") &&
-		internal_references->contains("Linux");
+	bool result = internal_references.count("ImageSize") &&
+		internal_references.count("AvailableDisk") &&
+		internal_references.count("Linux");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1492,16 +1492,14 @@ static bool test_get_references_simple_false_internal() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_simple_false_external() {
 	emit_test("Test that GetReferences() doesn't put the references of the "
-		"classad into the incorrect references StringList for external "
+		"classad into the incorrect references set for external "
 		"references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
@@ -1509,15 +1507,15 @@ static bool test_get_references_simple_false_external() {
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = false;
-	bool result = external_references->contains("Memory") &&
-		external_references->contains("Disk") &&
-		external_references->contains("Linux") &&
-		external_references->contains("X");
+	bool result = external_references.count("Memory") &&
+		external_references.count("Disk") &&
+		external_references.count("Linux") &&
+		external_references.count("X");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1529,33 +1527,31 @@ static bool test_get_references_simple_false_external() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_complex_true_internal() {
 	emit_test("Test that GetReferences() puts the references of the classad "
-		"into the StringList for internal references.");
+		"into the set for internal references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tFoo = Bar\n\t\tBar = True\n\t\tRequirements = ((ImageSize > Memory) && "
 		"(AvailableDisk > Disk) && (AvailableDisk > Memory) && (ImageSize > "
 		"Disk)) && func(X, XX) && My.Foo";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = true;
-	bool result = internal_references->contains("Memory") &&
-		internal_references->contains("Disk") &&
-		internal_references->contains("Foo") &&
-		internal_references->contains("Bar") &&
-		internal_references->contains("X") &&
-		internal_references->number() == 5;
+	bool result = internal_references.count("Memory") &&
+		internal_references.count("Disk") &&
+		internal_references.count("Foo") &&
+		internal_references.count("Bar") &&
+		internal_references.count("X") &&
+		internal_references.size() == 5;
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1567,31 +1563,29 @@ static bool test_get_references_complex_true_internal() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_complex_true_external() {
 	emit_test("Test that GetReferences() puts the references of the classad "
-		"into the StringList for external references.");
+		"into the set for external references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux\n\t\t"
 		"Requirements = ((TARGET.ImageSize > Memory) && (AvailableDisk > Disk) "
 		"&& (TARGET.AvailableDisk > Memory) && (TARGET.ImageSize > Disk)) "
 	    "&& foo(TARGET.X, TARGET.XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = true;
-	bool result = external_references->contains("ImageSize") &&
-		external_references->contains("AvailableDisk") &&
-		external_references->contains("X") &&
-		external_references->contains("XX");
+	bool result = external_references.count("ImageSize") &&
+		external_references.count("AvailableDisk") &&
+		external_references.count("X") &&
+		external_references.count("XX");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1603,16 +1597,14 @@ static bool test_get_references_complex_true_external() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_complex_false_internal() {
 	emit_test("Test that GetReferences() doesn't put the references of the "
-		"classad into the incorrect references StringList for internal "
+		"classad into the incorrect references set for internal "
 		"references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
@@ -1620,14 +1612,14 @@ static bool test_get_references_complex_false_internal() {
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = false;
-	bool result = internal_references->contains("ImageSize") &&
-		internal_references->contains("AvailableDisk") &&
-		internal_references->contains("Linux");
+	bool result = internal_references.count("ImageSize") &&
+		internal_references.count("AvailableDisk") &&
+		internal_references.count("Linux");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1639,16 +1631,14 @@ static bool test_get_references_complex_false_internal() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
 	PASS;
 }
 
 static bool test_get_references_complex_false_external() {
 	emit_test("Test that GetReferences() doesn't put the references of the "
-		"classad into the incorrect references StringList for external "
+		"classad into the incorrect references set for external "
 		"references.");
     const char* classad_string = "\tMemory = 60\n\t\tDisk = 40\n\t\tOS = Linux"
 		"\n\t\tX = 4\n\t\tRequirements = ((ImageSize > Memory) && "
@@ -1656,14 +1646,14 @@ static bool test_get_references_complex_false_external() {
 		"Disk)) && foo(X, XX)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	StringList* internal_references = new StringList;
-	StringList* external_references = new StringList;
-	classad.GetReferences("Requirements", internal_references, 
-		external_references);
+	classad::References internal_references;
+	classad::References external_references;
+	GetReferences("Requirements", classad, &internal_references,
+		&external_references);
 	bool expect = false;
-	bool result = external_references->contains("Memory") &&
-		external_references->contains("Disk") &&
-		external_references->contains("Linux");
+	bool result = external_references.count("Memory") &&
+		external_references.count("Disk") &&
+		external_references.count("Linux");
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "Requirements");
@@ -1675,10 +1665,100 @@ static bool test_get_references_complex_false_external() {
 	emit_output_actual_header();
 	emit_param("Contains References", "%s", tfstr(result));
 	if(result != expect) {
-		delete internal_references; delete external_references;
 		FAIL;
 	}
-	delete internal_references; delete external_references;
+	PASS;
+}
+
+static bool test_reference_name_trimming_internal() {
+	emit_test("Test that TrimReferenceNames() edits the full names "
+		"of internal references properly.");
+	classad::References initial_set;
+	classad::References result_set;
+	classad::References expect_set;
+	initial_set.insert("Name");
+	initial_set.insert("TARGET.Rank");
+	initial_set.insert(".Disk");
+	initial_set.insert("Parent.Child");
+	initial_set.insert(".left.Outer.Inner");
+	result_set = initial_set;
+	expect_set.insert("Name");
+	expect_set.insert("TARGET");
+	expect_set.insert("Disk");
+	expect_set.insert("Parent");
+	expect_set.insert("left");
+	TrimReferenceNames(result_set, false);
+	std::string initial_str;
+	std::string expect_str;
+	std::string result_str;
+	classad::References::iterator it;
+	for ( it = initial_set.begin(); it != initial_set.end(); it++ ) {
+		initial_str += *it;
+		initial_str += " ";
+	}
+	for ( it = expect_set.begin(); it != expect_set.end(); it++ ) {
+		expect_str += *it;
+		expect_str += " ";
+	}
+	for ( it = result_set.begin(); it != result_set.end(); it++ ) {
+		result_str += *it;
+		result_str += " ";
+	}
+	emit_input_header();
+	emit_param("References", "%s", initial_str.c_str());
+	emit_output_expected_header();
+	emit_param("References", "%s", expect_str.c_str());
+	emit_output_actual_header();
+	emit_param("References", "%s", result_str.c_str());
+	if(result_set != expect_set) {
+		FAIL;
+	}
+	PASS;
+}
+
+static bool test_reference_name_trimming_external() {
+	emit_test("Test that TrimReferenceNames() edits the full names "
+		"of external references properly.");
+	classad::References initial_set;
+	classad::References result_set;
+	classad::References expect_set;
+	initial_set.insert("Name");
+	initial_set.insert("TARGET.Rank");
+	initial_set.insert(".Disk");
+	initial_set.insert("Parent.Child");
+	initial_set.insert(".left.Outer.Inner");
+	result_set = initial_set;
+	expect_set.insert("Name");
+	expect_set.insert("Rank");
+	expect_set.insert("Disk");
+	expect_set.insert("Parent");
+	expect_set.insert("Outer");
+	TrimReferenceNames(result_set, true);
+	std::string initial_str;
+	std::string expect_str;
+	std::string result_str;
+	classad::References::iterator it;
+	for ( it = initial_set.begin(); it != initial_set.end(); it++ ) {
+		initial_str += *it;
+		initial_str += " ";
+	}
+	for ( it = expect_set.begin(); it != expect_set.end(); it++ ) {
+		expect_str += *it;
+		expect_str += " ";
+	}
+	for ( it = result_set.begin(); it != result_set.end(); it++ ) {
+		result_str += *it;
+		result_str += " ";
+	}
+	emit_input_header();
+	emit_param("References", "%s", initial_str.c_str());
+	emit_output_expected_header();
+	emit_param("References", "%s", expect_str.c_str());
+	emit_output_actual_header();
+	emit_param("References", "%s", result_str.c_str());
+	if(result_set != expect_set) {
+		FAIL;
+	}
 	PASS;
 }
 
@@ -3173,7 +3253,7 @@ static bool test_if_then_else_false() {
 		"small\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "small";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3186,8 +3266,8 @@ static bool test_if_then_else_false() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3201,7 +3281,7 @@ static bool test_if_then_else_false_error() {
 		"\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "small";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3214,8 +3294,8 @@ static bool test_if_then_else_false_error() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3228,7 +3308,7 @@ static bool test_if_then_else_false_constant() {
     const char* classad_string = "\tB=ifThenElse(0.0, \"then\", \"else\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "else";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3241,8 +3321,8 @@ static bool test_if_then_else_false_constant() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3255,7 +3335,7 @@ static bool test_if_then_else_true() {
 		"\"small\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "big";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3268,8 +3348,8 @@ static bool test_if_then_else_true() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3283,7 +3363,7 @@ static bool test_if_then_else_true_error() {
 		"4 / 0)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "big";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3296,8 +3376,8 @@ static bool test_if_then_else_true_error() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3310,7 +3390,7 @@ static bool test_if_then_else_true_constant1() {
     const char* classad_string = "\tB=ifThenElse(1.0, \"then\", \"else\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "then";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3323,8 +3403,8 @@ static bool test_if_then_else_true_constant1() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -3337,7 +3417,7 @@ static bool test_if_then_else_true_constant2() {
     const char* classad_string = "\tB=ifThenElse(3.7, \"then\", \"else\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "then";
 	int retVal = classad.EvalString("B", NULL, actual);
 	emit_input_header();
@@ -3350,8 +3430,8 @@ static bool test_if_then_else_true_constant2() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal == 0 || strcmp(actual, expect)) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal == 0 || strcmp(actual.c_str(), expect)) {
 		FAIL;
 	}
 	PASS;
@@ -4568,7 +4648,7 @@ static bool test_string_negative_int() {
 	const char* classad_string = "\tA1=string(\"-3\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
@@ -4591,7 +4671,7 @@ static bool test_string_positive_int() {
 	const char* classad_string = "\tA1=string(123)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
@@ -4614,7 +4694,7 @@ static bool test_strcat_short() {
 	const char* classad_string = "\tA1=strcat(\"-3\",\"3\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "-33";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -4627,8 +4707,8 @@ static bool test_strcat_short() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -4641,7 +4721,7 @@ static bool test_strcat_long() {
 		"\"f\",\"g\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "abcdefg";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -4654,8 +4734,8 @@ static bool test_strcat_long() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5738,7 +5818,7 @@ static bool test_substr_end() {
 	const char* classad_string = "\tA1=substr(\"abcdefg\", 3)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "defg";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -5751,8 +5831,8 @@ static bool test_substr_end() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5764,7 +5844,7 @@ static bool test_substr_middle() {
 	const char* classad_string = "\tA1=substr(\"abcdefg\", 3, 2)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "de";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -5777,8 +5857,8 @@ static bool test_substr_middle() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5790,7 +5870,7 @@ static bool test_substr_negative_index() {
 	const char* classad_string = "\tA1=substr(\"abcdefg\", -2, 1)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "f";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -5803,8 +5883,8 @@ static bool test_substr_negative_index() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5816,7 +5896,7 @@ static bool test_substr_negative_length() {
 	const char* classad_string = "\tA1=substr(\"abcdefg\", 3, -1)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "def";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -5829,8 +5909,8 @@ static bool test_substr_negative_length() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5842,7 +5922,7 @@ static bool test_substr_out_of_bounds() {
 	const char* classad_string = "\tA1=substr(\"abcdefg\", 3, -9)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -5855,10 +5935,9 @@ static bool test_substr_out_of_bounds() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
-		FAIL;
-	}
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
+		FAIL;	}
 	PASS;
 }
 
@@ -5922,7 +6001,7 @@ static bool test_formattime_empty() {
 	const char* classad_string = "\tA1=formattime()";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
@@ -5948,14 +6027,14 @@ static bool test_formattime_current() {
 		"CurrentTime)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
-	char expect[1024];
+	std::string actual;
+	std::string expect;
 	int retVal, attempts = 0;
 	do {	
 		classad.EvalString("A0", NULL, expect);
 		retVal = classad.EvalString("A1", NULL, actual);
 		attempts++;
-	}while(attempts < 10 && strcmp(actual, expect) != MATCH);
+	}while(attempts < 10 && strcmp(actual.c_str(), expect.c_str()) != MATCH);
 	emit_input_header();
 	emit_param("ClassAd", classad_string);
 	emit_param("Attribute", "A1");
@@ -5963,11 +6042,11 @@ static bool test_formattime_current() {
 	emit_param("STRING", "");
 	emit_output_expected_header();
 	emit_retval("1");
-	emit_param("STRING Value", expect);
+	emit_param("STRING Value", "%s", expect.c_str());
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect.c_str()) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -5983,14 +6062,14 @@ static bool test_formattime_current_options() {
 		"CurrentTime,\"%c\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
-	char expect[1024];
+	std::string actual;
+	std::string expect;
 	int retVal = -1, attempts = 0;
 	do {	
 		classad.EvalString("A0", NULL, expect);
 		retVal = classad.EvalString("A1", NULL, actual);
 		attempts++;
-	}while(attempts < 10 && strcmp(actual, expect) != MATCH);
+	}while(attempts < 10 && strcmp(actual.c_str(), expect.c_str()) != MATCH);
 	emit_input_header();
 	emit_param("ClassAd", "%s", classad_string);
 	emit_param("Attribute", "A1");
@@ -5998,11 +6077,11 @@ static bool test_formattime_current_options() {
 	emit_param("STRING", "");
 	emit_output_expected_header();
 	emit_retval("1");
-	emit_param("STRING Value", expect);
+	emit_param("STRING Value", "%s", expect.c_str());
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect.c_str()) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -6014,7 +6093,7 @@ static bool test_formattime_int() {
 	const char* classad_string = "\tA1=formattime(1174737600,\"%m/%d/%y\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "03/24/07";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -6027,8 +6106,8 @@ static bool test_formattime_int() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -6516,7 +6595,7 @@ static bool test_regexps_match() {
 		"\"thisisamatchlist\", \"one is \\1 two is \\2\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "one is mat two is h";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -6529,8 +6608,8 @@ static bool test_regexps_match() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -6543,7 +6622,7 @@ static bool test_regexps_match_case() {
 		"\"thisisamatchlist\", \"one is \\1 two is \\2\",\"i\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "one is mat two is h";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -6556,8 +6635,8 @@ static bool test_regexps_match_case() {
 	emit_param("STRING Value", "%s", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "%s", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -7441,7 +7520,7 @@ static bool test_interval_minute() {
 	const char* classad_string = "\tA1=Interval(60)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "1:00";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -7454,8 +7533,8 @@ static bool test_interval_minute() {
 	emit_param("STRING Value", "'%s'", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "'%s'", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "'%s'", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -7470,7 +7549,7 @@ static bool test_interval_hour() {
 	const char* classad_string = "\tA1=Interval(3600)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "1:00:00";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -7483,8 +7562,8 @@ static bool test_interval_hour() {
 	emit_param("STRING Value", "'%s'", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "'%s'", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "'%s'", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -7499,7 +7578,7 @@ static bool test_interval_day() {
 	const char* classad_string = "\tA1=Interval(86400)";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "1+00:00:00";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -7512,8 +7591,8 @@ static bool test_interval_day() {
 	emit_param("STRING Value", "'%s'", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", "'%s'", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "'%s'", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -7525,7 +7604,7 @@ static bool test_to_upper() {
 	const char* classad_string = "\tA1=toupper(\"AbCdEfg\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "ABCDEFG";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -7538,8 +7617,8 @@ static bool test_to_upper() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;
@@ -7551,7 +7630,7 @@ static bool test_to_lower() {
 	const char* classad_string = "\tA1=toLower(\"ABCdeFg\")";
 	compat_classad::ClassAd classad;
 	classad.initFromString(classad_string, NULL);
-	char actual[1024];
+	std::string actual;
 	const char* expect = "abcdefg";
 	int retVal = classad.EvalString("A1", NULL, actual);
 	emit_input_header();
@@ -7564,8 +7643,8 @@ static bool test_to_lower() {
 	emit_param("STRING Value", expect);
 	emit_output_actual_header();
 	emit_retval("%d", retVal);
-	emit_param("STRING Value", actual);
-	if(retVal != 1 || strcmp(actual, expect) != MATCH) {
+	emit_param("STRING Value", "%s", actual.c_str());
+	if(retVal != 1 || strcmp(actual.c_str(), expect) != MATCH) {
 		FAIL;
 	}
 	PASS;

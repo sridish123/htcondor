@@ -118,8 +118,6 @@ static bool find_char_last(void);
 static bool find_char_not_found(void);
 static bool find_char_invalid_greater(void);
 static bool find_char_invalid_less(void);
-static bool hash_empty(void);
-static bool hash_non_empty(void);
 static bool find_empty(void);
 static bool find_non_empty(void);
 static bool find_beginning(void);
@@ -219,8 +217,6 @@ static bool your_string_equality_default_constructor(void);
 static bool your_string_assignment_non_empty_empty(void);
 static bool your_string_assignment_empty_non_empty(void);
 static bool your_string_assignment_non_empty(void);
-static bool your_string_hash_function_non_empty(void);
-static bool your_string_hash_function_empty(void);
 static bool test_stl_string_casting(void);
 
 bool OTEST_MyString(void) {
@@ -326,8 +322,6 @@ bool OTEST_MyString(void) {
 	driver.register_function(find_char_not_found);
 	driver.register_function(find_char_invalid_greater);
 	driver.register_function(find_char_invalid_less);
-	driver.register_function(hash_empty);
-	driver.register_function(hash_non_empty);
 	driver.register_function(find_empty);
 	driver.register_function(find_non_empty);
 	driver.register_function(find_beginning);
@@ -427,8 +421,6 @@ bool OTEST_MyString(void) {
 	driver.register_function(your_string_assignment_non_empty_empty);
 	driver.register_function(your_string_assignment_empty_non_empty);
 	driver.register_function(your_string_assignment_non_empty);
-	driver.register_function(your_string_hash_function_non_empty);
-	driver.register_function(your_string_hash_function_empty);
 	driver.register_function(test_stl_string_casting);
 		// run the tests
 	return driver.do_all_functions();
@@ -1720,9 +1712,9 @@ static bool concatenation_char_null() {
 
 //in test_mystring.cpp 379
 static bool substr_empty() {
-	emit_test("Test Substr() on an empty MyString.");
+	emit_test("Test substr() on an empty MyString.");
 	MyString a;
-	MyString b = a.Substr(0, 5);
+	MyString b = a.substr(0, 5);
 	emit_input_header();
 	emit_param("Pos1", "%d", 0);
 	emit_param("Pos2", "%d", 1);
@@ -1738,12 +1730,12 @@ static bool substr_empty() {
 
 //in test_mystring.cpp 191
 static bool substr_beginning() {
-	emit_test("Test Substr() on the beginning of a MyString.");
+	emit_test("Test substr() on the beginning of a MyString.");
 	MyString a("blahbaz!");
-	MyString b = a.Substr(0, 3);
+	MyString b = a.substr(0, 4);
 	emit_input_header();
 	emit_param("Pos1", "%d", 0);
-	emit_param("Pos2", "%d", 3);
+	emit_param("Pos2", "%d", 4);
 	emit_output_expected_header();
 	emit_retval("%s", "blah");
 	emit_output_actual_header();
@@ -1756,12 +1748,12 @@ static bool substr_beginning() {
 
 //in test_mystring.cpp 200
 static bool substr_end() {
-	emit_test("Test Substr() on the end of a MyString.");
+	emit_test("Test substr() on the end of a MyString.");
 	MyString a("blahbaz!");
-	MyString b = a.Substr(4, 7);
+	MyString b = a.substr(4, 4);
 	emit_input_header();
 	emit_param("Pos1", "%d", 4);
-	emit_param("Pos2", "%d", 7);
+	emit_param("Pos2", "%d", 4);
 	emit_output_expected_header();
 	emit_retval("%s", "baz!");
 	emit_output_actual_header();
@@ -1774,13 +1766,13 @@ static bool substr_end() {
 
 //in test_mystring.cpp 218
 static bool substr_outside_beginning() {
-	emit_test("Test Substr() when passed a position before the beginning of "
+	emit_test("Test substr() when passed a position before the beginning of "
 		"the MyString.");
 	MyString a("blahbaz!");
-	MyString b = a.Substr(-2, 5);
+	MyString b = a.substr(-2, 6);
 	emit_input_header();
 	emit_param("Pos1", "%d", -2);
-	emit_param("Pos2", "%d", 5);
+	emit_param("Pos2", "%d", 6);
 	emit_output_expected_header();
 	emit_retval("%s", "blahba");
 	emit_output_actual_header();
@@ -1793,10 +1785,10 @@ static bool substr_outside_beginning() {
 
 //in test_mystring.cpp 209
 static bool substr_outside_end() {
-	emit_test("Test Substr() when passed a position after the end of the "
+	emit_test("Test substr() when passed a position after the end of the "
 		"MyString.");
 	MyString a("blahbaz!");
-	MyString b = a.Substr(5, 10);
+	MyString b = a.substr(5, 10);
 	emit_input_header();
 	emit_param("Pos1", "%d", 5);
 	emit_param("Pos2", "%d", 10);
@@ -1962,38 +1954,6 @@ static bool find_char_invalid_less() {
 	emit_output_actual_header();
 	emit_retval("%d", pos);
 	if(pos != -1) {
-		FAIL;
-	}
-	PASS;
-}
-
-static bool hash_empty() {
-	emit_test("Test Hash() on an empty MyString.");
-	emit_comment("This test compares the hash function to 0 even though 0 is "
-		" a possible hash function");
-	MyString a;
-	unsigned int hash = a.Hash();
-	emit_output_expected_header();
-	emit_retval("%s", "!= 0");
-	emit_output_actual_header();
-	emit_retval("%d", hash);
-	if(hash != 0) {
-		FAIL;
-	}
-	PASS;
-}
-
-static bool hash_non_empty() {
-	emit_test("Test Hash() on a non-empty MyString.");
-	emit_comment("This test compares the hash function to 0 even though 0 is "
-		" a possible hash function");
-	MyString a("foobar");
-	unsigned int hash = a.Hash();
-	emit_output_expected_header();
-	emit_retval("%s", "!= 0");
-	emit_output_actual_header();
-	emit_retval("%d", hash);
-	if(hash == 0) {
 		FAIL;
 	}
 	PASS;
@@ -3818,38 +3778,6 @@ static bool your_string_assignment_non_empty() {
 	emit_output_expected_header();
 	emit_retval("%s", "b");
 	if(!(a == "b")) {
-		FAIL;
-	}
-	PASS;
-}
-
-static bool your_string_hash_function_non_empty() {
-	emit_test("Test hashFunction() on a non-empty sensitive string.");
-	YourString a("foo");
-	unsigned int hash = YourString::hashFunction(a);
-	emit_input_header();
-	emit_param("YourString", "%s", "foo");
-	emit_output_expected_header();
-	emit_retval("%s", "!=0");
-	emit_output_actual_header();
-	emit_retval("%d", hash);
-	if(hash == 0) {
-		FAIL;
-	}
-	PASS;
-}
-
-static bool your_string_hash_function_empty() {
-	emit_test("Test hashFunction() on an empty sensitive string.");
-	YourString a;
-	unsigned int hash = YourString::hashFunction(a);
-	emit_input_header();
-	emit_param("YourString", "%s", "foo");
-	emit_output_expected_header();
-	emit_retval("%s", "!=0");
-	emit_output_actual_header();
-	emit_retval("%d", hash);
-	if(hash == 0) {
 		FAIL;
 	}
 	PASS;

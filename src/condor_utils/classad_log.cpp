@@ -367,6 +367,42 @@ bool TruncateClassAdLog(
 }
 
 
+bool AddAttrNamesFromLogTransaction(
+	Transaction* active_transaction,
+	const char * key,
+	classad::References & attrs) // out, attribute names are added when the transaction refers to them for the given key
+{
+	if ( !key ) {
+		return false;
+	}
+
+		// if there is no pending transaction, we're done
+	if (!active_transaction) {
+		return false;
+	}
+
+	int found = 0;
+
+	for (LogRecord *log = active_transaction->FirstEntry(key); log;
+		 log = active_transaction->NextEntry()) {
+		switch (log->get_op_type()) {
+		case CondorLogOp_SetAttribute: {
+			char const *lname = ((LogSetAttribute *)log)->get_name();
+			attrs.insert(lname);
+			++found;
+			break;
+			}
+		case CondorLogOp_DeleteAttribute: {
+			char const *lname = ((LogDeleteAttribute *)log)->get_name();
+			attrs.insert(lname);
+			++found;
+			break;
+			}
+		}
+	}
+	return found > 0;
+}
+
 
 int ExamineLogTransaction(
 	Transaction* active_transaction,
@@ -531,7 +567,7 @@ bool WriteClassAdLogState(
 
 			// Unchain the ad -- we just want to write out this ads exprs,
 			// not all the exprs in the chained ad as well.
-		AttrList *chain = dynamic_cast<AttrList*>(ad->GetChainedParentAd());
+		classad::ClassAd *chain = ad->GetChainedParentAd();
 		ad->Unchain();
 		ad->ResetName();
 		attr_name = ad->NextNameOriginal();
@@ -587,8 +623,8 @@ LogHistoricalSequenceNumber::ReadBody(FILE *fp)
 	char *buf = NULL;
 	rval = readword(fp, buf);
 	if (rval < 0) return rval;
-	MSC_SUPPRESS_WARNING_FIXME(6031)// return value of scanf ignored. int64 does not match %lu
-	sscanf(buf,"%lu",&historical_sequence_number);
+	YourStringDeserializer des(buf);
+	des.deserialize_int(&historical_sequence_number);
 	free(buf);
 
 	rval1 = readword(fp, buf); //the label of the attribute 
@@ -598,8 +634,8 @@ LogHistoricalSequenceNumber::ReadBody(FILE *fp)
 
 	rval1 = readword(fp, buf);
 	if (rval1 < 0) return rval1;
-	MSC_SUPPRESS_WARNING_FIXME(6031 6328)// return value of scanf ignored. int64 does not match %lu
-	sscanf(buf,"%lu",&timestamp);
+	des = buf;
+	des.deserialize_int(&timestamp);
 	free(buf);
 	return rval + rval1;
 }
@@ -640,6 +676,9 @@ LogNewClassAd::Play(void *data_structure)
 	SetTargetTypeName(*ad, targettype);
 	ad->EnableDirtyTracking();
 	result = table->insert(key, ad) ? 0 : -1;
+	if ( result == -1 ) {
+		ctor.Delete(ad);
+	}
 
 #if defined(HAVE_DLOPEN)
 	ClassAdLogPluginManager::NewClassAd(key);
@@ -1110,4 +1149,4 @@ InstantiateLogEntry(FILE *fp, unsigned long recnum, int type, const ConstructLog
 
 // Force instantiation of the simple form of ClassAdLog, used the the Accountant
 //
-template class ClassAdLog<HashKey,const char*,ClassAd*>;
+template class ClassAdLog<std::string,ClassAd*>;

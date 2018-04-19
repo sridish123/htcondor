@@ -47,7 +47,7 @@ Condor_Auth_Passwd :: ~Condor_Auth_Passwd()
     if(m_crypto) delete(m_crypto);
 }
 
-volatile char * 
+char *
 Condor_Auth_Passwd::fetchPassword(const char* nameA,const char* nameB)
 {
 	char *name, *domain, *passwordA, *passwordB;
@@ -98,7 +98,7 @@ Condor_Auth_Passwd::fetchPassword(const char* nameA,const char* nameB)
 	free(passwordA);
 	free(passwordB);
 
-	return (volatile char*)shared_secret;
+	return shared_secret;
 }
 
 char *
@@ -121,7 +121,7 @@ Condor_Auth_Passwd::fetchLogin()
 }
 
 bool
-Condor_Auth_Passwd::setupCrypto(unsigned char* key, const int keylen)
+Condor_Auth_Passwd::setupCrypto(const unsigned char* key, const int keylen)
 {
 		// get rid of any old crypto object
 	if ( m_crypto ) delete m_crypto;
@@ -139,14 +139,14 @@ Condor_Auth_Passwd::setupCrypto(unsigned char* key, const int keylen)
 }
 
 bool
-Condor_Auth_Passwd::encrypt(unsigned char* input, 
+Condor_Auth_Passwd::encrypt(const unsigned char* input,
 					int input_len, unsigned char* & output, int& output_len)
 {
 	return encrypt_or_decrypt(true,input,input_len,output,output_len);
 }
 
 bool
-Condor_Auth_Passwd::decrypt(unsigned char* input, int input_len, 
+Condor_Auth_Passwd::decrypt(const unsigned char* input, int input_len,
 							unsigned char* & output, int& output_len)
 {
 	return encrypt_or_decrypt(false,input,input_len,output,output_len);
@@ -154,7 +154,7 @@ Condor_Auth_Passwd::decrypt(unsigned char* input, int input_len,
 
 bool
 Condor_Auth_Passwd::encrypt_or_decrypt(bool want_encrypt, 
-									   unsigned char* input, 
+									   const unsigned char* input,
 									   int input_len, 
 									   unsigned char* &output, 
 									   int &output_len)
@@ -201,13 +201,13 @@ Condor_Auth_Passwd::encrypt_or_decrypt(bool want_encrypt,
 }
 
 int 
-Condor_Auth_Passwd::wrap(char *   input, 
+Condor_Auth_Passwd::wrap(const char *   input,
 						 int      input_len, 
 						 char*&   output, 
 						 int&     output_len)
 {
 	bool result;
-	unsigned char* in = (unsigned char*)input;
+	const unsigned char* in = (const unsigned char*)input;
 	unsigned char* out = (unsigned char*)output;
 	dprintf(D_SECURITY, "In Condor_Auth_Passwd::wrap.\n");
 	result = encrypt(in,input_len,out,output_len);
@@ -218,13 +218,13 @@ Condor_Auth_Passwd::wrap(char *   input,
 }
 
 int 
-Condor_Auth_Passwd::unwrap(char *   input, 
+Condor_Auth_Passwd::unwrap(const char *   input,
 						   int      input_len, 
 						   char*&   output, 
 						   int&     output_len)
 {
 	bool result;
-	unsigned char* in = (unsigned char*)input;
+	const unsigned char* in = (const unsigned char*)input;
 	unsigned char* out = (unsigned char*)output;
 	
 	dprintf(D_SECURITY, "In Condor_Auth_Passwd::unwrap.\n");
@@ -252,8 +252,8 @@ Condor_Auth_Passwd::setup_shared_keys(struct sk_buf *sk)
     
 		// These are the keys K and K' referred to in the AKEP2
 		// description.
-    volatile unsigned char *ka = (unsigned char *)malloc(EVP_MAX_MD_SIZE);
-    volatile unsigned char *kb = (unsigned char *)malloc(EVP_MAX_MD_SIZE);
+    unsigned char *ka = (unsigned char *)malloc(EVP_MAX_MD_SIZE);
+    unsigned char *kb = (unsigned char *)malloc(EVP_MAX_MD_SIZE);
 
     unsigned int ka_len = 0;
     unsigned int kb_len = 0;
@@ -262,8 +262,8 @@ Condor_Auth_Passwd::setup_shared_keys(struct sk_buf *sk)
     if( !seed_ka || !seed_kb || !ka || !kb ) {
 		if(seed_ka) free(seed_ka);
 		if(seed_kb) free(seed_kb);
-		if(ka) free((void *)const_cast<unsigned char*>(ka));
-		if(kb) free((void *)const_cast<unsigned char*>(kb));
+		if(ka) free(ka);
+		if(kb) free(kb);
         dprintf(D_SECURITY, "Can't authenticate: malloc error.\n");
         return false;
     }
@@ -271,16 +271,16 @@ Condor_Auth_Passwd::setup_shared_keys(struct sk_buf *sk)
 		// Fill in the data for the seed keys.
     setup_seed(seed_ka, seed_kb);
 
-    sk->len = strlen(const_cast<char *>(sk->shared_key));
+    sk->len = strlen(sk->shared_key);
 
 		// Generate the shared keys K and K'
-    hmac((unsigned char *)const_cast<char*>(sk->shared_key), sk->len,
+    hmac((unsigned char *)sk->shared_key, sk->len,
 		 seed_ka, AUTH_PW_KEY_LEN, 
-		 const_cast<unsigned char *>(ka), &ka_len );
+		 ka, &ka_len );
 
-    hmac((unsigned char *)const_cast<char*>(sk->shared_key), sk->len,
+    hmac((unsigned char *)sk->shared_key, sk->len,
 		 seed_kb, AUTH_PW_KEY_LEN, 
-		 const_cast<unsigned char *>(kb), &kb_len );
+		 kb, &kb_len );
 
 	free(seed_ka);
 	free(seed_kb);
@@ -831,30 +831,21 @@ Condor_Auth_Passwd::init_sk(struct sk_buf *sk)
 	sk->kb_len     = 0;
 }
 
-volatile void *
-Condor_Auth_Passwd::spc_memset(volatile void *dst, int c, size_t len)
-{
-		// This should get changed to the lib func when it's there.
-	volatile char *buf;
-   
-	for (buf = (volatile char *)dst;  len;  buf[--len] = c) { }
-	return dst;
-}
 void
 Condor_Auth_Passwd::destroy_sk(struct sk_buf *sk) 
 {
     if(sk->shared_key) {
-		spc_memset(sk->shared_key, 0, sk->len);
-        free((void *)const_cast<char*>(sk->shared_key));
+		memset(sk->shared_key, 0, sk->len);
+        free(sk->shared_key);
     }
 	if(sk->ka) {
-		spc_memset(sk->ka, 0, sk->ka_len);
-		free((void *)const_cast<unsigned char*>(sk->ka));
+		memset(sk->ka, 0, sk->ka_len);
+		free(sk->ka);
 		sk->ka_len = 0;
 	}
 	if(sk->kb) {
-		spc_memset(sk->kb, 0, sk->kb_len);
-		free((void *)const_cast<unsigned char*>(sk->kb));
+		memset(sk->kb, 0, sk->kb_len);
+		free(sk->kb);
 		sk->kb_len = 0;
 	}
 	init_sk(sk);
@@ -954,6 +945,10 @@ Condor_Auth_Passwd::authenticate(const char * /* remoteHost */,
 		m_server_status = client_receive(&m_client_status, &m_t_server);
 		if(m_client_status == AUTH_PW_ABORT) {
 			goto client_abort;
+		}
+		if ( m_server_status == AUTH_PW_ERROR ) {
+			dprintf(D_SECURITY, "PW: Client received ERROR from server, propagating\n");
+			m_client_status = AUTH_PW_ERROR;
 		}
 
 			// Now that we've received the server's name, we can go
@@ -1080,9 +1075,6 @@ Condor_Auth_Passwd::doServerRec1(CondorError* /*errstack*/, bool non_blocking) {
 
 		// ** server side authentication **
 
-	// declare now because of use of goto below
-	int tmp_rv = 0;
-
 		// First we get the client's name and ra, protocol step
 		// (a).
 	dprintf(D_SECURITY, "PW: Server receiving 1.\n");
@@ -1116,14 +1108,14 @@ Condor_Auth_Passwd::doServerRec1(CondorError* /*errstack*/, bool non_blocking) {
 				memcpy(m_t_server.ra, m_t_client.ra, AUTH_PW_KEY_LEN);
 			}
 		}
+	} else if ( m_client_status == AUTH_PW_ERROR ) {
+		dprintf(D_SECURITY, "PW: Server received ERROR from client, propagating\n");
+		m_server_status = AUTH_PW_ERROR;
 	}
 
 		// Protocol message (2), step (b).
 	dprintf(D_SECURITY, "PW: Server sending.\n");
-	tmp_rv = server_send(m_server_status, &m_t_server, &m_sk);
-	if(m_server_status == AUTH_PW_A_OK) {
-		m_server_status = tmp_rv;
-	}
+	m_server_status = server_send(m_server_status, &m_t_server, &m_sk);
 	if(m_server_status == AUTH_PW_ABORT) {
 		m_ret_value = 0;
 		goto server_rec_1_abort;
@@ -1245,7 +1237,7 @@ Condor_Auth_Passwd::calculate_hk(struct msg_t_buf *t_buf, struct sk_buf *sk)
 	
 		// Calculate the hmac using K as the key.
 	hmac( buffer, buffer_len,
-		  const_cast<unsigned char *>(sk->ka), sk->ka_len,
+		  sk->ka, sk->ka_len,
 		  t_buf->hk, &t_buf->hk_len);
 	if(t_buf->hk_len < 1) {
 		dprintf(D_SECURITY, "Error: hk hmac too short.\n");
@@ -1458,7 +1450,7 @@ int Condor_Auth_Passwd::server_receive_two(int *server_status,
 	memset(rb, 0, AUTH_PW_KEY_LEN);
 	memset(hk, 0, EVP_MAX_MD_SIZE);
 
-	if(!t_client->a || !t_client->rb) {
+	if(*server_status == AUTH_PW_A_OK && (!t_client->a || !t_client->rb)) {
 		dprintf(D_SECURITY, "Can't compare to null.\n");
 		*server_status = client_status = AUTH_PW_ABORT;
 		goto server_receive_two_abort;
@@ -1469,8 +1461,10 @@ int Condor_Auth_Passwd::server_receive_two(int *server_status,
 		|| !mySock_->code(a_len)
 		|| !mySock_->code(a)
 		|| !mySock_->code(rb_len)
+		|| !(rb_len <= AUTH_PW_KEY_LEN)
 		|| !(rb_len == mySock_->get_bytes(rb, rb_len))
 		|| !mySock_->code(hk_len)
+		|| !(hk_len <= EVP_MAX_MD_SIZE)
 		|| !(hk_len == mySock_->get_bytes(hk, hk_len))
 		|| !mySock_->end_of_message()) {
 		dprintf(D_SECURITY, "Error communicating with client.  Aborting...\n");
@@ -1545,7 +1539,7 @@ bool Condor_Auth_Passwd::calculate_hkt(msg_t_buf *t_buf, sk_buf *sk)
 
 		// Calculate the hmac.
 	hmac( buffer, buffer_len, 
-		  const_cast<unsigned char *>(sk->ka), sk->ka_len,
+		  sk->ka, sk->ka_len,
 		  t_buf->hkt, &t_buf->hkt_len);
 	if(t_buf->hkt_len < 1) {  // Maybe should be larger!
 		dprintf(D_SECURITY, "Error: hmac returned zero length.\n");
@@ -1629,11 +1623,11 @@ int Condor_Auth_Passwd::server_send(int server_status,
 		|| !mySock_->code(send_b_len)
 		|| !mySock_->code(send_b)
 		|| !mySock_->code(send_ra_len)
-		|| !(mySock_->put_bytes(send_ra, send_ra_len))
+		|| !(send_ra_len == mySock_->put_bytes(send_ra, send_ra_len))
 		|| !mySock_->code(send_rb_len)
-		|| !(mySock_->put_bytes(send_rb, send_rb_len))
+		|| !(send_rb_len == mySock_->put_bytes(send_rb, send_rb_len))
 		|| !mySock_->code(send_hkt_len)
-		|| !(mySock_->put_bytes(send_hkt, send_hkt_len))
+		|| !(send_hkt_len == mySock_->put_bytes(send_hkt, send_hkt_len))
 		|| !mySock_->end_of_message()) {
 		dprintf(D_SECURITY, "Error sending to client.  Aborting...\n");
 		server_status = AUTH_PW_ABORT;
@@ -1674,10 +1668,13 @@ int Condor_Auth_Passwd :: client_receive(int *client_status,
 		|| !mySock_->code(b_len)
 		|| !mySock_->get(b,AUTH_PW_MAX_NAME_LEN)
 		|| !mySock_->code(ra_len)
+		|| !(ra_len <= AUTH_PW_KEY_LEN)
 		|| !(ra_len  == mySock_->get_bytes(ra, ra_len))
 		|| !mySock_->code(rb_len)
+		|| !(rb_len <= AUTH_PW_KEY_LEN)
 		|| !(rb_len  == mySock_->get_bytes(rb, rb_len))
 		|| !mySock_->code(hkt_len)
+		|| !(hkt_len <= EVP_MAX_MD_SIZE)
 		|| !(hkt_len == mySock_->get_bytes(hkt, hkt_len))
 		|| !mySock_->end_of_message()) {
 		dprintf(D_SECURITY, "Error communicating with server.  Aborting...\n");
@@ -1687,7 +1684,7 @@ int Condor_Auth_Passwd :: client_receive(int *client_status,
 	}
 
 		// Make sure the random strings are the right size.
-	if(ra_len != AUTH_PW_KEY_LEN || rb_len != AUTH_PW_KEY_LEN) {
+	if(server_status == AUTH_PW_A_OK && (ra_len != AUTH_PW_KEY_LEN || rb_len != AUTH_PW_KEY_LEN)) {
 		dprintf(D_SECURITY, "Incorrect protocol.\n");
 		server_status = AUTH_PW_ERROR;
 	}
@@ -1781,6 +1778,7 @@ int Condor_Auth_Passwd::server_receive_one(int *server_status,
 		|| !mySock_->code(a_len)
 		|| !mySock_->code(a) 
 		|| !mySock_->code(ra_len)
+		|| !(ra_len <= AUTH_PW_KEY_LEN)
 		|| !(ra_len == mySock_->get_bytes(ra, ra_len))
 		|| !mySock_->end_of_message()) {
 
@@ -1842,8 +1840,8 @@ Condor_Auth_Passwd::set_session_key(struct msg_t_buf *t_buf, struct sk_buf *sk)
 
 		// Calculate W based on K'
 	hmac( t_buf->rb, AUTH_PW_KEY_LEN,
-		  const_cast<unsigned char *>(sk->kb), sk->kb_len,
-		  (unsigned char *)key, &key_len );
+		  sk->kb, sk->kb_len,
+		  key, &key_len );
 
 	dprintf(D_SECURITY, "Key length: %d\n", key_len);
 		// Fill the key structure.

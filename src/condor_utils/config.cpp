@@ -26,7 +26,6 @@
 #include "param_info.h"
 #include "param_info_tables.h"
 #include "condor_string.h"
-#include "extra_param_info.h"
 #include "condor_random_num.h"
 #include "condor_uid.h"
 #include "my_popen.h"
@@ -713,6 +712,7 @@ static expr_character_t Characterize_config_if_expression(const char * expr, boo
 				if (matches_literal_ignore_case(begin, "defined"))
 					return CIFT_IFDEF; // identify bare defined to insure a reasonable error message
 			}
+			//@fallthrough@
 		case ct_alpha|ct_digit:
 		case ct_alpha|ct_digit|ct_float:
 		case ct_alpha|ct_ident:
@@ -1225,7 +1225,7 @@ void MACRO_SET::push_error(FILE * fh, int code, const char* preface, const char*
 
 	if (this->errors) {
 		const char * subsys = (this->options & CONFIG_OPT_SUBMIT_SYNTAX) ? "Submit" : "Config";
-		this->errors->push(subsys, code, message);
+		this->errors->push(subsys, code, message ? message : "null");
 	} else {
 		if (message) {
 			fprintf(fh, "%s", message);
@@ -1944,7 +1944,7 @@ FILE* Open_macro_source (
 			}
 			fp = my_popen(argList, "r", 0 | MY_POPEN_OPT_FAIL_QUIETLY);
 			if ( ! fp) {
-				config_errmsg = "not a valid command";
+				formatstr(config_errmsg, "not a valid command, errno=%d : %s", errno, strerror(errno));
 				return NULL;
 			}
 		} else {
@@ -3575,6 +3575,7 @@ static const char * evaluate_macro_func (
 		case SPECIAL_MACRO_ID_FILENAME:
 		{
 			const char * mval = lookup_macro(name, macro_set, ctx);
+			if ( ! mval) mval = body;
 			tvalue = NULL;
 
 			auto_free_ptr tmp2;

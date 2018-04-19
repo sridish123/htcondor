@@ -298,10 +298,6 @@ const int UPDATE_NEGOTIATOR_AD 	= 49;
 const int QUERY_NEGOTIATOR_ADS	= 50;
 const int INVALIDATE_NEGOTIATOR_ADS = 51;
 
-const int UPDATE_QUILL_AD	= 52;
-const int QUERY_QUILL_ADS	= 53;
-const int INVALIDATE_QUILL_ADS  = 54;
-
 const int UPDATE_HAD_AD = 55;
 const int QUERY_HAD_ADS = 56;
 const int INVALIDATE_HAD_ADS = 57;
@@ -311,13 +307,13 @@ const int INVALIDATE_ADS_GENERIC = 59;
 
 const int UPDATE_STARTD_AD_WITH_ACK = 60;
 
-const int UPDATE_XFER_SERVICE_AD		= 61;
-const int QUERY_XFER_SERVICE_ADS		= 62;
-const int INVALIDATE_XFER_SERVICE_ADS	= 63;
+//const int UPDATE_XFER_SERVICE_AD		= 61;	/* Not used */
+//const int QUERY_XFER_SERVICE_ADS		= 62;	/* Not used */
+//const int INVALIDATE_XFER_SERVICE_ADS	= 63;	/* Not used */
 
-const int UPDATE_LEASE_MANAGER_AD		= 64;
-const int QUERY_LEASE_MANAGER_ADS		= 65;
-const int INVALIDATE_LEASE_MANAGER_ADS  = 66;
+//const int UPDATE_LEASE_MANAGER_AD		= 64;	/* Not used */
+//const int QUERY_LEASE_MANAGER_ADS		= 65;	/* Not used */
+//const int INVALIDATE_LEASE_MANAGER_ADS  = 66;	/* Not used */
 
 const int CCB_REGISTER = 67;
 const int CCB_REQUEST = 68;
@@ -489,14 +485,6 @@ NAMETABLE_DIRECTIVE:END_SECTION:collector
 #define TRANSFERD_WRITE_FILES	(TRANSFERD_BASE+2)
 /* files are being read from the transferd's storage */
 #define TRANSFERD_READ_FILES	(TRANSFERD_BASE+3)
-
-/*
-*** Commands used by the new lease manager daemon
-*/
-#define LEASE_MANAGER_BASE			75000
-#define LEASE_MANAGER_GET_LEASES	(LEASE_MANAGER_BASE+0)
-#define LEASE_MANAGER_RENEW_LEASE	(LEASE_MANAGER_BASE+1)
-#define LEASE_MANAGER_RELEASE_LEASE	(LEASE_MANAGER_BASE+2)
 
 
 /*

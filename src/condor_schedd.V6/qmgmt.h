@@ -95,6 +95,7 @@ class QmgmtPeer {
 
 #define JQJ_CACHE_DIRTY_JOBOBJ        0x00001 // set when an attribute cached in the JobQueueJob that doesn't have it's own flag has changed
 #define JQJ_CACHE_DIRTY_SUBMITTERDATA 0x00002 // set when an attribute that affects the submitter name is changed
+#define JQJ_CACHE_DIRTY_CLUSTERATTRS  0x00004 // set then ATTR_EDITED_CLUSTER_ATTRS changes, used only in the cluster ad.
 
 class JobFactory;
 class JobQueueCluster;
@@ -231,6 +232,7 @@ public:
 	// has been started but the transaction has not yet been committed.
 	int ClusterSize() { return cluster_size; }
 	int SetClusterSize(int _cluster_size) { cluster_size = _cluster_size; return cluster_size; }
+	int getNumNotRunning() { return num_idle + num_held; }
 
 	bool HasAttachedJobs() { return ! qe.empty(); }
 	void AttachJob(JobQueueJob * job);
@@ -245,8 +247,10 @@ public:
 
 
 // from qmgmt_factory.cpp
-class JobFactory * MakeJobFactory(int cluster_id, const char * submit_digest_text); // make a job factory from submit digest text
-class JobFactory * MakeJobFactory(JobQueueCluster * job, const char * submit_file); // make a job factory from an on-disk submit digest
+// make a job factory from submit digest text, used on submit, optional user_ident is who to inpersonate when reading item data file (if any)
+class JobFactory * MakeJobFactory(int cluster_id, const char * submit_digest_text, ClassAd * user_ident, std::string & errmsg);
+// make a job factory from an on-disk submit digest - used on schedd restart
+class JobFactory * MakeJobFactory(JobQueueCluster * job, const char * submit_file, bool spooled_submit_file, std::string & errmsg);
 void DestroyJobFactory(JobFactory * factory);
 
 void AttachJobFactoryToCluster(JobFactory * factory, JobQueueCluster * cluster);
@@ -255,15 +259,28 @@ void AttachJobFactoryToCluster(JobFactory * factory, JobQueueCluster * cluster);
 // returns < 0 on error.  if return is 0, retry_delay is set to non-zero to indicate the retrying later might yield success
 int MaterializeNextFactoryJob(JobFactory * factory, JobQueueCluster * cluster, int & retry_delay);
 
+// returns true if there is no materialize policy expression, or if the expression evalues to true
+// returns false if there is an expression and it evaluates to false. When false is returned, retry_delay is set
+// a value of > 0 for retry_delay indicates that trying again later might give a different answer.
+bool CheckMaterializePolicyExpression(JobQueueCluster * cluster, int & retry_delay);
+
 int PostCommitJobFactoryProc(JobQueueCluster * cluster, JobQueueJob * job);
 bool CanMaterializeJobs(JobQueueCluster * cluster); // reutrns true if cluster has a non-paused, non-complete factory
 bool JobFactoryIsComplete(JobQueueCluster * cluster);
 bool JobFactoryIsRunning(JobQueueCluster * cluster);
 bool JobFactoryAllowsClusterRemoval(JobQueueCluster * cluster);
 // if pause_code < 0, pause is permanent, if >= 3, cluster was removed
-int PauseJobFactory(JobFactory * factory, int pause_code);
-int ResumeJobFactory(JobFactory * factory, int pause_code);
-bool CheckJobFactoryPause(JobFactory * factory, int pause_code); // 0 for resume, 1 for pause, returns true if state changed
+typedef enum {
+	mmInvalid = -1, // some fatal error occurred, such as failing to load the submit digest.
+	mmRunning = 0,
+	mmHold = 1,
+	mmNoMoreItems = 2,
+	mmClusterRemoved = 3
+} MaterializeMode;
+int PauseJobFactory(JobFactory * factory, MaterializeMode pause_code);
+int ResumeJobFactory(JobFactory * factory, MaterializeMode pause_code);
+bool CheckJobFactoryPause(JobFactory * factory, int want_pause); // Make sure factory mode matches the persist mode
+bool GetJobFactoryMaterializeMode(JobQueueCluster * cluster, int & pause_code);
 void PopulateFactoryInfoAd(JobFactory * factory, ClassAd & iad);
 void ScheduleClusterForDeferredCleanup(int cluster_id);
 
@@ -299,6 +316,8 @@ ClassAd* GetExpandedJobAd(const PROC_ID& jid, bool persist_expansions);
 
 #ifdef SCHEDD_INTERNAL_DECLARATIONS
 JobQueueJob* GetJobAd(const PROC_ID& jid);
+JobQueueJob* GetJobAndInfo(const PROC_ID& jid, int &universe, const OwnerInfo* &powni); // Used by schedd.cpp since JobQueueJob is not a public structure
+int GetJobInfo(JobQueueJob *job, const OwnerInfo* &powni); // returns universe and OwnerInfo pointer for job
 JobQueueJob* GetJobAd(int cluster, int proc);
 JobQueueCluster* GetClusterAd(const PROC_ID& jid);
 JobQueueCluster* GetClusterAd(int cluster);
@@ -390,11 +409,22 @@ public:
 	}
 	virtual bool insert(const char * key, ClassAd * ad) {
 		JOB_ID_KEY k(key);
+		bool new_ad = false;
 		JobQueueJob * Ad = dynamic_cast<JobQueueJob*>(ad);
-		// if the incoming ad is really a ClassAd and not a JobQueueJob, then make a new object and delete the incoming ad.
-		if ( ! Ad) { Ad = new JobQueueJob(); Ad->Update(*ad); delete ad; }
+		// if the incoming ad is really a ClassAd and not a JobQueueJob, then make a new object.
+		if ( ! Ad) { Ad = new JobQueueJob(); Ad->Update(*ad); new_ad = true; }
 		Ad->SetDirtyTracking(true);
 		int iret = table.insert(k, Ad);
+		// If we made a new ad, we must now delete one of them.
+		// On success, delete the original ad.
+		// On failure, delete the new ad (our caller will delete the original one).
+		if ( new_ad ) {
+			if ( iret >= 0 ) {
+				delete ad;
+			} else {
+				delete Ad;
+			}
+		}
 		return iret >= 0;
 	}
 	virtual void startIterations() { table.startIterations(); } // begin iterations
@@ -420,7 +450,7 @@ protected:
 // and a type derived from ClassAd for the payload.
 typedef JOB_ID_KEY JobQueueKey;
 typedef JobQueueJob* JobQueuePayload;
-typedef ClassAdLog<JOB_ID_KEY, const char*,JobQueueJob*> JobQueueLogType;
+typedef ClassAdLog<JOB_ID_KEY, JobQueueJob*> JobQueueLogType;
 
 #define JOB_QUEUE_ITERATOR_OPT_INCLUDE_CLUSTERS     0x0001
 JobQueueLogType::filter_iterator GetJobQueueIterator(const classad::ExprTree &requirements, int timeslice_ms);
@@ -449,6 +479,8 @@ void MarkJobClean(const char* job_id_str);
 
 bool Reschedule();
 
+bool UniverseUsesVanillaStartExpr(int universe);
+
 int get_myproxy_password_handler(Service *, int, Stream *sock);
 
 QmgmtPeer* getQmgmtConnectionInfo();
@@ -463,6 +495,7 @@ extern int grow_prio_recs(int);
 
 extern void	FindRunnableJob(PROC_ID & jobid, ClassAd* my_match_ad, char const * user);
 extern int Runnable(PROC_ID*);
+extern int Runnable(JobQueueJob *job, const char *& reason);
 
 extern class ForkWork schedd_forker;
 

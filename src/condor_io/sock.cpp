@@ -1941,9 +1941,11 @@ Sock::bytes_available_to_read() const
 	}
 
 		/* Make certain our cast is safe to do */
+#ifdef WIN32
 	if ( num_bytes > INT_MAX ) {
 		return -1;
 	}
+#endif
 	
 	int ret_val = (int) num_bytes;	// explicit cast to prevent warnings
 
@@ -2274,8 +2276,6 @@ char * Sock::serialize() const
 
 	MyString out;
 	char * outbuf = NULL;
-	// must overallocate because other people will append to this buffer!!!
-	out.reserve(500); //(int)(verstring_len+fqu_len+8+(6*10)));
 	if (out.serialize_int(_sock)                 && out.serialize_sep("*") &&
 		out.serialize_int((int)_state)           && out.serialize_sep("*") &&
 		out.serialize_int(_timeout)              && out.serialize_sep("*") &&
@@ -2287,7 +2287,7 @@ char * Sock::serialize() const
 	{
 		outbuf = out.detach_buffer();
 	}
-	else 
+	else
 	{
 		dprintf(D_ALWAYS, "Sock::serialize failed - Out of memory?\n");
 	}
@@ -2300,9 +2300,9 @@ Sock::close_serialized_socket(char const *buf)
 {
 		// grab the fd from the serialized string and close it
 	SOCKET passed_sock;
-	int i;
-	i = sscanf(buf,"%u*",&passed_sock);
-	ASSERT( i == 1 );
+	YourStringDeserializer in(buf);
+	bool ok = in.deserialize_int(&passed_sock);
+	ASSERT( ok );
 	::close(passed_sock);
 }
 
@@ -2964,7 +2964,7 @@ Sock::isAuthenticated() const
 }
 
 bool 
-Sock::wrap(unsigned char* d_in,int l_in, 
+Sock::wrap(const unsigned char* d_in,int l_in,
                     unsigned char*& d_out,int& l_out)
 {    
     bool coded = false;
@@ -2977,7 +2977,7 @@ Sock::wrap(unsigned char* d_in,int l_in,
 }
 
 bool 
-Sock::unwrap(unsigned char* d_in,int l_in,
+Sock::unwrap(const unsigned char* d_in,int l_in,
                       unsigned char*& d_out, int& l_out)
 {
     bool coded = false;

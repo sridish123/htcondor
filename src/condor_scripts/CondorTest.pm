@@ -43,7 +43,7 @@ my $porttool = "";
 
 use base 'Exporter';
 
-our @EXPORT = qw(PrintTimeStamp SetTLOGLevel TLOG timestamp runCondorTool runCondorToolCarefully runToolNTimes RegisterResult EndTest GetLogDir FindHttpPort CleanUpChildren StartWebServer);
+our @EXPORT = qw(PrintTimeStamp SetTLOGLevel TLOG timestamp runCondorTool runCondorToolCarefully runToolNTimes RegisterResult EndTest GetLogDir FindHttpPort CleanUpChildren StartWebServer VerifyNumJobsInState);
 
 my %securityoptions =
 (
@@ -683,6 +683,7 @@ sub RunTest
 #                based on the contents of this hash reference.
 #                See below for details
 # want_checkpoint => If true (1), you want a checkpoint.
+# callback => 
 #
 # One and only one of submit_file, submit_body, or submit_hash is MANDATORY.
 #
@@ -762,14 +763,15 @@ END
 			}
 			WriteFileOrDie('executable', $TEST_SCRIPTS{$exe});
 			$choices{'executable'} = 'executable';
-			my $queue = $choices{'_queue'};
-			delete $choices{'_queue'};
-			$submit_body = '';
-			foreach my $k (sort keys %choices) {
-				$submit_body .= "$k = $choices{$k}\n";
-			}
-			$submit_body .= "queue $queue\n";
 		}
+
+		my $queue = $choices{'_queue'};
+		delete $choices{'_queue'};
+		$submit_body = '';
+		foreach my $k (sort keys %choices) {
+			$submit_body .= "$k = $choices{$k}\n";
+		}
+		$submit_body .= "queue $queue\n";
 	}
 	if(defined $submit_body) {
 		$submit_file = "$name.cmd";
@@ -784,6 +786,9 @@ END
 	}
 
 	my $undead = undef;
+	if( defined $args{ callback } ) {
+		$undead = $args{ callback };
+	}
 	return DoTest($name, $submit_file, $want_checkpoint, $undead, $args{dagman_args});
 }
  
@@ -1988,7 +1993,7 @@ sub changeDaemonState
 #	Find the array index which contains a particular pattern.
 #
 # 	First used to strip off variant line in output from
-#	condor_q -direct when passed quilld, schedd and rdbms
+#	condor_q -direct when passed schedd
 #	prior to comparing the arrays collected from the output
 #	of each command....
 
@@ -2018,7 +2023,7 @@ sub find_pattern_in_array
 #
 #	We hash each line from an array and verify that each array has the same contents
 # 	by having a value for each key equalling the number of arrays. First used to
-#	compare output from condor_q -direct quilld, schedd and rdbms
+#	compare output from condor_q -direct schedd
 
 sub compare_arrays
 {

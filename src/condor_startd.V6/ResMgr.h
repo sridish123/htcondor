@@ -180,7 +180,9 @@ public:
 	int		adlist_delete( const char *name ) { return extra_ads.Delete( name ); }
 	int		adlist_delete( StartdCronJob * job ) { return extra_ads.DeleteJob( job ); }
 	int		adlist_clear( StartdCronJob * job )  { return extra_ads.ClearJob( job ); } // delete child ads, and clear the base job ad
-	int		adlist_publish( unsigned r_id, ClassAd *resAd, amask_t mask );
+	int		adlist_publish( unsigned r_id, ClassAd *resAd, amask_t mask, const char * r_id_str );
+	void	adlist_reset_monitors( unsigned r_id, ClassAd * forWhom );
+	void	adlist_unset_monitors( unsigned r_id, ClassAd * forWhom );
 
 	// Methods to control various timers
 	void	check_polling( void );	// See if we need to poll frequently
@@ -293,7 +295,7 @@ public:
 	bool considerResumingAfterDraining();
 
 		// how_fast: DRAIN_GRACEFUL, DRAIN_QUICK, DRAIN_FAST
-	bool startDraining(int how_fast,bool resume_on_completion,ExprTree *check_expr,std::string &new_request_id,std::string &error_msg,int &error_code);
+	bool startDraining(int how_fast,bool resume_on_completion,ExprTree *check_expr,ExprTree *start_expr,std::string &new_request_id,std::string &error_msg,int &error_code);
 
 	bool cancelDraining(std::string request_id,std::string &error_msg,int &error_code);
 
@@ -307,6 +309,11 @@ public:
 	bool typeNumCmp( int* a, int* b );
 
 	void calculateAffinityMask(Resource *rip);
+
+	void checkForDrainCompletion();
+	int getMaxJobRetirementTimeOverride() { return max_job_retirement_time_override; }
+	void resetMaxJobRetirementTime() { max_job_retirement_time_override = -1; }
+
 private:
 
 	Resource**	resources;		// Array of pointers to Resource objects
@@ -386,6 +393,7 @@ private:
 	int expected_quick_draining_badput;
 	int total_draining_badput;
 	int total_draining_unclaimed;
+	int max_job_retirement_time_override;
 };
 
 

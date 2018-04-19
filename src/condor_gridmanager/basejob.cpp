@@ -36,17 +36,13 @@
 #include "condor_holdcodes.h"
 #include "exit.h"
 
-#define HASH_TABLE_SIZE			500
-
 
 int BaseJob::periodicPolicyEvalTid = TIMER_UNSET;
 
 int BaseJob::m_checkRemoteStatusTid = TIMER_UNSET;
 
-HashTable<PROC_ID, BaseJob *> BaseJob::JobsByProcId( HASH_TABLE_SIZE,
-													 hashFuncPROC_ID );
-HashTable<HashKey, BaseJob *> BaseJob::JobsByRemoteId( HASH_TABLE_SIZE,
-													   hashFunction );
+HashTable<PROC_ID, BaseJob *> BaseJob::JobsByProcId( hashFuncPROC_ID );
+HashTable<std::string, BaseJob *> BaseJob::JobsByRemoteId( hashFunction );
 
 void BaseJob::BaseJobReconfig()
 {
@@ -104,7 +100,7 @@ BaseJob::BaseJob( ClassAd *classad )
 	std::string remote_id;
 	jobAd->LookupString( ATTR_GRID_JOB_ID, remote_id );
 	if ( !remote_id.empty() ) {
-		JobsByRemoteId.insert( HashKey( remote_id.c_str() ), this );
+		ASSERT( JobsByRemoteId.insert( remote_id, this ) == 0 );
 	}
 
 	condorState = IDLE; // Just in case lookup fails
@@ -157,7 +153,7 @@ BaseJob::~BaseJob()
 		jobAd->LookupString( ATTR_GRID_JOB_ID, remote_id );
 	}
 	if ( !remote_id.empty() ) {
-		JobsByRemoteId.remove( HashKey( remote_id.c_str() ) );
+		JobsByRemoteId.remove( remote_id );
 	}
 
 	if ( jobAd ) {
@@ -436,7 +432,7 @@ void BaseJob::SetRemoteJobId( const char *job_id )
 		return;
 	}
 	if ( !old_job_id.empty() ) {
-		JobsByRemoteId.remove( HashKey( old_job_id.c_str() ) );
+		JobsByRemoteId.remove( old_job_id );
 		jobAd->AssignExpr( ATTR_GRID_JOB_ID, "Undefined" );
 	} else {
 		//  old job id was NULL
@@ -444,7 +440,7 @@ void BaseJob::SetRemoteJobId( const char *job_id )
 		jobAd->Assign( ATTR_LAST_REMOTE_STATUS_UPDATE, m_lastRemoteStatusUpdate );
 	}
 	if ( !new_job_id.empty() ) {
-		JobsByRemoteId.insert( HashKey( new_job_id.c_str() ), this );
+		ASSERT( JobsByRemoteId.insert( new_job_id, this ) == 0 );
 		jobAd->Assign( ATTR_GRID_JOB_ID, new_job_id.c_str() );
 	} else {
 		// new job id is NULL
@@ -1000,7 +996,6 @@ InitializeUserLog( ClassAd *job_ad )
 {
 	int cluster, proc;
 	std::string userLogFile, dagmanNodeLog;
-	std::string gjid;
 	bool use_xml = false;
 	std::vector<const char*> logfiles;
 
@@ -1016,11 +1011,10 @@ InitializeUserLog( ClassAd *job_ad )
 
 	job_ad->LookupInteger( ATTR_CLUSTER_ID, cluster );
 	job_ad->LookupInteger( ATTR_PROC_ID, proc );
-	job_ad->LookupString( ATTR_GLOBAL_JOB_ID, gjid );
 	job_ad->LookupBool( ATTR_ULOG_USE_XML, use_xml );
 
 	WriteUserLog *ULog = new WriteUserLog();
-	ULog->initialize(logfiles, cluster, proc, 0, gjid.c_str());
+	ULog->initialize(logfiles, cluster, proc, 0);
 	ULog->setUseXML( use_xml );
 	return ULog;
 }

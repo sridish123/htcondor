@@ -442,11 +442,6 @@ void INFNBatchJob::doEvaluateState()
 		case GM_START: {
 			// This state is the real start of the state machine, after
 			// one-time initialization has been taken care of.
-			// If we think there's a running jobmanager
-			// out there, we try to register for callbacks (in GM_REGISTER).
-			// The one way jobs can end up back in this state is if we
-			// attempt a restart of a jobmanager only to be told that the
-			// old jobmanager process is still alive.
 			errorString = "";
 			if ( condorState == COMPLETED ) {
 				gmState = GM_DONE_COMMIT;
@@ -513,6 +508,13 @@ void INFNBatchJob::doEvaluateState()
 			// Once RequestSubmit() is called at least once, you must
 			// CancelRequest() once you're done with the request call
 			if ( myResource->RequestSubmit( this ) == false ) {
+				break;
+			}
+
+			// Can't break in the middle of a transfer, because we need
+			// to clean up any files we've started to move.
+			if ( (condorState == REMOVED || condorState == HELD) && gahpAd == NULL ) {
+				gmState = GM_CLEAR_REQUEST;
 				break;
 			}
 
@@ -599,12 +601,10 @@ void INFNBatchJob::doEvaluateState()
 
 			// Can't break in the middle of a submit, because the job will
 			// end up running if the submit succeeds
-			/*
-			if ( condorState == REMOVED || condorState == HELD ) {
-				gmState = GM_UNSUBMITTED;
+			if ( (condorState == REMOVED || condorState == HELD) && gahpAd == NULL ) {
+				gmState = GM_DELETE_SANDBOX;
 				break;
 			}
-			*/
 			char *job_id_string = NULL;
 
 			if ( gahpAd == NULL ) {
@@ -1376,6 +1376,7 @@ ClassAd *INFNBatchJob::buildSubmitAd()
 	std::string expr;
 	ClassAd *submit_ad;
 	ExprTree *next_expr;
+	classad::Value cereq_val;
 
 	int index;
 	const char *attrs_to_copy[] = {
@@ -1393,6 +1394,15 @@ ClassAd *INFNBatchJob::buildSubmitAd()
 		ATTR_JOB_IWD,
 		ATTR_GRID_RESOURCE,
 		ATTR_REQUEST_MEMORY,
+		"NodeNumber",
+		"HostNumber",
+		"SMPGranularity",
+		"WholeNodes",
+		"HostSMPSize",
+		"BatchExtraSubmitArgs",
+		"StageCmd",
+		"BatchProject",
+		"BatchRuntime",
 		NULL };		// list must end with a NULL
 
 	submit_ad = new ClassAd;
@@ -1402,6 +1412,69 @@ ClassAd *INFNBatchJob::buildSubmitAd()
 		if ( ( next_expr = jobAd->LookupExpr( attrs_to_copy[index] ) ) != NULL ) {
 			ExprTree * pTree = next_expr->Copy();
 			submit_ad->Insert( attrs_to_copy[index], pTree );
+		}
+	}
+
+	if ( jobAd->EvaluateAttr( ATTR_CE_REQUIREMENTS, cereq_val ) ) {
+		classad::ClassAd *cereq_ad;
+		std::string cereq_str;
+
+		if ( cereq_val.IsClassAdValue( cereq_ad ) ) {
+
+			// CERequirements is a nested ad. Build the goofy blahp
+			// expression from the names and values of the nested ad.
+			ExprTree *new_cereq = NULL;
+			for ( classad::ClassAd::iterator next_attr = cereq_ad->begin();
+				  next_attr != cereq_ad->end(); next_attr++ ) {
+				classad::Value val;
+				next_attr->second->Evaluate( val );
+				classad::Literal *new_literal = classad::Literal::MakeLiteral( val );
+				if ( new_literal == NULL ) {
+					continue;
+				}
+				classad::AttributeReference *new_ref = classad::AttributeReference::MakeAttributeReference( NULL, next_attr->first, false );
+				classad::Operation *new_op = classad::Operation::MakeOperation( classad::Operation::EQUAL_OP, new_ref, new_literal );
+				if ( new_cereq == NULL ) {
+					new_cereq = new_op;
+				} else {
+					new_cereq = classad::Operation::MakeOperation( classad::Operation::LOGICAL_AND_OP, new_cereq, new_op );
+				}
+			}
+			submit_ad->Insert( ATTR_CE_REQUIREMENTS, new_cereq );
+
+		} else if ( cereq_val.IsStringValue( cereq_str ) ) {
+
+			// CERequirements is string. Split on comma/space and lookup
+			// the resulting names in the job ad to build the goofy
+			// blahp expression.
+			StringList attr_list( cereq_str.c_str() );
+			ExprTree *new_cereq = NULL;
+			const char *next_attr = NULL;
+			attr_list.rewind();
+			while ( (next_attr = attr_list.next()) ) {
+				classad::Value val;
+				jobAd->EvaluateAttr( next_attr, val );
+				classad::Literal *new_literal = classad::Literal::MakeLiteral( val );
+				if ( new_literal == NULL ) {
+					continue;
+				}
+				classad::AttributeReference *new_ref = classad::AttributeReference::MakeAttributeReference( NULL, next_attr, false );
+				classad::Operation *new_op = classad::Operation::MakeOperation( classad::Operation::EQUAL_OP, new_ref, new_literal );
+				if ( new_cereq == NULL ) {
+					new_cereq = new_op;
+				} else {
+					new_cereq = classad::Operation::MakeOperation( classad::Operation::LOGICAL_AND_OP, new_cereq, new_op );
+				}
+			}
+			submit_ad->Insert( ATTR_CE_REQUIREMENTS, new_cereq );
+
+		} else if ( (next_expr = jobAd->LookupExpr( ATTR_CE_REQUIREMENTS )) ) {
+
+			// CERequirements is neither a ClassAd nor a string.
+			// Forward the unevaluated expression to the blahp.
+			ExprTree * pTree = next_expr->Copy();
+			submit_ad->Insert( ATTR_CE_REQUIREMENTS, pTree );
+
 		}
 	}
 

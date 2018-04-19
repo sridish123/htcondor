@@ -166,9 +166,6 @@
 /* Define if enabling NeST (USED)*/
 #cmakedefine WANT_NEST 1
 
-/* Define if enabling Quill (USED)*/
-#cmakedefine WANT_QUILL 1
-
 /* Define to 1 to support invoking hooks throughout the workflow of a job (USED)*/
 #cmakedefine HAVE_JOB_HOOKS 1
 
@@ -282,14 +279,8 @@
 /* Do we have the classads external (used)*/
 #cmakedefine HAVE_EXT_CLASSADS 1
 
-/* Do we have the coredumper external (used)*/
-#cmakedefine HAVE_EXT_COREDUMPER 1
-
 /* Do we have the globus external (USED)*/
 #cmakedefine HAVE_EXT_GLOBUS 1
-
-/* Do we have the gsoap external (USED)*/
-#cmakedefine HAVE_EXT_GSOAP 1
 
 /* Do we have the krb5 external (USED)*/
 #cmakedefine HAVE_EXT_KRB5 1
@@ -336,9 +327,6 @@
 ///* Do we have the pcre external*/
 #cmakedefine HAVE_EXT_PCRE
 
-///* Do we have the postgresql external*/
-#cmakedefine HAVE_EXT_POSTGRESQL
-
 ///* Do we have the libcgroup external */
 #cmakedefine HAVE_EXT_LIBCGROUP
 
@@ -359,6 +347,9 @@
 /* Define to 1 if 'clock_gettime' function and CLOCK_MONOTONIC_RAW defined. (USED)*/
 #cmakedefine HAVE_CLOCK_MONOTONIC_RAW 1
 #cmakedefine HAVE_CLOCK_REALTIME_COARSE 1
+
+/* Define to 1 if you have the 'clock_nanosleep' function. (USED)*/
+#cmakedefine HAVE_CLOCK_NANOSLEEP 1
 
 /* are we using the GNU linker (USED) */
 #cmakedefine HAVE_GNU_LD 1
@@ -518,6 +509,9 @@
 
 /* Define to 1 if 'f_basetype' is member of 'struct statvfs'. (USED)*/
 #cmakedefine HAVE_STRUCT_STATVFS_F_BASETYPE 1
+
+/* Define to 1 if you have the <sys/capability.h> header file. (USED)*/
+#cmakedefine HAVE_SYS_CAPABILITY_H 1
 
 /* Define to 1 if you have the <sys/mount.h> header file. (USED)*/
 #cmakedefine HAVE_SYS_MOUNT_H 1

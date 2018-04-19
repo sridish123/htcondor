@@ -47,6 +47,7 @@
 
 #include <vector>
 #include <string>
+#include <sstream>
 #include <deque>
 
 #if defined(WANT_CONTRIB) && defined(WITH_MANAGEMENT)
@@ -59,12 +60,9 @@
 // matchmaker class in order to preserve its static-ness.  (otherwise, it
 // is forced to be extern.)
 
-static int comparisonFunction (AttrList *, AttrList *, void *);
+static int comparisonFunction (ClassAd *, ClassAd *, void *);
 #include "matchmaker.h"
 
-
-/* This extracts the machine name from the global job ID user@machine.name#timestamp#cluster.proc*/
-static int get_scheddname_from_gjid(const char * globaljobid, char * scheddname );
 
 static int jobsInSlot(ClassAd &job, ClassAd &offer, int cost);
 
@@ -74,7 +72,7 @@ enum { MM_ERROR, MM_DONE, MM_RESUME };
 // possible outcomes of a matchmaking attempt
 enum { _MM_ERROR, MM_NO_MATCH, MM_GOOD_MATCH, MM_BAD_MATCH };
 
-typedef int (*lessThanFunc)(AttrList*, AttrList*, void*);
+typedef int (*lessThanFunc)(ClassAd*, ClassAd*, void*);
 
 char const *RESOURCES_IN_USE_BY_USER_FN_NAME = "ResourcesInUseByUser";
 char const *RESOURCES_IN_USE_BY_USERS_GROUP_FN_NAME = "ResourcesInUseByUsersGroup";
@@ -389,7 +387,7 @@ Matchmaker ()
 	GotRescheduleCmd=false;
 	job_attr_references = NULL;
 	
-	stashedAds = new AdHash(1000, HashFunc);
+	stashedAds = new AdHash(hashFunction);
 
 	MatchList = NULL;
 	cachedAutoCluster = -1;
@@ -459,6 +457,7 @@ Matchmaker ()
 											 ResourcesInUseByUsersGroup_classad_func );
 	slotWeightStr = 0;
 	m_staticRanks = false;
+	m_dryrun = false;
 }
 
 Matchmaker::
@@ -657,13 +656,6 @@ reinitialize ()
 			EXCEPT ("Error parsing PREEMPTION_REQUIREMENTS expression: %s",
 					tmp);
 		}
-#if defined(ADD_TARGET_SCOPING)
-		if(PreemptionReq){
-			ExprTree *tmp_expr = AddTargetRefs( PreemptionReq, TargetJobAttrs );
-			delete PreemptionReq;
-			PreemptionReq = tmp_expr;
-		}
-#endif
 		dprintf (D_ALWAYS,"PREEMPTION_REQUIREMENTS = %s\n", tmp);
 		free( tmp );
 		tmp = NULL;
@@ -680,13 +672,6 @@ reinitialize ()
 			EXCEPT ("Error parsing PREEMPTION_REQUIREMENTS_PSLOT expression: %s",
 					tmp);
 		}
-#if defined(ADD_TARGET_SCOPING)
-		if(PreemptionReqPslot){
-			ExprTree *tmp_expr = AddTargetRefs( PreemptionReqPslot, TargetJobAttrs );
-			delete PreemptionReqPslot;
-			PreemptionReqPslot = tmp_expr;
-		}
-#endif
 		dprintf (D_ALWAYS,"PREEMPTION_REQUIREMENTS_PSLOT = %s\n", tmp);
 		free( tmp );
 		tmp = NULL;
@@ -752,13 +737,6 @@ reinitialize ()
 			EXCEPT ("Error parsing PREEMPTION_RANK expression: %s", tmp);
 		}
 	}
-#if defined(ADD_TARGET_SCOPING)
-		if(PreemptionRank){
-			tmp_expr = AddTargetRefs( PreemptionRank, TargetJobAttrs );
-			delete PreemptionRank;
-		}
-		PreemptionRank = tmp_expr;
-#endif
 
 	dprintf (D_ALWAYS,"PREEMPTION_RANK = %s\n", (tmp?tmp:"None"));
 
@@ -771,13 +749,6 @@ reinitialize ()
 		if( ParseClassAdRvalExpr(tmp, NegotiatorPreJobRank) ) {
 			EXCEPT ("Error parsing NEGOTIATOR_PRE_JOB_RANK expression: %s", tmp);
 		}
-#if defined(ADD_TARGET_SCOPING)
-		if(NegotiatorPreJobRank){
-			tmp_expr = AddTargetRefs( NegotiatorPreJobRank, TargetJobAttrs );
-			delete NegotiatorPreJobRank;
-		}
-		NegotiatorPreJobRank = tmp_expr;
-#endif
 	}
 
 	dprintf (D_ALWAYS,"NEGOTIATOR_PRE_JOB_RANK = %s\n", (tmp?tmp:"None"));
@@ -791,13 +762,6 @@ reinitialize ()
 		if( ParseClassAdRvalExpr(tmp, NegotiatorPostJobRank) ) {
 			EXCEPT ("Error parsing NEGOTIATOR_POST_JOB_RANK expression: %s", tmp);
 		}
-#if defined(ADD_TARGET_SCOPING)
-		if(NegotiatorPostJobRank){
-			tmp_expr = AddTargetRefs( NegotiatorPostJobRank, TargetJobAttrs );
-			delete NegotiatorPostJobRank;
-		}
-		NegotiatorPostJobRank = tmp_expr;
-#endif
 	}
 
 	dprintf (D_ALWAYS,"NEGOTIATOR_POST_JOB_RANK = %s\n", (tmp?tmp:"None"));
@@ -872,6 +836,9 @@ reinitialize ()
 		}
         free (tmp);
 	}
+
+	m_JobConstraintStr.clear();
+	param(m_JobConstraintStr, "NEGOTIATOR_JOB_CONSTRAINT");
 
 	num_negotiation_cycle_stats = param_integer("NEGOTIATION_CYCLE_STATS_LENGTH",3,0,MAX_NEGOTIATION_CYCLE_STATS);
 	ASSERT( num_negotiation_cycle_stats <= MAX_NEGOTIATION_CYCLE_STATS );
@@ -1098,7 +1065,7 @@ GET_PRIORITY_commandHandler (int, Stream *strm)
 
 	// get the priority
 	dprintf (D_ALWAYS,"Getting state information from the accountant\n");
-	AttrList* ad=accountant.ReportState();
+	ClassAd* ad=accountant.ReportState();
 	
 	if (!putClassAd(strm, *ad, PUT_CLASSAD_NO_TYPES) ||
 	    !strm->end_of_message())
@@ -1124,7 +1091,7 @@ GET_PRIORITY_ROLLUP_commandHandler(int, Stream *strm) {
 
     // get the priority
     dprintf(D_ALWAYS, "Getting state information from the accountant\n");
-    AttrList* ad = accountant.ReportState(true);
+    ClassAd* ad = accountant.ReportState(true);
 
     if (!putClassAd(strm, *ad, PUT_CLASSAD_NO_TYPES) ||
         !strm->end_of_message()) {
@@ -1155,7 +1122,7 @@ GET_RESLIST_commandHandler (int, Stream *strm)
     dprintf(D_ALWAYS, "Getting resource list of %s\n", submitter.c_str());
 
 	// get the priority
-	AttrList* ad=accountant.ReportState(submitter);
+	ClassAd* ad=accountant.ReportState(submitter);
 	dprintf (D_ALWAYS,"Getting state information from the accountant\n");
 	
 	if (!putClassAd(strm, *ad, PUT_CLASSAD_NO_TYPES) ||
@@ -1179,31 +1146,24 @@ compute_significant_attrs(ClassAdListDoesNotDeleteAds & startdAds)
 	char *result = NULL;
 
 	// Figure out list of all external attribute references in all startd ads
+	//
+	// When getting references across many ads, it's faster to call the
+	// base ClassAd method GetExternalReferences(), building up a merged
+	// set of full reference names and then call TrimReferenceNames()
+	// on that.
 	dprintf(D_FULLDEBUG,"Entering compute_significant_attrs()\n");
 	ClassAd *startd_ad = NULL;
 	ClassAd *sample_startd_ad = NULL;
 	startdAds.Open ();
-	StringList external_references;	// this is what we want to compute. 
+	classad::References external_references;
 	while ((startd_ad = startdAds.Next ())) { // iterate through all startd ads
 		if ( !sample_startd_ad ) {
 			sample_startd_ad = new ClassAd(*startd_ad);
 		}
-			// Make a stringlist of all attribute names in this startd ad.
-		StringList AttrsToExpand;
-		startd_ad->ResetName();
-		const char *attr_name = startd_ad->NextNameOriginal();
-		while ( attr_name ) {
-			AttrsToExpand.append(attr_name);
-			attr_name = startd_ad->NextNameOriginal();
+		classad::ClassAd::iterator attr_it;
+		for ( attr_it = startd_ad->begin(); attr_it != startd_ad->end(); attr_it++ ) {
+			startd_ad->GetExternalReferences( attr_it->second, external_references, true );
 		}
-			// Get list of external references for all attributes.  Note that 
-			// it is _not_ sufficient to just get references via requirements
-			// and rank.  Don't understand why? Ask Todd <tannenba@cs.wisc.edu>
-		AttrsToExpand.rewind();
-		while ( (attr_name = AttrsToExpand.next()) ) {
-			startd_ad->GetReferences(attr_name,NULL,
-					&external_references);
-		}	// while attr_name
 	}	// while startd_ad
 
 	// Now add external attributes references from negotiator policy exprs; at
@@ -1245,28 +1205,53 @@ compute_significant_attrs(ClassAdListDoesNotDeleteAds & startdAds)
 	if ( tmp && PreemptionReq ) {	// add references from preemption_requirements
 		const char* preempt_req_name = "preempt_req__";	// any name will do
 		sample_startd_ad->AssignExpr(preempt_req_name,tmp);
-		sample_startd_ad->GetReferences(preempt_req_name,NULL,
-					&external_references);
+		ExprTree *expr = sample_startd_ad->Lookup(preempt_req_name);
+		if ( expr != NULL ) {
+			sample_startd_ad->GetExternalReferences(expr,external_references,true);
+		}
 	}
 	free(tmp);
 	if (sample_startd_ad) {
 		delete sample_startd_ad;
 		sample_startd_ad = NULL;
 	}
+
+	// We also need to include references in NEGOTIATOR_JOB_CONSTRAINT
+	if ( !m_JobConstraintStr.empty() ) {
+		ClassAd empty_ad;
+		empty_ad.AssignExpr("__JobConstraint",m_JobConstraintStr.c_str());
+		ExprTree *expr = empty_ad.Lookup("__JobConstraint");
+		if ( expr ) {
+			empty_ad.GetExternalReferences(expr,external_references,true);
+		}
+	}
+
+	// Simplify the attribute references
+	TrimReferenceNames( external_references, true );
+
 		// Always get rid of the follow attrs:
 		//    CurrentTime - for obvious reasons
 		//    RemoteUserPrio - not needed since we negotiate per user
 		//    SubmittorPrio - not needed since we negotiate per user
-	external_references.remove_anycase(ATTR_CURRENT_TIME);
-	external_references.remove_anycase(ATTR_REMOTE_USER_PRIO);
-	external_references.remove_anycase(ATTR_REMOTE_USER_RESOURCES_IN_USE);
-	external_references.remove_anycase(ATTR_REMOTE_GROUP_RESOURCES_IN_USE);
-	external_references.remove_anycase(ATTR_SUBMITTOR_PRIO);
-	external_references.remove_anycase(ATTR_SUBMITTER_USER_PRIO);
-	external_references.remove_anycase(ATTR_SUBMITTER_USER_RESOURCES_IN_USE);
-	external_references.remove_anycase(ATTR_SUBMITTER_GROUP_RESOURCES_IN_USE);
-		// Note: print_to_string mallocs memory on the heap
-	result = external_references.print_to_string();
+	external_references.erase(ATTR_CURRENT_TIME);
+	external_references.erase(ATTR_REMOTE_USER_PRIO);
+	external_references.erase(ATTR_REMOTE_USER_RESOURCES_IN_USE);
+	external_references.erase(ATTR_REMOTE_GROUP_RESOURCES_IN_USE);
+	external_references.erase(ATTR_SUBMITTOR_PRIO);
+	external_references.erase(ATTR_SUBMITTER_USER_PRIO);
+	external_references.erase(ATTR_SUBMITTER_USER_RESOURCES_IN_USE);
+	external_references.erase(ATTR_SUBMITTER_GROUP_RESOURCES_IN_USE);
+
+	classad::References::iterator it;
+	std::string list_str;
+	for ( it = external_references.begin(); it != external_references.end(); it++ ) {
+		if ( !list_str.empty() ) {
+			list_str += ',';
+		}
+		list_str += *it;
+	}
+
+	result = strdup( list_str.c_str() );
 	dprintf(D_FULLDEBUG,"Leaving compute_significant_attrs() - result=%s\n",
 					result ? result : "(none)" );
 	return result;
@@ -1375,7 +1360,6 @@ negotiationTime ()
 {
 	ClassAdList allAds; //contains ads from collector
 	ClassAdListDoesNotDeleteAds startdAds; // ptrs to startd ads in allAds
-        //ClaimIdHash claimIds(MyStringHash);
     ClaimIdHash claimIds;
 	std::set<std::string> accountingNames; // set of active submitter names to publish
 	ClassAdListDoesNotDeleteAds submitterAds; // ptrs to submitter ads in allAds
@@ -1479,7 +1463,7 @@ negotiationTime ()
 	accountant.CheckMatches( startdAds );
 
 	if ( !groupQuotasHash ) {
-		groupQuotasHash = new groupQuotasHashType(100,HashFunc);
+		groupQuotasHash = new groupQuotasHashType(hashFunction);
 		ASSERT(groupQuotasHash);
     }
 
@@ -2167,6 +2151,18 @@ void Matchmaker::hgq_assign_quotas(GroupEntry* group, double quota) {
     // Current group gets anything remaining after assigning to any children
     // If there are no children (a leaf) then this group gets all the quota
     group->quota = (allow_quota_oversub) ? quota : (quota - chq);
+
+	// However, if we are the root ("<none>") group, the "quota" cannot be configured by the
+	// admin, and the "quota" represents the entire pool.  We calculate the surplus at any node
+	// as the difference between this quota and any demand.  So, if we left the "quota" to be the 
+	// whole pool, we would be double-counting surplus slots.  Therefore, no matter what allow_quota_oversub
+	// is, set the "quota" of the root <none> node (really the limit of usage at exactly this node) 
+	// to be the total size of the pool, minus the sum allocation of all the child nodes under it, recursively.
+
+	if (group->name == "<none>") {
+		group->quota = quota - chq;
+	}
+
     if (group->quota < 0) group->quota = 0;
     dprintf(D_FULLDEBUG, "group quotas: group %s assigned quota= %g\n", group->name.c_str(), group->quota);
 }
@@ -2190,7 +2186,9 @@ double Matchmaker::hgq_fairshare(GroupEntry* group) {
             group->name.c_str(), group->quota, group->allocated, group->requested);
 
     // If this is a leaf group, we're finished: return the surplus
-    if (group->children.empty()) return surplus;
+    if (group->children.empty()) {
+		return surplus;
+	}
 
     // This is an internal group: perform fairshare recursively on children
     for (unsigned long j = 0;  j < group->children.size();  ++j) {
@@ -2546,7 +2544,12 @@ void
 Matchmaker::forwardAccountingData(std::set<std::string> &names) {
 		std::set<std::string>::iterator it;
 		
-		DCCollector collector;
+		//DCCollector collector;
+		CollectorList *cl = daemonCore->getCollectorList();
+		if (cl == NULL) {
+			dprintf(D_ALWAYS, "Not updating collector with accounting information, as no collector are found\n");
+			return;
+		}
 	
 		dprintf(D_FULLDEBUG, "Updating collector with accounting information\n");
 			// for all of the names of active submitters
@@ -2587,22 +2590,23 @@ Matchmaker::forwardAccountingData(std::set<std::string> &names) {
 				// will be zero.  Don't include those submitters.
 
 				if (updateAd.LookupInteger("ResourcesUsed", resUsed)) {
-					collector.sendUpdate(UPDATE_ACCOUNTING_AD, &updateAd, seq, NULL, false);
+					cl->sendUpdates(UPDATE_ACCOUNTING_AD, &updateAd, NULL, false);
 				}
 			}
 		}
-		forwardGroupAccounting(collector, hgq_root_group);
+		forwardGroupAccounting(cl, hgq_root_group);
 		dprintf(D_FULLDEBUG, "Done Updating collector with accounting information\n");
 }
 
 void 
-Matchmaker::forwardGroupAccounting(DCCollector &collector, GroupEntry* group) {
+Matchmaker::forwardGroupAccounting(CollectorList *cl, GroupEntry* group) {
 
 	ClassAd accountingAd;
 	accountingAd.Assign("MyType", "Accounting");
 	SetMyTypeName(accountingAd, "Accounting");
 	SetTargetTypeName(accountingAd, "none");
 	accountingAd.Assign(ATTR_LAST_UPDATE, accountant.GetLastUpdateTime());
+	accountingAd.Assign(ATTR_NEGOTIATOR_NAME, NegotiatorName);
 
 
     MyString CustomerName = group->name;
@@ -2616,6 +2620,10 @@ Matchmaker::forwardGroupAccounting(DCCollector &collector, GroupEntry* group) {
 
     bool isGroup=false;
     GroupEntry* cgrp = accountant.GetAssignedGroup(CustomerName, isGroup);
+
+	if (!cgrp) {
+        return;
+	}
 
     std::string cgname;
     if (isGroup) {
@@ -2679,11 +2687,11 @@ Matchmaker::forwardGroupAccounting(DCCollector &collector, GroupEntry* group) {
     
 	// And send the ad to the collector
 	DCCollectorAdSequences seq; // Don't need them, interface requires them
-	collector.sendUpdate(UPDATE_ACCOUNTING_AD, &accountingAd, seq, NULL, false);
+	cl->sendUpdates(UPDATE_ACCOUNTING_AD, &accountingAd, NULL, false);
 
     // Populate group's children recursively, if it has any
     for (vector<GroupEntry*>::iterator j(group->children.begin());  j != group->children.end();  ++j) {
-        forwardGroupAccounting(collector, *j);
+        forwardGroupAccounting(cl, *j);
     }
 }
 
@@ -3204,7 +3212,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
 }
 
 static int
-comparisonFunction (AttrList *ad1, AttrList *ad2, void *m)
+comparisonFunction (ClassAd *ad1, ClassAd *ad2, void *m)
 {
 	Matchmaker* mm = (Matchmaker*)m;
 
@@ -3479,7 +3487,7 @@ obtainAdsFromCollector (
 
 	if (!ConsiderPreemption) {
 		const char *projectionString =
-			"ifThenElse(State == \"Claimed\",\"Name State Activity StartdIpAddr AccountingGroup Owner RemoteUser Requirements SlotWeight ConcurrencyLimits\",\"\") ";
+			"ifThenElse(State == \"Claimed\",\"Name MyType State Activity StartdIpAddr AccountingGroup Owner RemoteUser Requirements SlotWeight ConcurrencyLimits\",\"\") ";
 		publicQuery.setDesiredAttrsExpr(projectionString);
 
 		dprintf(D_ALWAYS, "Not considering preemption, therefore constraining idle machines with %s\n", projectionString);
@@ -3527,10 +3535,6 @@ obtainAdsFromCollector (
 				dprintf(D_FULLDEBUG,"Rejecting unnamed startd ad.");
 				continue;
 			}
-
-#if defined(ADD_TARGET_SCOPING)
-			ad->AddTargetRefs( TargetJobAttrs );
-#endif
 
 			// Next, let's transform the ad. The first thing we might
 			// do is replace the Requirements attribute with whatever
@@ -4333,6 +4337,11 @@ Matchmaker::startNegotiateProtocol(const std::string &submitter, const ClassAd &
 				"    USE_GLOBAL_JOB_PRIOS limit to jobprios between %d and %d\n",
 				jmin, jmax);
 		}
+		// Tell the schedd we're only interested in some of its jobs
+		if ( !m_JobConstraintStr.empty() ) {
+			negotiate_ad.AssignExpr(ATTR_NEGOTIATOR_JOB_CONSTRAINT,
+			                        m_JobConstraintStr.c_str());
+		}
 		// Tell the schedd what sigificant attributes we found in the startd ads
 		negotiate_ad.InsertAttr(ATTR_AUTO_CLUSTER_ATTRS, job_attr_references ? job_attr_references : "");
 		// Tell the schedd a submitter tag value (used for flocking levels)
@@ -4502,10 +4511,6 @@ negotiate(char const* groupName, char const *submitterName, const ClassAd *submi
 	
 
         negotiation_cycle_stats[0]->num_jobs_considered += 1;
-
-#if defined(ADD_TARGET_SCOPING)
-		request.AddTargetRefs( TargetMachineAttrs );
-#endif
 
         // information regarding the negotiating group context:
         string negGroupName = (groupName != NULL) ? groupName : hgq_root_group->name.c_str();
@@ -5392,11 +5397,6 @@ matchmakingAlgorithm(const char *submitterName, const char *scheddAddr, ClassAd 
 		bestSoFar = MatchList->pop_candidate(bestDslotClaims);
 	}
 
-	if(!bestSoFar)
-	{
-	/* Insert an entry into the rejects table only if no matches were found at all */
-		insert_into_rejects(submitterName,request);
-	}
 	if ( bestSoFar && !bestDslotClaims.empty() ) {
 		bestSoFar->Assign( "PreemptDslotClaims", bestDslotClaims );
 	}
@@ -5816,9 +5816,6 @@ matchmakingProtocol (ClassAd &request, ClassAd *offer,
         claimset->second.erase(claim_id);
     }
 
-	/* CONDORDB Insert into matches table */
-	insert_into_matches(submitterName, request, *offer);
-
     if (cp_supports_policy(*offer)) {
         // Stash match cost here for the accountant.
         // At this point the match is fully vetted so we can also deduct
@@ -6139,10 +6136,6 @@ reeval(ClassAd *ad)
 		delete(oldAdEntry->oldAd);
 		oldAdEntry->oldAd = new ClassAd(*ad);
 	}
-}
-
-unsigned int Matchmaker::HashFunc(const MyString &Key) {
-	return Key.Hash();
 }
 
 Matchmaker::MatchListType::
@@ -6527,11 +6520,6 @@ Matchmaker::updateCollector() {
         daemonCore->dc_stats.Publish(*publicAd);
 		daemonCore->monitor_data.ExportData(publicAd);
 
-		if ( FILEObj ) {
-			// log classad into sql log so that it can be updated to DB
-			FILESQL::daemonAdInsert(publicAd, "NegotiatorAd", FILEObj, prevLHF);
-		}
-
 #if defined(WANT_CONTRIB) && defined(WITH_MANAGEMENT)
 #if defined(HAVE_DLOPEN)
 		NegotiatorPluginManager::Update(*publicAd);
@@ -6568,131 +6556,6 @@ Matchmaker::invalidateNegotiatorAd( void )
 	cmd_ad.Assign( ATTR_NAME, NegotiatorName );
 
 	daemonCore->sendUpdates( INVALIDATE_NEGOTIATOR_ADS, &cmd_ad, NULL, false );
-}
-
-/* CONDORDB functions */
-void Matchmaker::insert_into_rejects(char const *userName, ClassAd& job)
-{
-	if ( !FILEObj ) {
-		return;
-	}
-	int cluster, proc;
-//	char startdname[80];
-	char globaljobid[200];
-	char scheddName[200];
-	ClassAd tmpCl;
-	ClassAd *tmpClP = &tmpCl;
-	char tmp[512];
-
-	time_t clock;
-
-	(void)time(  (time_t *)&clock );
-
-	job.LookupInteger (ATTR_CLUSTER_ID, cluster);
-	job.LookupInteger (ATTR_PROC_ID, proc);
-	job.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid, sizeof(globaljobid)); 
-	get_scheddname_from_gjid(globaljobid,scheddName);
-//	machine.LookupString(ATTR_NAME, startdname);
-
-	snprintf(tmp, 512, "reject_time = %d", (int)clock);
-	tmpClP->Insert(tmp);
-	
-	tmpClP->Assign("username",userName);
-		
-	snprintf(tmp, 512, "scheddname = \"%s\"", scheddName);
-	tmpClP->Insert(tmp);
-	
-	snprintf(tmp, 512, "cluster_id = %d", cluster);
-	tmpClP->Insert(tmp);
-
-	snprintf(tmp, 512, "proc_id = %d", proc);
-	tmpClP->Insert(tmp);
-
-	snprintf(tmp, 512, "GlobalJobId = \"%s\"", globaljobid);
-	tmpClP->Insert(tmp);
-	
-	FILEObj->file_newEvent("Rejects", tmpClP);
-}
-void Matchmaker::insert_into_matches(char const * userName,ClassAd& request, ClassAd& offer)
-{
-	if ( !FILEObj ) {
-		return;
-	}
-	char startdname[80],remote_user[80];
-	char globaljobid[200];
-	float remote_prio;
-	int cluster, proc;
-	char scheddName[200];
-	ClassAd tmpCl;
-	ClassAd *tmpClP = &tmpCl;
-
-	time_t clock;
-	char tmp[512];
-
-	(void)time(  (time_t *)&clock );
-
-	request.LookupInteger (ATTR_CLUSTER_ID, cluster);
-	request.LookupInteger (ATTR_PROC_ID, proc);
-	request.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid, sizeof(globaljobid)); 
-	get_scheddname_from_gjid(globaljobid,scheddName);
-	offer.LookupString( ATTR_NAME, startdname, sizeof(startdname)); 
-
-	snprintf(tmp, 512, "match_time = %d", (int) clock);
-	tmpClP->Insert(tmp);
-	
-	tmpClP->Assign("username",userName);
-		
-	snprintf(tmp, 512, "scheddname = \"%s\"", scheddName);
-	tmpClP->Insert(tmp);
-	
-	snprintf(tmp, 512, "cluster_id = %d", cluster);
-	tmpClP->Insert(tmp);
-
-	snprintf(tmp, 512, "proc_id = %d", proc);
-	tmpClP->Insert(tmp);
-
-	snprintf(tmp, 512, "GlobalJobId = \"%s\"", globaljobid);
-	tmpClP->Insert(tmp);
-
-	snprintf(tmp, 512, "machine_id = \"%s\"", startdname);
-	tmpClP->Insert(tmp);
-
-	if(offer.LookupString( ATTR_REMOTE_USER, remote_user, sizeof(remote_user)) != 0)
-	{
-		remote_prio = (float) accountant.GetPriority(remote_user);
-
-		snprintf(tmp, 512, "remote_user = \"%s\"", remote_user);
-		tmpClP->Insert(tmp);
-
-		snprintf(tmp, 512, "remote_priority = %f", remote_prio);
-		tmpClP->Insert(tmp);
-	}
-	
-	FILEObj->file_newEvent("Matches", tmpClP);
-}
-/* This extracts the machine name from the global job ID [user@]machine.name#timestamp#cluster.proc*/
-static int get_scheddname_from_gjid(const char * globaljobid, char * scheddname )
-{
-	int i;
-
-	scheddname[0] = '\0';
-
-	for (i=0;
-         globaljobid[i]!='\0' && globaljobid[i]!='#';i++)
-		scheddname[i]=globaljobid[i];
-
-	if(globaljobid[i] == '\0') 
-	{
-		scheddname[0] = '\0';
-		return -1; /* Parse error, shouldn't happen */
-	}
-	else if(globaljobid[i]=='#')
-	{
-		scheddname[i]='\0';	
-		return 1;
-	}
-
-	return -1;
 }
 
 void Matchmaker::RegisterAttemptedOfflineMatch( ClassAd *job_ad, ClassAd *startd_ad )

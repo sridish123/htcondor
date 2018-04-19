@@ -46,7 +46,6 @@
 #define ATTR_ACTION_RESULT  "ActionResult"
 #define ATTR_ACTION_RESULT_TYPE  "ActionResultType"
 #define ATTR_ACTIVITY  "Activity"
-#define ATTR_ALLOW_NOTIFICATION_CC  "AllowNotificationCC"
 #define ATTR_ALL_REMOTE_HOSTS  "AllRemoteHosts"
 #define ATTR_ANNEX_NAME  "AnnexName"
 #define ATTR_APPEND_FILES  "AppendFiles"
@@ -54,9 +53,6 @@
 #define ATTR_AVAIL_BANDWIDTH_TO_SUBMIT_MACHINE  "AvailBandwidthToSubmitMachine"
 #define ATTR_AVAIL_BANDWIDTH_TO_LAST_CKPT_SERVER  "AvailBandwidthToLastCkptServer"
 #define ATTR_AVAIL_BANDWIDTH_TO_CKPT_SERVER  "AvailBandwidthToCkptServer"
-#define ATTR_AVAIL_SINCE  "AvailSince"
-#define ATTR_AVAIL_TIME  "AvailTime"
-#define ATTR_AVAIL_TIME_ESTIMATE  "AvailTimeEstimate"
 #define ATTR_AZURE_ADMIN_USERNAME  "AzureAdminUsername"
 #define ATTR_AZURE_ADMIN_KEY  "AzureAdminKey"
 #define ATTR_AZURE_AUTH_FILE  "AzureAuthFile"
@@ -81,6 +77,7 @@
 #define ATTR_BYTES_RECVD  "BytesRecvd"
 #define ATTR_CAN_HIBERNATE  "CanHibernate"
 #define ATTR_CAPABILITY  "Capability"
+#define ATTR_CE_REQUIREMENTS  "CERequirements"
 #define ATTR_CKPT_SERVER  "CkptServer"
 #define ATTR_CLAIM_STARTD  "ClaimStartd"
 #define ATTR_COD_CLAIMS  "CODClaims"
@@ -107,6 +104,7 @@
 #define ATTR_CLUSTER_ID  "ClusterId"
 #define ATTR_AUTO_CLUSTER_ID  "AutoClusterId"
 #define ATTR_AUTO_CLUSTER_ATTRS  "AutoClusterAttrs"
+#define ATTR_EDITED_CLUSTER_ATTRS "EditedClusterAttrs"
 #define ATTR_COMPLETION_DATE  "CompletionDate"
 #define ATTR_MATCHED_CONCURRENCY_LIMITS  "MatchedConcurrencyLimits"
 #define ATTR_MATCHED_PSG  "Matched_PSG"
@@ -158,6 +156,7 @@
 #define ATTR_DAG_NODES_TOTAL "DAG_NodesTotal"
 #define ATTR_DAG_NODES_UNREADY "DAG_NodesUnready"
 #define ATTR_DAG_STATUS "DAG_Status"
+#define ATTR_DAG_STATS "DAG_Stats"
 #define ATTR_DEFERRAL_OFFSET  "DeferralOffset"
 #define ATTR_DEFERRAL_PREP_TIME  "DeferralPrepTime"
 #define ATTR_DEFERRAL_TIME  "DeferralTime"
@@ -298,10 +297,13 @@
 #define ATTR_JOB_MATERIALIZE_DIGEST_FILE  "JobMaterializeDigestFile"
 #define ATTR_JOB_MATERIALIZE_ITEMS_FILE   "JobMaterializeItemsFile"
 #define ATTR_JOB_MATERIALIZE_LIMIT        "JobMaterializeLimit"
+#define ATTR_JOB_MATERIALIZE_MAX_IDLE     "JobMaterializeMaxIdle"     // actually max not-running just like dagman
+#define ATTR_JOB_MATERIALIZE_CONSTRAINT   "JobMaterializeConstraint"  // expression that constraints/limits materialization
 #define ATTR_JOB_MATERIALIZE_NEXT_PROC_ID "JobMaterializeNextProcId"
 #define ATTR_JOB_MATERIALIZE_NEXT_ROW     "JobMaterializeNextRow"
 #define ATTR_JOB_MATERIALIZE_STEP_SIZE    "JobMaterializeStepSize"
 #define ATTR_JOB_MATERIALIZE_PAUSED       "JobMaterializePaused"
+#define ATTR_JOB_MATERIALIZE_PAUSE_REASON "JobMaterializePauseReason"
 #define ATTR_JOB_ARGUMENTS1  "Args"
 #define ATTR_JOB_ARGUMENTS2  "Arguments"
 #define ATTR_JOB_CMD  "Cmd"
@@ -467,6 +469,7 @@
 #define ATTR_MY_TYPE  "MyType"
 #define ATTR_NAME  "Name"
 #define ATTR_NICE_USER  "NiceUser"
+#define ATTR_NEGOTIATOR_JOB_CONSTRAINT  "NegotiatorJobConstraint"
 #define ATTR_NEGOTIATOR_NAME  "NegotiatorName"
 #define ATTR_NEGOTIATOR_REQUIREMENTS  "NegotiatorRequirements"
 #define ATTR_NETWORK_IN  "NetworkInputMb"
@@ -565,6 +568,7 @@
 #define ATTR_REMOVE_REASON  "RemoveReason"
 #define ATTR_REQUEUE_REASON  "RequeueReason"
 #define ATTR_REQUIREMENTS  "Requirements"
+#define ATTR_RESOURCE_REQUEST_CONSTRAINT "_condor_RESOURCE_CONSTRAINT"  // used in resource request ad
 #define ATTR_RESOURCE_REQUEST_COUNT "_condor_RESOURCE_COUNT"  // used in resource request ad
 #define ATTR_RESOURCE_REQUEST_CLUSTER "_condor_RESOURCE_CLUSTER"
 #define ATTR_RESOURCE_REQUEST_PROC "_condor_RESOURCE_PROC"
@@ -870,16 +874,6 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_UPDATESTATS_LOST  "UpdatesLost"
 #define ATTR_UPDATESTATS_HISTORY  "UpdatesHistory"
 
-#define ATTR_QUILL_ENABLED  "QuillEnabled"
-#define ATTR_QUILL_NAME  "QuillName"
-#define ATTR_QUILL_IS_REMOTELY_QUERYABLE  "QuillIsRemotelyQueryable"
-#define ATTR_QUILL_DB_IP_ADDR  "QuillDatabaseIpAddr"
-#define ATTR_QUILL_DB_NAME  "QuillDatabaseName"
-#define ATTR_QUILL_DB_QUERY_PASSWORD  "QuillDatabaseQueryPassword"
-
-#define ATTR_QUILL_SQL_TOTAL  "NumSqlTotal"
-#define ATTR_QUILL_SQL_LAST_BATCH  "NumSqlLastBatch"
-
 #define ATTR_CHECKPOINT_PLATFORM  "CheckpointPlatform"
 #define ATTR_LAST_CHECKPOINT_PLATFORM  "LastCheckpointPlatform"
 #define ATTR_IS_VALID_CHECKPOINT_PLATFORM  "IsValidCheckpointPlatform"
@@ -1001,9 +995,6 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_WAITPID_STATUS  "WaitpidStatus"
 #define ATTR_TERMINATION_REASON  "TerminationReason"
 
-// Lease Manager
-#define ATTR_LEASE_MANAGER_IP_ADDR  "LeaseManagerIpAddr"
-
 // Valid settings for ATTR_JOB_MANAGED.
 	// Managed by an external process (gridmanager)
 #define MANAGED_EXTERNAL  "External"
@@ -1111,6 +1102,7 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_TOTAL_MACHINE_DRAINING_BADPUT  "TotalMachineDrainingBadput"
 #define ATTR_TOTAL_MACHINE_DRAINING_UNCLAIMED_TIME  "TotalMachineDrainingUnclaimedTime"
 #define ATTR_CHECK_EXPR  "CheckExpr"
+#define ATTR_START_EXPR  "StartExpr"
 #define ATTR_PROJECTION  "Projection"
 #define ATTR_LAST_DRAIN_START_TIME  "LastDrainStartTime"
 

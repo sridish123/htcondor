@@ -25,9 +25,6 @@
 // //////////////////////////////////////////////////////////////////////
 
 #include "condor_common.h"
-#ifdef HAVE_EXT_GSOAP
-#include "soap_core.h"
-#endif
 
 #include "condor_socket_types.h"
 
@@ -46,7 +43,6 @@ static const int DEFAULT_MAXSIGNALS = 99;
 static const int DEFAULT_MAXSOCKETS = 8;
 static const int DEFAULT_MAXPIPES = 8;
 static const int DEFAULT_MAXREAPS = 100;
-static const int DEFAULT_PIDBUCKETS = 11;
 static const int DEFAULT_MAX_PID_COLLISIONS = 9;
 static const char* DEFAULT_INDENT = "DaemonCore--> ";
 static const int MIN_FILE_DESCRIPTOR_SAFETY_LIMIT = 20;
@@ -232,14 +228,14 @@ void **curr_regdataptr;
 extern void drop_addr_file( void );
 
 // Hash function for pid table.
-static unsigned int compute_pid_hash(const pid_t &key)
+static size_t compute_pid_hash(const pid_t &key)
 {
-	return (unsigned int)key;
+	return (size_t)key;
 }
 
 // DaemonCore constructor.
 
-DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
+DaemonCore::DaemonCore(int ComSize,int SigSize,
 				int SocSize,int ReapSize,int PipeSize)
 	: comTable(32),
 	sigTable(10),
@@ -250,7 +246,7 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 	m_advertise_ipv4_first(false)
 {
 
-	if(ComSize < 0 || SigSize < 0 || SocSize < 0 || PidSize < 0 || ReapSize < 0)
+	if(ComSize < 0 || SigSize < 0 || SocSize < 0 || ReapSize < 0)
 	{
 		EXCEPT("Invalid argument(s) for DaemonCore constructor");
 	}
@@ -264,9 +260,7 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
     dc_stats.Init(enable_stats); // initilize statistics.
     dc_stats.SetWindowSize(20*60);
 
-	if ( PidSize == 0 )
-		PidSize = DEFAULT_PIDBUCKETS;
-	pidTable = new PidHashTable(PidSize, compute_pid_hash);
+	pidTable = new PidHashTable(compute_pid_hash);
 	ppid = 0;
 #ifdef WIN32
 	// init the mutex
@@ -326,10 +320,6 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 	SockEnt blankSockEnt;
 	memset(&blankSockEnt,'\0',sizeof(SockEnt));
 	sockTable->fill(blankSockEnt);
-
-#ifdef HAVE_EXT_GSOAP
-	soap_ssl_sock = -1;
-#endif
 
 	// See the comment in the header.  This can't be a reconfigure setting
 	// because everybody's sinfuls are derived from the shared port's sinful
@@ -422,12 +412,6 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 
 	peaceful_shutdown = false;
 
-#ifdef HAVE_EXT_GSOAP
-#ifdef HAVE_EXT_OPENSSL
-	mapfile =  NULL;
-#endif
-#endif
-
 	file_descriptor_safety_limit = 0; // 0 indicates: needs to be computed
 
 #ifndef WIN32
@@ -448,8 +432,6 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
         }
 	}
 #endif
-
-	soap = NULL;
 
 	localAdFile = NULL;
 
@@ -590,13 +572,6 @@ DaemonCore::~DaemonCore()
 		free(_cookie_data_old);
 	}
 
-#ifdef HAVE_EXT_GSOAP
-	if( soap ) {
-		dc_soap_free(soap);
-		soap = NULL;
-	}
-#endif
-
 	if(localAdFile) {
 		free(localAdFile);
 		localAdFile = NULL;
@@ -710,8 +685,13 @@ int DaemonCore::FileDescriptorSafetyLimit()
 			// Our max is the maxiumum file descriptor that our Selector
 			// class says it can handle.
 		int file_descriptor_max = Selector::fd_select_size();
+#ifdef WIN32
+		// Set the danger level at 1 less than the max (Windows doesn't put sockets into the same table as files)
+		file_descriptor_safety_limit = file_descriptor_max - 1;
+#else
 		// Set the danger level at 80% of the max
 		file_descriptor_safety_limit = file_descriptor_max - file_descriptor_max/5;
+#endif
 		if( file_descriptor_safety_limit < MIN_FILE_DESCRIPTOR_SAFETY_LIMIT ) {
 				// There is no point trying to live within this limit,
 				// because it is too small.  It is better to try and fail
@@ -1228,6 +1208,11 @@ DaemonCore::InfoCommandSinfulStringMyself(bool usePrivateAddress)
 		// Sinful in the address file will have TCP_FORWARDING_HOST as its
 		// primary address, and older versions of HTCondor don't ignore
 		// the primary address).
+		//
+		// NOTE: For the primary address in our sinful string, prefer an
+		// IPv4 address, if available. The primary address is only used by
+		// older clients (pre-8.3.x) that don't understand the addrs field
+		// and probably don't have good IPv6 support.
 		char const * addr = sock->get_sinful_public();
 		if(! sa.is_ipv4()) {
 			for( int i = initialCommandSock; i < nSock; ++i ) {
@@ -3049,59 +3034,6 @@ DaemonCore::reconfig(void) {
 
 	m_invalidate_sessions_via_tcp = param_boolean("SEC_INVALIDATE_SESSIONS_VIA_TCP", true);
 
-#ifdef HAVE_EXT_GSOAP
-	if( param_boolean("ENABLE_SOAP",false) ||
-		param_boolean("ENABLE_WEB_SERVER",false) )
-	{
-		// tstclair: reconfigure the soap object
-		if( soap ) {
-			dc_soap_free(soap);
-			soap = NULL;
-		}
-
-		dc_soap_init(soap);
-		
-	}
-	else {
-		// Do not have to deallocate soap if it was enabled and has
-		// now been disabled.  Access to it will be disallowed, even
-		// though the structure is still allocated.
-	}
-#endif
-#ifdef HAVE_EXT_GSOAP
-#ifdef HAVE_EXT_OPENSSL
-	MyString subsys = MyString(get_mySubSystem()->getName());
-	bool enable_soap_ssl = param_boolean("ENABLE_SOAP_SSL", false);
-
-	if (enable_soap_ssl) {
-		if (mapfile) {
-			delete mapfile; mapfile = NULL;
-		}
-		mapfile = new MapFile;
-		char * credential_mapfile;
-		if (NULL == (credential_mapfile = param("CERTIFICATE_MAPFILE"))) {
-			EXCEPT("DaemonCore: No CERTIFICATE_MAPFILE defined, "
-				   "unable to identify users, required by ENABLE_SOAP_SSL");
-		}
-		char * user_mapfile;
-		if (NULL == (user_mapfile = param("USER_MAPFILE"))) {
-			EXCEPT("DaemonCore: No USER_MAPFILE defined, "
-				   "unable to identify users, required by ENABLE_SOAP_SSL");
-		}
-		bool assume_hash = param_boolean("CERTIFICATE_MAPFILE_ASSUME_HASH_KEYS", false);
-		int line;
-		if (0 != (line = mapfile->ParseCanonicalizationFile(credential_mapfile, assume_hash))) {
-			EXCEPT("DaemonCore: Error parsing CERTIFICATE_MAPFILE at line %d",
-				   line);
-		}
-		if (0 != (line = mapfile->ParseUsermapFile(user_mapfile))) {
-			EXCEPT("DaemonCore: Error parsing USER_MAPFILE at line %d", line);
-		}
-	}
-#endif // HAVE_EXT_OPENSSL
-#endif // HAVE_EXT_GSOAP
-
-
 		// FAKE_CREATE_THREAD is an undocumented config knob which turns
 		// Create_Thread() into a simple function call in the main process,
 		// rather than a thread/fork.
@@ -3673,7 +3605,6 @@ void DaemonCore::Driver()
 			time_t now = time(NULL);
 
 			bool recheck_status = false;
-			//bool call_soap_handler = false;
 
 			// If a command came in on the super-user command socket, then
 			// set a flag so in the loop below we only schedule command callbacks
@@ -4203,12 +4134,12 @@ struct CallCommandHandlerInfo {
 		m_deadline(deadline),
 		m_time_spent_on_sec(time_spent_on_sec)
 	{
-		m_start_time.getTime();
+		condor_gettimestamp( m_start_time );
 	}
 	int m_req;
 	time_t m_deadline;
 	float m_time_spent_on_sec;
-	UtcTime m_start_time;
+	struct timeval m_start_time;
 };
 
 int
@@ -4221,9 +4152,9 @@ DaemonCore::HandleReqPayloadReady(Stream *stream)
 	int req = callback_info->m_req;
 	time_t orig_deadline = callback_info->m_deadline;
 	float time_spent_on_sec = callback_info->m_time_spent_on_sec;
-	UtcTime now;
-	now.getTime();
-	float time_waiting_for_payload = now.difference(callback_info->m_start_time);
+	struct timeval now;
+	condor_gettimestamp( now );
+	float time_waiting_for_payload = timersub_double( now, callback_info->m_start_time );
 
 	delete callback_info;
 
@@ -4855,6 +4786,7 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 				// below to determine whether we should send a UNIX
 				// SIGTERM or a DC signal.
 			if ( pid != mypid && target_has_dcpm == FALSE ) {
+				dprintf(D_ALWAYS, "Send_Signal SIGTERM to pid %d using Shutdown_Graceful\n", pid);
 				if( Shutdown_Graceful(pid) ) {
 					msg->deliveryStatus( DCMsg::DELIVERY_SUCCEEDED );
 				}
@@ -4980,9 +4912,11 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	classy_counted_ptr<Daemon> d = new Daemon( DT_ANY, destination );
 
 	// now destination process is local, send via UDP; if remote, send via TCP
+	bool is_udp = false;
 	if ( is_local == TRUE && d->hasUDPCommandPort()) {
 		msg->setStreamType(Stream::safe_sock);
 		if( !nonblocking ) msg->setTimeout(3);
+		is_udp = true;
 	}
 	else {
 		msg->setStreamType(Stream::reli_sock);
@@ -4991,6 +4925,8 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	{
 		msg->setSecSessionId(pidinfo->child_session_id);
 	}
+	dprintf(D_FULLDEBUG, "Send_Signal %d to pid %d via %s in %s mode\n", sig, pid, is_udp ? "UDP" : "TCP", nonblocking ? "nonblocking" : "blocking");
+
 	msg->messengerDelivery( true ); // we really are sending this message
 	if( nonblocking ) {
 		d->sendMsg( msg.get() );
@@ -5349,7 +5285,7 @@ void *DaemonCore::GetDataPtr()
 // else FALSE means not inheritable.
 int DaemonCore::SetFDInheritFlag(int fh, int flag)
 {
-	long underlying_handle;
+	intptr_t underlying_handle;
 
 	underlying_handle = _get_osfhandle(fh);
 
@@ -7028,6 +6964,10 @@ int DaemonCore::Create_Process(
 			dprintf(D_ALWAYS, "ERROR: Create_Process failed to create security session for child daemon.\n");
 			goto wrapup;
 		}
+		KeyCacheEntry *entry = NULL;
+		rc = getSecMan()->session_cache->lookup(session_id_c_str,entry);
+		ASSERT( rc && entry && entry->policy() );
+		entry->policy()->Assign( ATTR_SEC_REMOTE_VERSION, CondorVersion() );
 		IpVerify* ipv = getSecMan()->getIpVerify();
 		MyString id = CONDOR_CHILD_FQU;
 		ipv->PunchHole(DAEMON, id);
@@ -7143,7 +7083,7 @@ int DaemonCore::Create_Process(
 				else {
 					// we are handing down a C library FD
 					SetFDInheritFlag(std[ii],TRUE);	// set handle inheritable
-					long longTemp = _get_osfhandle(std[ii]);
+					intptr_t longTemp = _get_osfhandle(std[ii]);
 					if (longTemp != -1 ) {
 						valid = TRUE;
 						*std_handles[ii] = (HANDLE)longTemp;
@@ -8929,6 +8869,10 @@ DaemonCore::Inherit( void )
 			{
 				dprintf(D_ALWAYS, "Error: Failed to recreate security session in child daemon.\n");
 			}
+			KeyCacheEntry *entry = NULL;
+			rc = getSecMan()->session_cache->lookup(claimid.secSessionId(),entry);
+			ASSERT( rc && entry && entry->policy() );
+			entry->policy()->Assign( ATTR_SEC_REMOTE_VERSION, CondorVersion() );
 			IpVerify* ipv = getSecMan()->getIpVerify();
 			MyString id;
 			id.formatstr("%s", CONDOR_PARENT_FQU);
@@ -9693,13 +9637,14 @@ int DaemonCore::HandleProcessExit(pid_t pid, int exit_status)
 	delete pidentry;
 
 	// Finally, some hard-coded logic.  If the pid that exited was our parent,
-	// then shutdown gracefully.
-	// TODO: should also set a timer and do a fast/hard kill later on!
+	// then shutdown fast.  This is where we notice our parent going away on
+	// Windows; on Linux, we notice via the check_parent() timer handler.
+	// TODO: should also set a timer and do a hard kill later on!
 	if (pid == ppid) {
 		dprintf(D_ALWAYS,
-				"Our Parent process (pid %lu) exited; shutting down\n",
+				"Our parent process (pid %lu) exited; shutting down fast\n",
 				(unsigned long)pid);
-		Send_Signal(mypid,SIGTERM);	// SIGTERM means shutdown graceful
+		Send_Signal(mypid,SIGQUIT);	// SIGQUIT means shutdown fast
 	}
 
 	return TRUE;
@@ -11029,34 +10974,4 @@ bool DaemonCore::SockPair::has_safesock(bool b) {
 		m_ssock = counted_ptr<SafeSock>(new SafeSock);
 	}
 	return true;
-}
-
-int DaemonCore::find_interface_command_port_do_not_use(const condor_sockaddr & addr) {
-
-	// Boldly assuming all entries in dc_socks have relisocks and
-	// that all listen sockets for a given protocol use the same port
-	// As of Sept 2014, I believe these are true.  This function should
-	// go away long before these are violated.
-	for(SockPairVec::iterator it = dc_socks.begin(); it != dc_socks.end(); it++) {
-		ASSERT(it->has_relisock());
-		condor_sockaddr listen_addr = it->rsock()->my_addr();
-		if(addr.get_protocol() == listen_addr.get_protocol()) {
-			return listen_addr.get_port();
-		}
-	}
-	// No matching listen socket.
-	return 0;
-}
-
-bool DaemonCore::is_command_port_do_not_use(const condor_sockaddr & addr) {
-	// Boldly assuming all entries in dc_socks have relisocks and
-	// that all listen sockets for a given protocol use the same port
-	// As of Sept 2014, I believe these are true.  This function should
-	// go away long before these are violated.
-	for(SockPairVec::iterator it = dc_socks.begin(); it != dc_socks.end(); it++) {
-		ASSERT(it->has_relisock());
-		condor_sockaddr listen_addr = it->rsock()->my_addr();
-		if(listen_addr == addr) { return true; }
-	}
-	return false;
 }

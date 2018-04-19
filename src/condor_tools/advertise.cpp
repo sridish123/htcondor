@@ -70,7 +70,7 @@ class ToolClassAdFileParseHelper : public ClassAdFileParseHelper
 	// Some compilers whine when you have virtual methods but not an
 	// explicit virtual destructor
 	virtual ~ToolClassAdFileParseHelper() {}
-	ToolClassAdFileParseHelper(bool multi, FILE* errout) : multiple(multi), out(errout) {};
+	ToolClassAdFileParseHelper(bool multi) : multiple(multi) {};
 
 	// return non-zero if new parser, o if old (line oriented) parser
 	// TODO: fix this to handle new style classads also...
@@ -114,7 +114,6 @@ class ToolClassAdFileParseHelper : public ClassAdFileParseHelper
 
  private:
 	bool multiple;
-	FILE * out;
 	std::string delim;
 };
 
@@ -218,7 +217,7 @@ int main( int argc, char *argv[] )
 	}
 
 	// create class that we can use to influence the behavior of Classad::InsertFromFile
-	ToolClassAdFileParseHelper parse_helper(allow_multiple, stderr);
+	ToolClassAdFileParseHelper parse_helper(allow_multiple);
 
 	for (;;) {
 		ClassAd *ad = new ClassAd();
@@ -318,19 +317,14 @@ int main( int argc, char *argv[] )
 				ad->Assign( ATTR_MY_ADDRESS, tmp.Value() );
 			}
 
-			if ( use_tcp ) {
-				if( !sock ) {
-					sock = collector->startCommand(command,Stream::reli_sock,20);
-				}
-				else {
-						// Use existing connection.
-					sock->encode();
-					sock->put(command);
-				}
+			if( !sock ) {
+				sock = collector->startCommand(command,
+					use_tcp ? Stream::reli_sock : Stream::safe_sock,
+					20);
 			} else {
-					// We must open a new UDP socket each time.
-				delete sock;
-				sock = collector->startCommand(command,Stream::safe_sock,20);
+					// Use existing connection.
+				sock->encode();
+				sock->put(command);
 			}
 
 			int result = 0;

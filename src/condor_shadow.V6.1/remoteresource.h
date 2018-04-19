@@ -327,6 +327,11 @@ class RemoteResource : public Service {
     bool wasClaimDeactivated( void ) {
        return already_killed_graceful || already_killed_fast; };
 
+		/** Return true if we received a job_exit syscall from the
+			starter, false if not.
+		*/
+	bool gotJobExit() { return m_got_job_exit; };
+
 		/** If the job on this resource exited with a signal, return
 			the signal.  If not, return -1. */
 	int exitSignal( void );
@@ -410,8 +415,8 @@ class RemoteResource : public Service {
 	bool m_want_remote_updates;
 	bool m_want_streaming_io;
 	bool m_want_delayed;
-	StringList m_delayed_update_prefix;
-	classad::References m_protected_attrs;
+	classad::References m_delayed_update_prefixes;
+	classad::References m_unsettable_attrs;
 
 		// If we specially create a security session for file transfer,
 		// this records all the information we need to know about it.
@@ -499,6 +504,7 @@ private:
 
 	bool already_killed_graceful;
 	bool already_killed_fast;
+	bool m_got_job_exit;
 
 	void logRemoteAccessCheck(bool allow,char const *op,char const *name);
 

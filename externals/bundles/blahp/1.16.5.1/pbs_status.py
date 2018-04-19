@@ -338,8 +338,20 @@ def get_finished_job_stats(jobid):
             if row["AveCPU"] is not "":
                 return_dict['RemoteUserCpu'] += convert_cpu_to_seconds(row["AveCPU"]) * int(row["AllocCPUS"])
             if row["MaxRSS"] is not "":
-                # Remove the trailing 'K'
-                return_dict["ImageSize"] += int(row["MaxRSS"].replace('K', ''))
+                # Remove the trailing [KMGTP] and scale the value appropriately
+                # Note: We assume that all values will have a suffix, and we
+                #   want the value in kilos.
+                value = row["MaxRSS"]
+                factor = 1
+                if value[-1] == 'M':
+                    factor = 1024
+                elif value[-1] == 'G':
+                    factor = 1024 * 1024
+                elif value[-1] == 'T':
+                    factor = 1024 * 1024 * 1024
+                elif value[-1] == 'P':
+                    factor = 1024 * 1024 * 1024 * 1024
+                return_dict["ImageSize"] += int(value.strip('KMGTP')) * factor
             if row["ExitCode"] is not "":
                 return_dict["ExitCode"] = int(row["ExitCode"].split(":")[0])
     
@@ -360,7 +372,7 @@ def get_qstat_location():
         return _qstat_location_cache
     load_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'blah_load_config.sh')
     if os.path.exists(load_config_path) and os.access(load_config_path, os.R_OK):
-        cmd = 'source %s && echo "$pbs_binpath/qstat"' % load_config_path
+        cmd = "/bin/bash -c 'source %s && echo $pbs_binpath/qstat'" % load_config_path
     else:
         cmd = 'which qstat'
     child_stdout = os.popen(cmd)

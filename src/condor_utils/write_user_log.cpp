@@ -117,7 +117,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 	m_privsep_gid = 0;
 #endif
 
-	initialize (owner, NULL, file, c, p, s, NULL);
+	initialize (owner, NULL, file, c, p, s);
 }
 /* This constructor is just like the constructor below, except
  * that it doesn't take a domain, and it passes NULL for the domain and
@@ -140,7 +140,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 	m_privsep_gid = 0;
 #endif
 
-	initialize (owner, NULL, file, c, p, s, NULL);
+	initialize (owner, NULL, file, c, p, s);
 }
 
 WriteUserLog::WriteUserLog (const char *owner,
@@ -149,8 +149,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml,
-							const char *gjid)
+							bool xml)
 {
 	log_file_cache = NULL;
 	Reset();
@@ -162,7 +161,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 	m_privsep_gid = 0;
 #endif
 
-	initialize (owner, domain, file, c, p, s, gjid);
+	initialize (owner, domain, file, c, p, s);
 }
 WriteUserLog::WriteUserLog (const char *owner,
 							const char *domain,
@@ -170,8 +169,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml,
-							const char *gjid)
+							bool xml)
 {
 	log_file_cache = NULL;
 	Reset();
@@ -183,7 +181,7 @@ WriteUserLog::WriteUserLog (const char *owner,
 	m_privsep_gid = 0;
 #endif
 
-	initialize (owner, domain, file, c, p, s, gjid);
+	initialize (owner, domain, file, c, p, s);
 }
 
 // Destructor
@@ -204,15 +202,15 @@ WriteUserLog::~WriteUserLog()
 bool
 WriteUserLog::initialize( const char *owner, const char *domain,
 						  const char *file,
-						  int c, int p, int s, const char *gjid )
+						  int c, int p, int s )
 {
 	return initialize(owner,domain,std::vector<const char*>(1,file),
-		c,p,s,gjid);
+		c,p,s);
 }
 bool
 WriteUserLog::initialize( const char *owner, const char *domain,
 						  const std::vector<const char *>& file,
-						  int c, int p, int s, const char *gjid )
+						  int c, int p, int s )
 {
 	priv_state		priv;
 
@@ -228,7 +226,7 @@ WriteUserLog::initialize( const char *owner, const char *domain,
 	priv = set_user_priv();
 
 		// initialize log file
-	bool res = initialize( file, c, p, s, gjid );
+	bool res = initialize( file, c, p, s );
 
 		// get back to whatever UID and GID we started with
 	set_priv(priv);
@@ -237,15 +235,13 @@ WriteUserLog::initialize( const char *owner, const char *domain,
 }
 
 bool
-WriteUserLog::initialize( const char *file, int c, int p, int s,
-						  const char *gjid)
+WriteUserLog::initialize( const char *file, int c, int p, int s )
 {
-	return initialize(std::vector<const char*>(1,file),c,p,s,gjid);
+	return initialize(std::vector<const char*>(1,file),c,p,s);
 }
 
 bool
-WriteUserLog::initialize( const std::vector<const char *>& file, int c, int p, int s,
-						  const char *gjid)
+WriteUserLog::initialize( const std::vector<const char *>& file, int c, int p, int s)
 {
 		// Save parameter info
 	FreeLocalResources( );
@@ -315,19 +311,19 @@ WriteUserLog::initialize( const std::vector<const char *>& file, int c, int p, i
         freeLogs();
 		logs.clear();
 	}
-	return !logs.empty() && internalInitialize( c, p, s, gjid );
+	return !logs.empty() && internalInitialize( c, p, s );
 }
 
 bool
-WriteUserLog::initialize( int c, int p, int s, const char *gjid )
+WriteUserLog::initialize( int c, int p, int s )
 {
 	Configure(false);
-	return internalInitialize( c, p, s, gjid );
+	return internalInitialize( c, p, s );
 }
 
 // Internal-only initializer, invoked by all of the others
 bool
-WriteUserLog::internalInitialize( int c, int p, int s, const char *gjid )
+WriteUserLog::internalInitialize( int c, int p, int s )
 {
 
 	m_cluster = c;
@@ -340,10 +336,6 @@ WriteUserLog::internalInitialize( int c, int p, int s, const char *gjid )
 		priv_state priv = set_condor_priv();
 		openGlobalLog( true );
 		set_priv( priv );
-	}
-
-	if(gjid) {
-		m_gjid = strdup(gjid);
 	}
 
 	m_initialized = true;
@@ -372,7 +364,7 @@ WriteUserLog::Configure( bool force )
 	if ( NULL == m_global_path ) {
 		return true;
 	}
-	m_global_stat = new StatWrapper( m_global_path, StatWrapper::STATOP_NONE );
+	m_global_stat = new StatWrapper( m_global_path );
 	m_global_state = new WriteUserLogState( );
 
 
@@ -461,7 +453,6 @@ WriteUserLog::Reset( void )
 	m_rotation_lock_path = NULL;
 
 	m_use_xml = XML_USERLOG_DEFAULT;
-	m_gjid = NULL;
 
 	m_creator_name = NULL;
 
@@ -612,10 +603,6 @@ WriteUserLog::FreeLocalResources( void )
 {
     freeLogs();
 	logs.clear();
-	if (m_gjid) {
-		free(m_gjid);
-		m_gjid = NULL;
-	}
 	if (m_creator_name) {
 		free( m_creator_name );
 		m_creator_name = NULL;
@@ -910,7 +897,7 @@ WriteUserLog::checkGlobalLogRotation( void )
 
 	// Check the size of the log file
 #if ROTATION_TRACE
-	UtcTime	stat_time( true );
+	double stat_time = condor_gettimestamp_double();
 #endif
 	if ( !updateGlobalStat() ) {
 		return false;			// What should we do here????
@@ -953,10 +940,10 @@ WriteUserLog::checkGlobalLogRotation( void )
 #if ROTATION_TRACE
 	{
 		StatWrapper	swrap( m_global_path );
-		UtcTime	start_time( true );
+		double start_time = condor_gettimestamp_double();
 		dprintf( D_FULLDEBUG, "Rotating inode #%ld @ %.6f (stat @ %.6f)\n",
-				 (long)swrap.GetBuf()->st_ino, start_time.combined(),
-				 stat_time.combined() );
+				 (long)swrap.GetBuf()->st_ino, start_time,
+				 stat_time );
 		m_global_lock->display();
 	}
 #endif
@@ -985,7 +972,7 @@ WriteUserLog::checkGlobalLogRotation( void )
 		if ( m_global_count_events ) {
 			int		events = 0;
 #         if ROTATION_TRACE
-			UtcTime	time1( true );
+			double time1 = condor_gettimestamp_double();
 #         endif
 			while( 1 ) {
 				ULogEvent		*event = NULL;
@@ -997,8 +984,8 @@ WriteUserLog::checkGlobalLogRotation( void )
 				delete event;
 			}
 #         if ROTATION_TRACE
-			UtcTime	time2( true );
-			double	elapsed = time2.difference( time1 );
+			double	time2 = condor_gettimestamp_double();
+			double	elapsed = time2 - time1;
 			double	eps = ( events / elapsed );
 #         endif
 
@@ -1035,9 +1022,8 @@ WriteUserLog::checkGlobalLogRotation( void )
 
 	// And write the updated header
 # if ROTATION_TRACE
-	UtcTime	now( true );
 	dprintf( D_FULLDEBUG, "WriteUserLog: Writing header to %s (%d) @ %.6f\n",
-			 m_global_path, header_fd, now.combined() );
+			 m_global_path, header_fd, condor_gettimstamp_double() );
 # endif
 	if ( header_fd >= 0 ) {
 		lseek( header_fd, 0, SEEK_SET );
@@ -1054,10 +1040,10 @@ WriteUserLog::checkGlobalLogRotation( void )
 
 	// Now, rotate files
 # if ROTATION_TRACE
-	UtcTime	time1( true );
+	double time1 = condor_gettimestamp_double();
 	dprintf( D_FULLDEBUG,
 			 "WriteUserLog: Starting bulk rotation @ %.6f\n",
-			 time1.combined() );
+			 time1 );
 # endif
 
 	MyString	rotated;
@@ -1071,13 +1057,13 @@ WriteUserLog::checkGlobalLogRotation( void )
 	}
 
 # if ROTATION_TRACE
-	UtcTime	end_time( true );
+	double end_time = condor_gettimestamp_double();
 	if ( num_rotations ) {
 		dprintf( D_FULLDEBUG,
 				 "WriteUserLog: Done rotating files (inode = %ld) @ %.6f\n",
-				 (long)swrap.GetBuf()->st_ino, end_time.combined() );
+				 (long)swrap.GetBuf()->st_ino, end_time );
 	}
-	double	elapsed = end_time.difference( time1 );
+	double	elapsed = end_time - time1;
 	double	rps = ( num_rotations / elapsed );
 	dprintf( D_FULLDEBUG,
 			 "WriteUserLog: Rotated %d files in %.4fs = %.0f/s\n",
@@ -1105,7 +1091,7 @@ WriteUserLog::updateGlobalStat( void )
 	if ( (NULL == m_global_stat) || (m_global_stat->Stat()) ) {
 		return false;
 	}
-	if ( NULL == m_global_stat->GetBuf() ) {
+	if ( m_global_stat->IsBufValid() == false ) {
 		return false;
 	}
 	return true;
@@ -1171,7 +1157,7 @@ WriteUserLog::doRotation( const char *path, int &fd,
 			MyString old1( path );
 			old1.formatstr_cat(".%d", i-1 );
 
-			StatWrapper	s( old1, StatWrapper::STATOP_STAT );
+			StatWrapper	s( old1 );
 			if ( 0 == s.GetRc() ) {
 				MyString old2( path );
 				old2.formatstr_cat(".%d", i );
@@ -1195,12 +1181,12 @@ WriteUserLog::doRotation( const char *path, int &fd,
 # endif
 
 	// Before time
-	UtcTime before(true);
+	double before = condor_gettimestamp_double();
 
 	if ( rotate_file( path, rotated.Value()) == 0 ) {
-		UtcTime after(true);
-		dprintf(D_FULLDEBUG, "WriteUserLog before .1 rot: %.6f\n", before.combined() );
-		dprintf(D_FULLDEBUG, "WriteUserLog after  .1 rot: %.6f\n", after.combined() );
+		double after = condor_gettimestamp_double();
+		dprintf(D_FULLDEBUG, "WriteUserLog before .1 rot: %.6f\n", before );
+		dprintf(D_FULLDEBUG, "WriteUserLog after  .1 rot: %.6f\n", after );
 		num_rotations++;
 	}
 
@@ -1428,7 +1414,6 @@ WriteUserLog::writeEvent ( ULogEvent *event,
 	event->cluster = m_cluster;
 	event->proc = m_proc;
 	event->subproc = m_subproc;
-	event->setGlobalJobId(m_gjid);
 
 	// write global event
 	//TEMPTEMP -- don't try if we got a global open error
@@ -1588,11 +1573,11 @@ WriteUserLog::GetGlobalIdBase( void )
 		return m_global_id_base;
 	}
 	MyString	base;
-	UtcTime	utc;
+	struct timeval now;
+	condor_gettimestamp( now );
 
-	utc.getTime();
-	formatstr( base, "%d.%d.%ld.%ld.", getuid(), getpid(), utc.seconds(),
-	           utc.microseconds() );
+	formatstr( base, "%d.%d.%ld.%ld.", getuid(), getpid(), (long)now.tv_sec,
+	           (long)now.tv_usec );
 
 	m_global_id_base = strdup( base.Value( ) );
 	return m_global_id_base;
@@ -1602,8 +1587,8 @@ WriteUserLog::GetGlobalIdBase( void )
 void
 WriteUserLog::GenerateGlobalId( MyString &id )
 {
-	UtcTime	utc;
-	utc.getTime();
+	struct timeval now;
+	condor_gettimestamp( now );
 
 	// First pass -- initialize the sequence #
 	if ( m_global_sequence == 0 ) {
@@ -1619,7 +1604,7 @@ WriteUserLog::GenerateGlobalId( MyString &id )
 	}
 
 	formatstr_cat( id, "%s%d.%ld.%ld", GetGlobalIdBase(), m_global_sequence,
-	               utc.seconds(), utc.microseconds() );
+	               (long)now.tv_sec, (long)now.tv_usec );
 }
 /*
 ### Local Variables: ***

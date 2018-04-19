@@ -46,6 +46,8 @@ if (BUILD_TESTING)
 		file( REMOVE ${RMV_FIRST} )
 	endif()
 
+	APPEND_VAR(CONDOR_TEST_HELPER_SCRIPTS "Condor.pm;CondorTest.pm;CondorPersonal.pm;CondorUtils.pm;CheckOutputFormats.pm;run_test.pl")
+
 	##########################################################
 	# exe test targets
 	condor_exe_test(x_return-n.exe "x_return-n.cpp;x_waste_second.c" "")
@@ -228,6 +230,13 @@ if (BUILD_TESTING)
 	condor_pl_test (lib_meta_knob  "Test meta knobs" "core;quick;full;quicknolink")
 	condor_pl_test (lib_include_cmd_config  "Test meta knobs" "core;quick;full;quicknolink")
 
+	# an example of a test writen in python rather than in perl
+	condor_pl_test (python_example "Sample python test" "core;quick;full;quicknolink")
+	if (WITH_PYTHON_BINDINGS)
+		# an example test that depends on python bindings
+		# condor_pl_test (python_bindings_example "Sample python bindings test" "core;quick;full;quicknolink")
+	endif()
+
 	if(WITH_GANGLIA)
           condor_pl_test(gangliad "Basic test of condor_gangliad." "core;quick;full;quicknolink")
         endif()
@@ -366,6 +375,7 @@ if (BUILD_TESTING)
 	#condor_pl_test(job_dagman_final-L "Test DAG with final node with multiple procs, all succeed" "dagman;quick;full;quicknolink")
 	#condor_pl_test(job_dagman_final-M "Test DAG with final node with multiple procs, one fails" "dagman;quick;full;quicknolink")
 	condor_pl_test(job_dagman_nonexistent_subdag "Test for nonexistent subdag" "core;dagman;quick;full;quicknolink")
+	condor_pl_test(job_dagman_latemat-A "DAGMan + Late Materialization Basic Test A" "dagman;quick;full;quicknolink")
 
 	##### submit foreach variant tests
 	condor_pl_test(job_foreach_submit-filepartmacros "submit file usage file part macros" "core;quick;full;quicknolink")
@@ -427,12 +437,12 @@ if (BUILD_TESTING)
 	condor_pl_test(cmd_q_formats "Condor_q formats" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_q_shows-batch "Condor_q shows batch" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_q_shows-af "Condor_q_shows af" "core;quick;full;quicknolink")
-	condor_pl_test(cmd_status-af "Condor_status af" "core;quick;full'quicknolink")
+	condor_pl_test(cmd_status-af "Condor_status af" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_q_format_file "Condor_q format_file" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_transform_ads "Condor_transform_ads" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_status-transform "Condor_status transform" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_status-compact "Condor_status compact" "core;quick;full;quicknolink")
-	condor_pl_test(max_jobs_per_owner_test "Max_jobs_per_owner_test" "core;qiuck;full;quicknolink")
+	condor_pl_test(max_jobs_per_owner_test "Max_jobs_per_owner_test" "core;quick;full;quicknolink")
 	condor_pl_test(max_jobs_per_owner_test_group "Max_jobs_per_owner_test -group" "core;quick;full;quicknolink")
 	condor_pl_test(job_transform_names_test "Job_transform_names_test" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_submit-batchname "condor_submit -batch-name" "core;quick;full;quicknolink")
@@ -441,22 +451,23 @@ if (BUILD_TESTING)
 	condor_pl_test(docker_simulator_test "docker_simulator_test" "core;quick;full;quicknolink")
 	condor_pl_test(map_user_to_groups_metaknob_test "map_user_to_groups_metaknob_test" "core;quick;full;quicknolink")
 	condor_pl_test(cmd_submit-factory "condor_submit -factory" "core;quick;full;quicknolink")
-	condor_pl_test(cmd_curl_plugin "Success and failure scenarios for curl_plugin" "core;quick;full;quicknolink")
+	condor_pl_test(cmd_curl_plugin_singlefile_success "Successful curl_plugin single file download" "core;quick;full;quicknolink")
+	condor_pl_test(cmd_curl_plugin_singlefile_failure "Failed curl_plugin single file download" "core;quick;full;quicknolink")
+	condor_pl_test(cmd_curl_plugin_singlefile_partial "Successful curl_plugin single file download with partial retry" "core;quick;full;quicknolink")
+
 
 	if (LINUX)
 		condor_pl_test(cmd_ssh_to_job_van "condor_ssh_to_job" "core;quick;full;quicknolink")
 	endif()
 	condor_pl_test(cmd_drain "condor_drain" "core;quick;full;quicknolink")
 	condor_pl_test(defrag "condor_defrag" "core;quick;full;quicknolink")
+	condor_pl_test(cmd_drain_scavenging "condor_drain -start" "core;quick;full;quicknolink")
 
 	##### lib log tests
 	condor_pl_test(lib_userlog "Exercise the userlog interface write and read all events" "lib;quick;full")
 	condor_pl_test(lib_eventlog "Basic Event Log Test" "core;quick;full")
 	condor_pl_test(lib_eventlog-xml "Basic XML Event Log Test" "core;quick;full")
 	condor_pl_test(lib_eventlog_base "Test re-initialization of eventlog reader does not cause seg faults" "lib;quick;full")
-
-	# condor_pl_test(job_quill_basic "Basic Quill Test" "core;quick;full;quicknolink")
-	# alread built as part of make tests prior to running batch_test
 
 	#dprint("TODO: Need to fix lib_eventlog_rotation-defaults test")
 	#condor_pl_test(lib_eventlog_rotation-defaults "Event Log Rotation: Default settings" "core;quick;full")
@@ -498,6 +509,21 @@ if (BUILD_TESTING)
 
 	if(LINUX)
 		condor_pl_test(job_cpu_affinity_check "ensure Matlog has only matches" "core;quick;full")
+
+		condor_pl_test(cmr-monitor-basic "custom machine resource monitors" "core;quick;full")
+		condor_pl_test(cmr-monitor-basic-partitionable "custom machine resource monitors - partitionable" "core;quick;full")
+
+		condor_pl_test(cmr-monitor-memory "custom machine resource monitors (memory)" "core;quick;full")
+		condor_pl_test(cmr-monitor-memory-partitionable "custom machine resource monitors (memory) - partitionable" "core;quick;full")
+
+		condor_pl_test(cmr-monitor-both "custom machine resource monitors (both)" "core;quick;full")
+		condor_pl_test(cmr-monitor-both-partitionable "custom machine resource monitors (both) - partitionable" "core;quick;full")
+
+		condor_pl_test(cmr-monitor-many "custom machine resource monitors (many)" "core;quick;full")
+		condor_pl_test(cmr-monitor-many-partitionable "custom machine resource monitors (many) - partitionable" "core;quick;full")
+
+		condor_pl_test(cmr-monitor-many-instances "custom machine resource monitors (many, many instances)" "core;quick;full")
+		condor_pl_test(cmr-monitor-many-instances-partitionable "custom machine resource monitors (many, many instances) - partitionable" "core;quick;full")
 	endif ( LINUX )
 
 	condor_pl_test(job_concurrency_limitsS "Check concurrency" "core;quick;full")
@@ -565,6 +591,7 @@ if (BUILD_TESTING)
 	condor_pl_test(job_core_time-deferral "Local and Van: Verify deferred execution" "core;quick;full;quicknolink;local;time")
 	condor_pl_test(job_core_time-deferral-hold "Local and Van: Verify HOLD against deferred execution" "core;quick;full;quicknolink;local;time")
 	condor_pl_test(job_core_time-deferral-remove "Local and Van: Verify REMOVE against deferred execution" "core;quick;full;quicknolink;local;time")
+	condor_pl_test(job_core_lease_duration "Van: check job_lease_duration and lease renewal" "core;quick;full;quicknolink")
 	#condor_pl_test(job_core_onexitrem_sched "Scheduler: Verify true and false triggers of on_exit_remove" "core;quick")
 	#condor_pl_test(job_core_onexithold_sched "Scheduler: Verify true and false triggers of on_exit_hold" "core;quick")
 	condor_pl_test(job_filexfer_basic_van "Vanilla: send a file and get it back" "filexfer;quick;full;quicknolink")
@@ -610,6 +637,7 @@ if (BUILD_TESTING)
 	#condor_pl_test(job_core_priority_van "Vanilla: Verify respect for job priority" "core;quick;full;quicknolink")
 	condor_pl_test(job_core_queue_sched "Scheduler: Verify the  queue command" "core;quick;full;quicknolink")
 	condor_pl_test(job_core_max-running_local "Local: Max job running limit" "core;quick;full;quicknolink;local")
+	condor_pl_test(job_late_materialize "Late materialization of jobs" "core;quick;full;quicknolink")
 	condor_pl_test(job_schedd_restart-holdjobs-ok "Held queue ok after schedd restart" "core;quick;full;quicknolink")
 	condor_pl_test(job_schedd_restart-runningjobs-ok "Running queue ok after schedd restart" "core;quick;full;quicknolink")
 	condor_pl_test(job_schedd_restart-basic "schedd restarts" "core;quick;full;quicknolink")
@@ -738,10 +766,5 @@ if (BUILD_TESTING)
 	condor_pl_test(job_cp_cclim_acctgrp_basic_van "Test Consumption Policies with cc-limits and acct-groups" "core;quick;full;quicknolink")
 	condor_pl_test(job_starter_script-A "Test starter pre and post scripts" "core;quick;full;quicknolink")
   #condor_pl_test(condor_urlfetch_test "Tests tool condor_urlfetch" "framework;quick;full")
-
-	if ( NOT WITHOUT_SOAP_TEST AND HAVE_EXT_GSOAP )
-		#condor_pl_test(soap_job_tests "Soap: currently 10 different interface tests" "core;quick;full;quicknolink")
-	endif()
-
 
 endif(BUILD_TESTING)

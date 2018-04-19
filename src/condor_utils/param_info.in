@@ -33,6 +33,11 @@
 ## metaknob names always start with $ and a category name.
 ##
 
+[MAX_DRAINING_ACTIVATION_DELAY]
+default=20
+description=When draining, how many seconds should a claimed slot wait to be activated?  Draining will be extended by this delay..
+tag=startd
+
 [ENABLE_KERNEL_TUNING]
 default=true
 type=bool
@@ -78,6 +83,11 @@ type=int
 [PREEN_INTERVAL]
 default=86400
 type=int
+
+[PREEN_MAX_SCHEDD_CONNECTION_TIME]
+default=20
+type=int
+tags=preen
 
 [DEFAULT_MASTER_SHUTDOWN_SCRIPT]
 default=
@@ -750,6 +760,12 @@ type=int
 tags=dagman,dagman_main
 restart=never
 
+[DAGMAN_QUEUE_UPDATE_INTERVAL]
+default=300
+type=int
+tags=dagman,dagman_main
+restart=never
+
 [DAGMAN_USE_STRICT]
 default=1
 type=int
@@ -902,36 +918,6 @@ default=2308032
 type=int
 tags=accountant
 
-[QUILL_ENABLED]
-default=false
-type=bool
-customization=devel
-tags=q,queue
-
-[QUILL_NAME]
-default=
-type=string
-customization=devel
-tags=q,queue
-
-[QUILL_DB_IP_ADDR]
-default=
-type=string
-customization=devel
-tags=q,queue
-
-[QUILL_DB_NAME]
-default=
-type=string
-customization=devel
-tags=q,queue
-
-[QUILL_DB_QUERY_PASSWORD]
-default=
-type=string
-customization=devel
-tags=q,queue
-
 [REAL_TIME_JOB_SUSPEND_UPDATES]
 default=
 type=string
@@ -1004,46 +990,10 @@ default=0
 type=int
 tags=shadow,baseshadow
 
-[QUILL_MANAGE_VACUUM]
-default=false
-type=bool
-customization=devel
-tags=quill,jobqueuedbmanager
-
-[QUILL_POLLING_PERIOD]
-default=10
-type=int
-customization=devel
-tags=quill,jobqueuedbmanager
-
-[QUILL_HISTORY_DURATION]
-default=180
-type=int
-customization=devel
-tags=quill,jobqueuedbmanager
-
-[QUILL_HISTORY_CLEANING_INTERVAL]
-default=24
-type=int
-customization=devel
-tags=quill,jobqueuedbmanager
-
-[QUILL_SHOULD_REINDEX]
-default=true
-type=bool
-customization=devel
-tags=quill,jobqueuedbmanager
-
 [SCHEDD_NAME]
 default=
 type=string
-tags=quill,jobqueuedbmanager
-
-[QUILL_IS_REMOTELY_QUERYABLE]
-default=true
-type=bool
-customization=devel
-tags=quill,jobqueuedbmanager
+tags=jobqueuedbmanager
 
 [COUNT_HYPERTHREAD_CPUS]
 default=true
@@ -1471,12 +1421,6 @@ default=
 type=string
 tags=daemons
 
-[QUILL_USE_SQL_LOG]
-default=false
-type=bool
-customization=devel
-tags=daemon_core
-
 [COLLECTOR_NAME]
 default=My Pool - $(CONDOR_HOST)
 type=string
@@ -1616,11 +1560,6 @@ tags=gridmanager,nordugridjob
 default=5
 type=int
 tags=gridmanager,gridmanager
-
-[JOB_PROXY_OVERRIDE_FILE]
-default=
-type=string
-tags=gridmanager,proxymanager
 
 [GRIDMANAGER_PROXY_REFRESH_TIME]
 default=21600
@@ -1853,6 +1792,11 @@ default=
 type=string
 tags=startd,Resource
 
+[STARTD_RECOMPUTE_DISK_FREE]
+default=false
+type=bool
+tags=startd
+
 [STARTD_JOB_HOOK_KEYWORD]
 default=
 type=string
@@ -2042,11 +1986,6 @@ default=0
 type=int
 tags=startd,startd_main
 
-[STARTD_COMPUTE_AVAIL_STATS]
-default=false
-type=bool
-tags=startd,startd_main
-
 [STARTD_NAME]
 default=
 type=string
@@ -2066,11 +2005,6 @@ tags=startd,startd_main
 default=
 type=string
 tags=startd,startd_main
-
-[STARTD_MAX_AVAIL_PERIOD_SAMPLES]
-default=100
-type=int
-tags=startd,AvailStats
 
 [STARTD_SHOULD_WRITE_CLAIM_ID_FILE]
 default=true
@@ -2154,34 +2088,10 @@ default=false
 type=bool
 default=false
 
-[QUILL_MAINTAIN_DB_CONN]
-default=true
-type=bool
-customization=devel
-tags=tt,ttmanager
-
-[QUILL_MAINTAIN_SOFT_STATE]
-default=true
-type=bool
-customization=devel
-tags=tt,ttmanager
-
-[QUILL_USE_TEMP_TABLE]
-default=false
-type=bool
-customization=devel
-tags=tt,ttmanager
-
 [WANT_XML_LOG]
 default=false
 type=bool
 tags=tt,ttmanager
-
-[QUILL_DB_USER]
-default=
-type=string
-customization=devel
-tags=tt,jobqueuedbmanager
 
 [SUBMIT_SKIP_FILECHECKS]
 default=true
@@ -2295,18 +2205,6 @@ tags=submit
 default=
 type=string
 tags=submit
-
-[MAX_XML_LOG]
-# XXX Um, how does this default work in terms of the emitted C?
-default=1900000000
-type=long
-tags=file_xml
-
-[QUILL_DB_TYPE]
-default=PGSQL
-type=string
-customization=devel
-tags=jobqueuesnapshot
 
 [WINDOWS_FIREWALL_FAILURE_RETRY]
 default=2
@@ -2859,6 +2757,10 @@ type=string
 description=Constrain Negotiator Query for Startd Ads
 tags=negotiator,matchmaker
 
+[NEGOTIATOR_JOB_CONSTRAINT]
+default=
+type=string
+
 [GROUP_AUTOREGROUP]
 default=false
 type=bool
@@ -2903,6 +2805,11 @@ tags=negotiator,matchmaker
 default=false
 type=bool
 tags=negotiator,matchmaker
+
+[COLLECTOR_HOST_FOR_NEGOTIATOR]
+default=$(FULL_HOSTNAME)
+type=string
+tags=negotiator
 
 [RECEIVE_MSGS_DURATION]
 default=250
@@ -2957,7 +2864,7 @@ type=string
 tags=tools,preen
 
 [SYSTEM_VALID_SPOOL_FILES]
-default=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .quillwritepassword, .pgpass, .schedd_address, .schedd_address.super, .schedd_classad, OfflineLog
+default=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .pgpass, .schedd_address, .schedd_address.super, .schedd_classad, OfflineLog
 type=string
 customization=const
 description=List of files in the SPOOL directory needed by HTCondor
@@ -3022,50 +2929,6 @@ tags=shadow,shadow
 default=
 type=string
 tags=shadow,pseudo_ops
-
-[EMAIL_NOTIFICATION_CC]
-default=
-type=string
-tags=shadow,shadow_common
-
-[DBMSMANAGER_NAME]
-default=
-type=string
-tags=dbmsd,DBMSManager
-
-[DATABASE_PURGE_INTERVAL]
-default=
-type=string
-tags=dbmsd,DBMSManager
-
-[DATABASE_REINDEX_INTERVAL]
-default=
-type=string
-tags=dbmsd,DBMSManager
-
-[QUILL_RESOURCE_HISTORY_DURATION]
-default=
-type=string
-customization=devel
-tags=dbmsd,ManagedDatabase
-
-[QUILL_RUN_HISTORY_DURATION]
-default=
-type=string
-customization=devel
-tags=dbmsd,ManagedDatabase
-
-[QUILL_JOB_HISTORY_DURATION]
-default=
-type=string
-customization=devel
-tags=dbmsd,ManagedDatabase
-
-[QUILL_DBSIZE_LIMIT]
-default=
-type=string
-customization=devel
-tags=dbmsd,ManagedDatabase
 
 [JOB_ROUTER_SOURCE_JOB_CONSTRAINT]
 default=
@@ -3230,7 +3093,7 @@ tags=schedd,shadow_mgr
 [SOAP_LEAVE_IN_QUEUE]
 default=
 type=string
-tags=schedd,soap_scheddStub
+tags=schedd
 
 [SHADOW]
 default=$(SBIN)/condor_shadow
@@ -3636,6 +3499,11 @@ default=900
 type=long
 tags=annex
 
+[ANNEX_DEFAULT_AWS_REGION]
+default=us-east-1
+type=string
+tags=annex
+
 [ANNEX_DEFAULT_EC2_URL]
 default = https://ec2.us-east-1.amazonaws.com
 type=string
@@ -3676,18 +3544,43 @@ default = m4.large
 type=string
 tags=annex
 
-[ANNEX_DEFAULT_ODI_IMAGE_ID]
-default = $(ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_1)
+[us_east_1.ANNEX_DEFAULT_ODI_IMAGE_ID]
+default = $(us_east_1.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8)
 type=string
 tags=annex
 
-[ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_0]
-default = ami-206ab336
+[us_east_1.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8]
+default = ami-0582916cc08a1d81e
 type=string
 tags=annex
 
-[ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_1]
-default = ami-35b13223
+[us_east_2.ANNEX_DEFAULT_ODI_IMAGE_ID]
+default = $(us_east_2.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8)
+type=string
+tags=annex
+
+[us_east_2.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8]
+default = ami-0f61cdd6883793833
+type=string
+tags=annex
+
+[us_west_1.ANNEX_DEFAULT_ODI_IMAGE_ID]
+default = $(us_west_1.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8)
+type=string
+tags=annex
+
+[us_west_1.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8]
+default = ami-084d3d008e3740806
+type=string
+tags=annex
+
+[us_west_2.ANNEX_DEFAULT_ODI_IMAGE_ID]
+default = $(us_west_2.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8)
+type=string
+tags=annex
+
+[us_west_2.ANNEX_DEFAULT_ODI_IMAGE_ID_V8_7_8]
+default = ami-00daecb4d3b8f077f
 type=string
 tags=annex
 
@@ -3705,20 +3598,6 @@ win32_default=$(SBIN)\condor_startd.exe
 type=path
 customization=devel
 description=Path to the HTCondor startd daemon binary
-tags=master
-
-[QUILL]
-default=$(SBIN)/condor_quill
-win32_default=$(SBIN)\condor_quill.exe
-type=path
-customization=devel
-tags=master
-
-[DBMSD]
-default=$(SBIN)/condor_dbmsd
-win32_default=$(SBIN)\condor_dbmsd.exe
-type=path
-customization=devel
 tags=master
 
 [CCB_POLLING_TIMESLICE]
@@ -3977,19 +3856,6 @@ default=1000000
 description=Max Procd Log (size rotation only, no scale suffix)
 tags=procd
 
-[ENABLE_ADDRESS_REWRITING]
-default=true
-version=7.4.3
-type=bool
-tags=daemons
-
-# This was an option "born deprecated"; it allows a single-host HTCondor instance (particularly, the HTCondor-CE) to provide a better dual-stack service by rewriting all ads in the collector.
-[SHARED_PORT_ADDRESS_REWRITING]
-default=false
-version=8.3.4
-type=bool
-customization=devel
-
 [SHADOW_WORKLIFE]
 default=3600
 version=7.5.3
@@ -4198,6 +4064,11 @@ default=((time() - LastPeriodicCheckpoint)/60.0) > (180.0 + $RANDOM_INTEGER(-30,
 type=string
 tags=startd
 
+[DEFRAG_DRAINING_START_EXPR]
+default=FALSE
+type=string
+tags=defrag
+
 [DEFRAG_REQUIREMENTS]
 default=PartitionableSlot && Offline=!=True
 type=string
@@ -4307,7 +4178,7 @@ description=Expression to set MemoryUsage
 tags=starter
 
 [MEMORY_USAGE_METRIC_VM]
-default=VM_Memory
+default=((ImageSize+1023)/1024)
 version=7.7.6
 type=string
 customization=expert
@@ -4339,6 +4210,12 @@ default=1
 version=7.7.6
 type=string
 description=Default RequestCpus expression if not specified in submit file
+tags=submit
+
+[JOB_DEFAULT_LEASE_DURATION]
+default=2400
+type=string
+description=Default JobLeaseDuration expression if not specified in submit file
 tags=submit
 
 [MUST_MODIFY_REQUEST_EXPRS]
@@ -4549,7 +4426,7 @@ description=Determines if job creates their own namespace
 tags=starter
 
 [CHIRP_DELAYED_UPDATE_PREFIX]
-default=Chirp*
+default=Chirp
 version=8.1.0
 type=string
 is_macro=true
@@ -4710,6 +4587,11 @@ default=false
 type=bool
 description=Whether to invoke file transfer plugins as user or as root
 
+[ENABLE_MULTIFILE_TRANSFER_PLUGINS]
+default=false
+type=bool
+description=Enable file transfer plugins that support multiple files as input
+
 [ENABLE_HTTP_PUBLIC_FILES]
 default=false
 type=bool
@@ -4728,11 +4610,17 @@ type=string
 description=Folder in the local filesystem for HTTP public file links to be served from.
 tags=file_transfer
 
-[HTTP_PUBLIC_FILES_USER]
-default=<condor>
+[HTTP_PUBLIC_FILES_ROOT_OWNER]
+default=apache
 type=string
-description=Username to create symlinks as, or token '<condor>' or token '<user>'.
+description=Owner of the user who owns the directory specified by HTTP_PUBLIC_FILES_ROOT_DIR
 tags=file_transfer
+
+[HTTP_PUBLIC_FILES_STALE_AGE]
+default=604800
+type=int
+description=Age (in seconds) after which preen determines this file is stale and removes it
+tags=file_transfer,preen
 
 [COLLECTOR_MAX_FILE_DESCRIPTORS]
 default=10240
@@ -4989,7 +4877,7 @@ review=tlmiller
 tags=schedd
 
 [IS_OWNER]
-default=(START =?= False)
+default=False
 version=8.2.8
 type=string
 description=When a slot should be in Owner state
@@ -5287,6 +5175,11 @@ win32_default=NUL
 default=$(EC2_GAHP)
 type=path
 
+[AZURE_GAHP]
+default=$(SBIN)/AzureGAHPServer
+win32_default=$(SBIN)\AzureGAHPServer.py
+type=path
+
 [CREDD]
 default=$(SBIN)/condor_credd
 win32_default=$(SBIN)\condor_credd.exe
@@ -5574,6 +5467,7 @@ default : @end
 	MaxJobRetirementTime=0
 	CLAIM_WORKLIFE=
 	SLOTS_CONNECTED_TO_KEYBOARD=$(NUM_CPUS)
+	IS_OWNER=(START =?= False)
 @end
 
 # no-preemption policy, formerly called TESTINGMODE_
@@ -5646,6 +5540,7 @@ default : @end
 	MaxJobRetirementTime=$(UWCS_MaxJobRetirementTime)
 	CLAIM_WORKLIFE=$(UWCS_CLAIM_WORKLIFE)
 	SLOTS_CONNECTED_TO_KEYBOARD=$(NUM_CPUS)
+	IS_OWNER=(START =?= False)
 @end
 
 [$POLICY.LIMIT_JOB_RUNTIMES]
@@ -5701,9 +5596,11 @@ description=Preempt jobs that use more memory than in slot
 default : @end
   #
   # If the startd sees the memory usage of the job exceed the
-  # memory in the slot, preempt the job immediately ignoring any retirement time.
+  # memory in the slot, preempt the job immediately ignoring
+  # any retirement time.  VM universe jobs can't go over their
+  # memory allocations, so we ignore them.
   #
-  MEMORY_EXCEEDED = (MemoryUsage =!= UNDEFINED && MemoryUsage > Memory)
+  MEMORY_EXCEEDED = (JobUniverse != 13 && MemoryUsage =!= UNDEFINED && MemoryUsage > Memory)
   use POLICY : PREEMPT_IF(MEMORY_EXCEEDED)
 @end
 
@@ -5711,10 +5608,12 @@ default : @end
 description=Hold jobs that use more memory than in slot
 default : @end
   #
-  # If the startd preempted a job because memory usage exceeded the amount
-  # of memory in the slot, put the job on hold.
+  # If the startd preempted a job because memory usage exceeded
+  # the amount of memory in the slot, put the job on hold.  VM
+  # universe jobs can't go over their memory allocations, so
+  # we ignore them.
   #
-  MEMORY_EXCEEDED = (MemoryUsage =!= UNDEFINED && MemoryUsage > Memory)
+  MEMORY_EXCEEDED = (JobUniverse != 13 && MemoryUsage =!= UNDEFINED && MemoryUsage > Memory)
   HOLD_REASON_MEMORY_EXCEEDED = memory usage exceeded request_memory
   use POLICY : WANT_HOLD_IF( MEMORY_EXCEEDED, $(HOLD_SUBCODE_MEMORY_EXCEEDED:102), $(HOLD_REASON_MEMORY_EXCEEDED) )
 @end
@@ -5753,9 +5652,9 @@ default : @end
     error : use POLICY : WANT_HOLD_IF requires 3 arguments: policy_variable, subcode, reason_text
   endif
   if defined WANT_HOLD
-    WANT_HOLD = $($(1)) || $(WANT_HOLD)
+    WANT_HOLD = (JobUniverse != 1 && $($(1))) || $(WANT_HOLD)
   else
-    WANT_HOLD = $($(1))
+    WANT_HOLD = (JobUniverse != 1 && $($(1)))
   endif
   WANT_HOLD_SUBCODE = ifThenElse($($(1)), $(2) , $(WANT_HOLD_SUBCODE:UNDEFINED))
   WANT_HOLD_REASON = ifThenElse($($(1)), "$(3+)", $(WANT_HOLD_REASON:UNDEFINED))
@@ -5764,6 +5663,7 @@ usage : @end
   set a variable with the trigger expression, then pass the variable name, a subcode, and reason text as arguments:
   MEMORY_EXCEEDED = (isDefined(MemoryUsage) && MemoryUsage > Memory)
   use POLICY : WANT_HOLD_IF(MEMORY_EXCEEDED, 102, memory usage exceeded request_memory)
+  note that standard universe jobs can not be put on hold this way.
 @end
 
 
@@ -5774,6 +5674,7 @@ default : @end
 	COLLECTOR_HOST=$(CONDOR_HOST):0
 	DAEMON_LIST=MASTER COLLECTOR NEGOTIATOR STARTD SCHEDD
 	RunBenchmarks=0
+	JAVA_BENCHMARK_TIME=0
 @end
 
 [$ROLE.Execute]
@@ -5932,6 +5833,28 @@ default : @end
 	MACHINE_RESOURCE_INVENTORY_GPUs=$(LIBEXEC)/condor_gpu_discovery -properties $(GPU_DISCOVERY_EXTRA)
 	ENVIRONMENT_FOR_AssignedGPUs=GPU_DEVICE_ORDINAL=/(CUDA|OCL)//  CUDA_VISIBLE_DEVICES
 	ENVIRONMENT_VALUE_FOR_UnAssignedGPUs=10000
+
+	use feature : GPUsMonitor
+@end
+
+[$FEATURE.Monitor]
+description=Settings to configure a custom machine resource monitor
+default : @end
+	if ! $(5?)
+		error: use feature : monitor requires five or more arguments
+	endif
+
+	STARTD_CRON_JOBLIST = $(STARTD_CRON_JOBLIST) $(1)_MONITOR
+	STARTD_CRON_$(1)_MONITOR_MODE = $(2)
+	STARTD_CRON_$(1)_MONITOR_PERIOD = $(3)
+	STARTD_CRON_$(1)_MONITOR_EXECUTABLE = $(4)
+	STARTD_CRON_$(1)_MONITOR_METRICS = $(5+)
+@end
+
+[$FEATURE.GPUsMonitor]
+description=Settings to monitor GPU usage
+default : @end
+	use feature : Monitor( GPUs, WaitForExit, 1, $(LIBEXEC)/condor_gpu_utilization, SUM:GPUs, PEAK:GPUsMemory )
 @end
 
 [$FEATURE.PartitionableSlot]
@@ -6088,10 +6011,6 @@ default : @end
 	LeaseManager.PRUNE_INTERVAL
 	LeaseManager.DEBUG_ADS
 	LeaseManager.CLASSAD_LOG
-	QUILL_LOG
-	QUILL_ADDRESS_FILE
-	DBMSD_ARGS
-	DBMSD_LOG
 	STORK
 	STORK_ADDRESS_FILE
 	STORK_LOG_BASE
@@ -6143,8 +6062,8 @@ default : @end
 	MAX_C_GAHP_LOG=1000000
 	MAX_VM_GAHP_LOG=1000000
 	MAX_CREDD_LOG=4000000
-	VALID_SPOOL_FILES=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .quillwritepassword, .pgpass, .schedd_address, .schedd_classad
-	VALID_SPOOL_FILES=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .quillwritepassword, .pgpass, .schedd_address, .schedd_classad, OfflineLog
+	VALID_SPOOL_FILES=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .pgpass, .schedd_address, .schedd_classad
+	VALID_SPOOL_FILES=job_queue.log, job_queue.log.tmp, history, Accountant.log, Accountantnew.log, local_univ_execute, .pgpass, .schedd_address, .schedd_classad, OfflineLog
 @end
 
 # This table is for platform-specific knobs that fit the rules for $UPGRADE.DISCARDIF above

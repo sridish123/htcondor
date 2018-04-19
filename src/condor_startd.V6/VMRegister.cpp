@@ -76,25 +76,18 @@ _requestVMRegister(char *addr)
 	}
 
 	// Send <IP address:port> of virtual machine
-	buffer = strdup(daemonCore->InfoCommandSinfulString());
-	ASSERT(buffer);
-
-	if ( !ssock.code(buffer) ) {
+	if ( !ssock.put(daemonCore->InfoCommandSinfulString()) ) {
 		dprintf( D_FULLDEBUG,
 				 "Failed to send VM_REGISTER command's arguments to "
 				 "host startd %s: %s\n",
 				 addr, buffer );
-		free(buffer);
 		return FALSE;
 	}
 
 	if( !ssock.end_of_message() ) {
 		dprintf( D_FULLDEBUG, "Failed to send EOM to host startd %s\n", addr );
-		free(buffer);
 		return FALSE;
 	}
-
-	free(buffer);
 
 	//Now, read permission information
 	ssock.timeout( VM_SOCKET_TIMEOUT );
@@ -242,10 +235,6 @@ VMRegister::requestHostClassAds(void)
 	// we use only the first one classAd
 	adList.Rewind();
 	ad = adList.Next();
-
-#if defined(ADD_TARGET_SCOPING)
-	ad->AddTargetRefs( TargetJobAttrs );
-#endif
 
 	// Get each Attribute from the classAd
 	// added "HOST_" in front of each Attribute name

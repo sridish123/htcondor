@@ -24,6 +24,8 @@
 #include "util_lib_proto.h"
 #include "my_popen.h"
 
+#include <sstream>
+
 //
 // Local DAGMan includes
 //
@@ -461,7 +463,7 @@ fake_condor_submit( CondorID& condorID, Job* job, const char* DAGNodeName,
 	ulog.setEnableGlobalLog( false );
 	ulog.setUseXML( false );
 	ulog.initialize( logFile, condorID._cluster,
-		condorID._proc, condorID._subproc, NULL );
+		condorID._proc, condorID._subproc );
 
 	SubmitEvent subEvent;
 	subEvent.cluster = condorID._cluster;
@@ -528,7 +530,7 @@ bool writePreSkipEvent( CondorID& condorID, Job* job, const char* DAGNodeName,
 	ulog.setEnableGlobalLog( false );
 	ulog.setUseXML( false );
 	ulog.initialize( std::vector<const char*>(1,logFile), condorID._cluster,
-		condorID._proc, condorID._subproc, NULL );
+		condorID._proc, condorID._subproc );
 
 	PreSkipEvent pEvent;
 	pEvent.cluster = condorID._cluster;
@@ -575,6 +577,8 @@ getEventMask()
 			ULOG_GLOBUS_SUBMIT,			// For Pegasus
 			ULOG_JOB_RECONNECT_FAILED,
 			ULOG_GRID_SUBMIT,			// For Pegasus
+			ULOG_FACTORY_SUBMIT,
+			ULOG_FACTORY_REMOVE,
 			-1
 		};
 

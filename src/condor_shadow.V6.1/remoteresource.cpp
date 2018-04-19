@@ -408,6 +408,7 @@ RemoteResource::RemoteResource( BaseShadow *shad )
 	lease_duration = -1;
 	already_killed_graceful = false;
 	already_killed_fast = false;
+	m_got_job_exit = false;
 	m_want_chirp = false;
 	m_want_streaming_io = false;
 	m_attempt_shutdown_tid = -1;
@@ -415,12 +416,12 @@ RemoteResource::RemoteResource( BaseShadow *shad )
 	m_upload_xfer_status = XFER_STATUS_UNKNOWN;
 	m_download_xfer_status = XFER_STATUS_UNKNOWN;
 
-	std::string prefix;
-	param(prefix, "CHIRP_DELAYED_UPDATE_PREFIX", "CHIRP*");
-	m_delayed_update_prefix.initializeFromString(prefix.c_str());
+	param_and_insert_attrs("CHIRP_DELAYED_UPDATE_PREFIX", m_delayed_update_prefixes);
 
-	param_and_insert_attrs("PROTECTED_JOB_ATTRS", m_protected_attrs);
-	param_and_insert_attrs("SYSTEM_PROTECTED_JOB_ATTRS", m_protected_attrs);
+	param_and_insert_attrs("PROTECTED_JOB_ATTRS", m_unsettable_attrs);
+	param_and_insert_attrs("SYSTEM_PROTECTED_JOB_ATTRS", m_unsettable_attrs);
+	param_and_insert_attrs("IMMUTABLE_JOB_ATTRS", m_unsettable_attrs);
+	param_and_insert_attrs("SYSTEM_IMMUTABLE_JOB_ATTRS", m_unsettable_attrs);
 }
 
 
@@ -1524,8 +1525,22 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 
 		// Process all chirp-based updates from the starter.
 	for (classad::ClassAd::const_iterator it = update_ad->begin(); it != update_ad->end(); it++) {
-		if (allowRemoteWriteAttributeAccess(it->first))
-		{
+		size_t offset = -1;
+		if (allowRemoteWriteAttributeAccess(it->first)) {
+			classad::ExprTree *expr_copy = it->second->Copy();
+			jobAd->Insert(it->first, expr_copy);
+			shadow->watchJobAttr(it->first);
+		} else if( (offset = it->first.rfind( "Usage" )) != std::string::npos
+			&& offset == it->first.length() - 5 ) {
+			classad::ExprTree *expr_copy = it->second->Copy();
+			jobAd->Insert(it->first, expr_copy);
+			shadow->watchJobAttr(it->first);
+		} else if( (offset = it->first.rfind( "Provisioned" )) != std::string::npos
+			&& offset == it->first.length() - 11 ) {
+			classad::ExprTree *expr_copy = it->second->Copy();
+			jobAd->Insert(it->first, expr_copy);
+			shadow->watchJobAttr(it->first);
+		} else if( it->first.find( "Assigned" ) == 0 ) {
 			classad::ExprTree *expr_copy = it->second->Copy();
 			jobAd->Insert(it->first, expr_copy);
 			shadow->watchJobAttr(it->first);
@@ -1886,6 +1901,8 @@ RemoteResource::resourceExit( int reason_for_exit, int exit_status )
 {
 	dprintf( D_FULLDEBUG, "Inside RemoteResource::resourceExit()\n" );
 	setExitReason( reason_for_exit );
+
+	m_got_job_exit = true;
 
 	// record the start time of transfer output into the job ad.
 	time_t tStart = -1;
@@ -2742,7 +2759,13 @@ RemoteResource::allowRemoteWriteAttributeAccess( const std::string &name )
 	bool response = m_want_chirp || m_want_remote_updates;
 	if (!response && m_want_delayed)
 	{
-		response = m_delayed_update_prefix.contains_anycase_withwildcard(name.c_str());
+		auto i = m_delayed_update_prefixes.begin();
+		for( ; i !=  m_delayed_update_prefixes.end(); ++i ) {
+			if( starts_with_ignore_case( name, * i ) ) {
+				response = true;
+				break;
+			}
+		}
 	}
 
 	// Since this function is called to see if a user job is allowed to update
@@ -2750,7 +2773,7 @@ RemoteResource::allowRemoteWriteAttributeAccess( const std::string &name )
 	// protected attributes. We do this here because the schedd may allow it to happen 
 	// since the shadow will likely be connected as a queue super user with access
 	// to modify protected attributes.
-	if (response && m_protected_attrs.find(name) != m_protected_attrs.end()) {
+	if (response && m_unsettable_attrs.find(name) != m_unsettable_attrs.end()) {
 		response = false;
 	}
 

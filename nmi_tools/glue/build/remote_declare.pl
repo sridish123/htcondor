@@ -31,19 +31,19 @@ GetOptions(
             'coverity-analysis' => \$opt_coverity_analysis,
 );
 
-my $EXTERNALS_TASK        = "remote_task.externals";
-my $BUILD_TASK            = "remote_task.build";
-my $TAR_TASK              = "remote_task.create_tar";
-my $TAR_TESTS_TASK        = "remote_task.create_tests_tar";
-my $CHECK_TAR_TASK        = "remote_task.check_tar";
-my $UNSTRIPPED_TASK       = "remote_task.create_unstripped_tar";
-my $CHECK_UNSTRIPPED_TASK = "remote_task.check_unstripped_tar";
-my $NATIVE_DEBUG_TASK     = "remote_task.create_native_unstripped";
-my $NATIVE_TASK           = "remote_task.create_native";
-my $CHECK_NATIVE_TASK     = "remote_task.check_native";
-my $BUILD_TESTS_TASK      = "remote_task.build_tests";
-my $RUN_UNIT_TESTS        = "remote_task.run_unit_tests";
-my $COVERITY_ANALYSIS     = "remote_task.coverity_analysis";
+my $EXTERNALS_TASK        = "remote_task-externals";
+my $BUILD_TASK            = "remote_task-build";
+my $TAR_TASK              = "remote_task-create_tar";
+my $TAR_TESTS_TASK        = "remote_task-create_tests_tar";
+my $CHECK_TAR_TASK        = "remote_task-check_tar";
+my $UNSTRIPPED_TASK       = "remote_task-create_unstripped_tar";
+my $CHECK_UNSTRIPPED_TASK = "remote_task-check_unstripped_tar";
+my $NATIVE_DEBUG_TASK     = "remote_task-create_native_unstripped";
+my $NATIVE_TASK           = "remote_task-create_native";
+my $CHECK_NATIVE_TASK     = "remote_task-check_native";
+my $BUILD_TESTS_TASK      = "remote_task-build_tests";
+my $RUN_UNIT_TESTS        = "remote_task-run_unit_tests";
+my $COVERITY_ANALYSIS     = "remote_task-coverity_analysis";
 
 # autoflush our STDOUT
 $| = 1;
@@ -111,6 +111,7 @@ if ($ENV{NMI_PLATFORM} =~ /_win/i) {
     print TASKLIST "$BUILD_TESTS_TASK 4h\n";
     print TASKLIST "$NATIVE_TASK 4h\n";
     print TASKLIST "$TAR_TASK 4h\n";
+    print TASKLIST "$TAR_TESTS_TASK 4h\n";
     print TASKLIST "$RUN_UNIT_TESTS 4h\n";
 }    
 else {
@@ -120,10 +121,10 @@ else {
     print TASKLIST "$BUILD_TESTS_TASK 4h\n";
     print TASKLIST "$UNSTRIPPED_TASK 4h\n";
     print TASKLIST "$CHECK_UNSTRIPPED_TASK 4h\n";
-    if (!($ENV{NMI_PLATFORM} =~ /(x86_RedHat6|x86_64_RedHat6|x86_64_RedHat7|x86_64_Ubuntu16)/)) {
+    if (!($ENV{NMI_PLATFORM} =~ /(x86_64_Debian9|RedHat|CentOS|Fedora|x86_64_Ubuntu16)/)) {
         print TASKLIST "$NATIVE_DEBUG_TASK 4h\n";
     }
-    if (!($ENV{NMI_PLATFORM} =~ /x86_64_Ubuntu16/)) {
+    if (!($ENV{NMI_PLATFORM} =~ /(x86_64_Debian9|x86_64_Ubuntu16)/)) {
         print TASKLIST "$NATIVE_TASK 4h\n";
         print TASKLIST "$CHECK_NATIVE_TASK 4h\n";
     }
