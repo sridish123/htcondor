@@ -11808,50 +11808,183 @@ set_job_status(int cluster, int proc, int status)
 	CommitNonDurableTransactionOrDieTrying();
 }
 
+
+//
+// Pending Claim Coalesce Command
+//
+// Record the wanted matches and the got matches separately.  This
+// allows us to delete only those match records that we prevented the
+// normal flow from deleting earlier.  Invalidating m_next_job in
+// pcccDone() is only necessary if it's being called from the timer.
+//
+// Not sure this is the right place for these, but it'll do for now.
+//
+
+struct ProcIDComparator {
+	bool operator() ( const PROC_ID & a, const PROC_ID & b ) {
+		if( a.cluster < b.cluster ) { return true; }
+		if( a.cluster == b.cluster ) { return a.proc < b.proc; }
+		return false;
+	}
+};
+
+std::map< PROC_ID, std::list< match_rec * >, ProcIDComparator > pcccWantsMap;
+std::map< PROC_ID, std::list< match_rec * >, ProcIDComparator > pcccGotMap;
+std::map< PROC_ID, int, ProcIDComparator > pcccTimerMap;
+
+bool
+pcccNew( PROC_ID nowJob ) {
+dprintf( D_ALWAYS, "pcccNew( %d.%d )\n", nowJob.cluster, nowJob.proc );
+	if(! pcccWantsMap[ nowJob ].empty()) { return false; }
+	pcccGotMap[ nowJob ].clear();
+	pcccTimerMap[ nowJob ] = -1;
+	return true;
+}
+
+void
+pcccWants( PROC_ID nowJob, match_rec * match ) {
+dprintf( D_ALWAYS, "pcccWants( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
+	pcccWantsMap[ nowJob ].push_back( match );
+}
+
+void pcccDone( PROC_ID nowJob );
+
+class pcccDoneCallback : public Service {
+	public:
+		pcccDoneCallback( PROC_ID nj ) : nowJob(nj) { }
+		void callback() {
+			pcccDone( nowJob );
+			pcccTimerMap.erase( nowJob );
+			delete( this );
+		}
+		PROC_ID nowJob;
+};
+
+void
+pcccGot( PROC_ID nowJob, match_rec * match ) {
+dprintf( D_ALWAYS, "pcccGot( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
+	if( pcccTimerMap[ nowJob ] != -1 ) {
+		pcccDoneCallback * pcd = new pcccDoneCallback( nowJob );
+		pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
+			20 /* years of carefuly research */,
+			(TimerHandlercpp) & pcccDoneCallback::callback, "pcccDone", pcd );
+	}
+	pcccGotMap[ nowJob ].push_back( match );
+}
+
+bool
+pcccSatisfied( PROC_ID nowJob ) {
+dprintf( D_ALWAYS, "pcccSatisfied( %d.%d )\n", nowJob.cluster, nowJob.proc );
+#if defined(SOME_GOOD_REASON_THIS_IS_CPP14_ONLY)
+	return std::equal(	pcccWantsMap[ nowJob ].begin(),
+						pcccWantsMap[ nowJob ].end(),
+						pcccGotMap[ nowJob ].begin()
+						pcccGotMap[ nowJob ].end() );
+#else
+	return pcccWantsMap.size() == pcccGotMap.size() &&
+		std::equal(  pcccWantsMap[ nowJob ].begin(),
+			pcccWantsMap[ nowJob ].end(), pcccGotMap[ nowJob ].begin() );
+#endif
+}
+
+void
+pcccDone( PROC_ID nowJob ) {
+dprintf( D_ALWAYS, "pcccDone( %d.%d )\n", nowJob.cluster, nowJob.proc );
+	std::list< match_rec * > & wantsList = pcccWantsMap[ nowJob ];
+	for( auto i = wantsList.begin(); i != wantsList.end(); ++i ) {
+		(*i)->m_next_job.invalidate();
+	}
+
+	std::list< match_rec * > & gotList = pcccGotMap[ nowJob ];
+	for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
+		scheduler.DelMrec( *i );
+	}
+
+	pcccWantsMap.erase( nowJob );
+	pcccGotMap.erase( nowJob );
+}
+
+void
+pcccStartCoalescing( PROC_ID nowJob ) {
+dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d )\n", nowJob.cluster, nowJob.proc );
+	if( pcccTimerMap[ nowJob ] != -1 ) {
+		daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
+		pcccTimerMap[ nowJob ] = -1;
+	}
+
+	// FIXME: cancel the pcccDone() timer
+	// FIXME: call pcccDone()
+	// FIXME: issue coalesce command
+	// FIXME: start timer to free/remove record used by schedd to determine
+	//        who gets scheduled when the coalesce command returns.
+}
+
+void
+pcccStopCoalescing( PROC_ID nowJob ) {
+	// FIXME: see above.
+}
+
+
 void
 Scheduler::child_exit(int pid, int status)
 {
-	shadow_rec*		srec;
-	int				StartJobsFlag=TRUE;
-	PROC_ID			job_id;
-	bool			srec_was_local_universe = false;
+	shadow_rec*     srec;
+	int             StartJobsFlag=TRUE;
+	PROC_ID	        job_id;
+	bool            srec_was_local_universe = false;
 	MyString        claim_id;
-		// if we do not start a new job, should we keep the claim?
+	// if we do not start a new job, should we keep the claim?
 	bool            keep_claim = false; // by default, no
 	bool            srec_keep_claim_attributes;
-		// AsyncXfer: Should this match be held idle waiting for a paired match?
+	// AsyncXfer: Should this match be held idle waiting for a paired match?
 	bool            paired_match_wait = false;
 
 	srec = FindSrecByPid(pid);
 	ASSERT(srec);
 
-		if( srec->match ) {
-			match_rec *mrec = srec->match;
+	if( srec->match ) {
+		match_rec *mrec = srec->match;
 
-			// AsyncXfer: If this match has a paired match that can start
-			//   new jobs, we should let this match hang around idle
-			//   waiting for swaps.
-			if (srec->match->m_paired_mrec ) {
-				paired_match_wait = srec->match->m_paired_mrec->m_can_start_jobs;
-			}
-			if (srec->exit_already_handled && (srec->match->keep_while_idle == 0) && !paired_match_wait) {
-				DelMrec( srec->match );
-			} else {
-				int exitstatus = WEXITSTATUS(status);
-				if ((srec->match->keep_while_idle > 0 || paired_match_wait) && ((exitstatus == JOB_EXITED) || (exitstatus == JOB_SHOULD_REMOVE) || (exitstatus == JOB_KILLED))) {
-					srec->match->status = M_CLAIMED;
-					srec->match->shadowRec = NULL;
-					srec->match->idle_timer_deadline = time(NULL) + srec->match->keep_while_idle;
-					srec->match = NULL;
-				}
-			}
-
-				// AsyncXfer: If we have a match with a paired match that
-				//   can start jobs, see if we want to swap.
-			if ( !ExitWhenDone && paired_match_wait && mrec->m_paired_mrec->status == M_ACTIVE ) {
-				this->CheckForClaimSwap( mrec->m_paired_mrec );
+		// AsyncXfer: If this match has a paired match that can start
+		//   new jobs, we should let this match hang around idle
+		//   waiting for swaps.
+		if (srec->match->m_paired_mrec ) {
+			paired_match_wait = srec->match->m_paired_mrec->m_can_start_jobs;
+		}
+		if (srec->exit_already_handled && (srec->match->keep_while_idle == 0) && !paired_match_wait) {
+			DelMrec( srec->match );
+		} else {
+			int exitstatus = WEXITSTATUS(status);
+			if ((srec->match->keep_while_idle > 0 || paired_match_wait) && ((exitstatus == JOB_EXITED) || (exitstatus == JOB_SHOULD_REMOVE) || (exitstatus == JOB_KILLED))) {
+				srec->match->status = M_CLAIMED;
+				srec->match->shadowRec = NULL;
+				srec->match->idle_timer_deadline = time(NULL) + srec->match->keep_while_idle;
+				srec->match = NULL;
 			}
 		}
+
+		// AsyncXfer: If we have a match with a paired match that
+		//   can start jobs, see if we want to swap.
+		if ( !ExitWhenDone && paired_match_wait && mrec->m_paired_mrec->status == M_ACTIVE ) {
+			this->CheckForClaimSwap( mrec->m_paired_mrec );
+		}
+	}
+
+	// Is this match earmarked for a high-priority job?  We could, based
+	// on the code in Scheduler::RecycleShadow(), put this code after
+	// the check to see if the exit has already been handled, but I think
+	// this makes it less likely that changes there will cause problems.
+	if( srec->match && srec->match->m_next_job.isValid() ) {
+		PROC_ID bid = srec->match->m_next_job;
+		pcccGot( bid, srec->match );
+		StartJobsFlag = FALSE;
+		keep_claim = true;
+
+		if( pcccSatisfied( bid ) ) {
+			// FIXME: Start an asynchronous coalescence request.
+			pcccStartCoalescing( bid );
+		}
+	}
 
 	if( srec->exit_already_handled ) {
 		delete_shadow_rec( srec );
@@ -11864,49 +11997,46 @@ Scheduler::child_exit(int pid, int status)
 	if( srec->match ) {
 		claim_id = srec->match->claimId();
 	}
-		// store this in case srec is deleted before we need it
+	// store this in case srec is deleted before we need it
 	srec_keep_claim_attributes = srec->keepClaimAttributes;
 
-		//
-		// If it is a SCHEDULER universe job, then we have a special
-		// handler methods to take care of it
-		//
+	//
+	// If it is a SCHEDULER universe job, then we have a special
+	// handler methods to take care of it
+	//
 	if (IsSchedulerUniverse(srec)) {
- 		// scheduler universe process 
+ 		// scheduler universe process
 		daemonCore->Kill_Family( pid );
 		scheduler_univ_job_exit(pid,status,srec);
 		delete_shadow_rec( pid );
-			// even though this will get set correctly in
-			// count_jobs(), try to keep it accurate here, too.  
+		// even though this will get set correctly in
+		// count_jobs(), try to keep it accurate here, too.
 		if( SchedUniverseJobsRunning > 0 ) {
 			SchedUniverseJobsRunning--;
 		}
 	} else if (srec) {
 		const char* name = NULL;
-			//
-			// Local Universe
-			//
+		//
+		// Local Universe
+		//
 		if( IsLocalUniverse(srec) ) {
 			daemonCore->Kill_Family(pid);
 			srec_was_local_universe = true;
 			name = "Local starter";
-				//
-				// Following the scheduler universe example, we need
-				// to try to keep track of how many local jobs are 
-				// running in realtime
-				//
+			//
+			// Following the scheduler universe example, we need
+			// to try to keep track of how many local jobs are
+			// running in realtime
+			//
 			if ( this->LocalUniverseJobsRunning > 0 ) {
 				this->LocalUniverseJobsRunning--;
-			}
-			else
-			{
+			} else {
 				dprintf(D_ALWAYS, "Warning: unexpected count for  local universe jobs: %d\n", LocalUniverseJobsRunning);
 			}
 		} else {
-				// A real shadow
+			// A real shadow
 			name = "Shadow";
-		}
-		if ( daemonCore->Was_Not_Responding(pid) ) {
+		} if ( daemonCore->Was_Not_Responding(pid) ) {
 			// this shadow was killed by daemon core because it was hung.
 			// make the schedd treat this like a Shadow Exception so job
 			// just goes back into the queue as idle, but if it happens
@@ -11917,77 +12047,77 @@ Scheduler::child_exit(int pid, int status)
 			status = JOB_EXCEPTION << 8;
 		}
 
-			//
-			// If the job exited with a status code, we can use
-			// that to figure out what exactly we should be doing with 
-			// the job in the queue
-			//
+		//
+		// If the job exited with a status code, we can use
+		// that to figure out what exactly we should be doing with
+		// the job in the queue
+		//
 		if ( WIFEXITED(status) ) {
 			int wExitStatus = WEXITSTATUS( status );
 		    dprintf( D_ALWAYS,
 			 		"%s pid %d for job %d.%d exited with status %d\n",
 					 name, pid, srec->job_id.cluster, srec->job_id.proc,
 					 wExitStatus );
-			
-				// Now call this method to perform the correct
-				// action based on our status code
+
+			// Now call this method to perform the correct
+			// action based on our status code
 			this->jobExitCode( job_id, wExitStatus );
-			 
-			 	// We never want to try to start jobs if we have
-			 	// either of these exit codes 
+
+		 	// We never want to try to start jobs if we have
+		 	// either of these exit codes
 			 if ( wExitStatus == JOB_NO_MEM ||
 			 	  wExitStatus == JOB_EXEC_FAILED ) {
 				StartJobsFlag = FALSE;
 			}
-			
+
 	 	} else if( WIFSIGNALED(status) ) {
-	 			// The job died with a signal, so there's not much
-	 			// that we can do for it
+ 			// The job died with a signal, so there's not much
+ 			// that we can do for it
 			dprintf( D_FAILURE|D_ALWAYS, "%s pid %d died with %s\n",
 					 name, pid, daemonCore->GetExceptionString(status) );
 
-				// If the shadow was killed (i.e. by this schedd) and
-				// we are preserving the claim for reconnect, then
-				// do not delete the claim.
-			 keep_claim = srec_keep_claim_attributes;
+			// If the shadow was killed (i.e. by this schedd) and
+			// we are preserving the claim for reconnect, then
+			// do not delete the claim.
+			keep_claim = srec_keep_claim_attributes;
 
 			if ( srec->is_reconnect && !srec->reconnect_succeeded ) {
 				 scheduler.stats.JobsRestartReconnectsAttempting -= 1;
 				 scheduler.stats.JobsRestartReconnectsInterrupted += 1;
 			}
 		}
-		
-			// We always want to delete the shadow record regardless 
-			// of how the job exited
+
+		// We always want to delete the shadow record regardless
+		// of how the job exited
 		delete_shadow_rec( pid );
 
 	} else {
-			// Hmm -- doesn't seem like we can ever get here, given 
-			// that we deference srec before the if... wenger 2011-02-09
-			//
-			// There wasn't a shadow record, so that agent dies after
-			// deleting match. We want to make sure that we don't
-			// call to start more jobs
-			// 
+		// Hmm -- doesn't seem like we can ever get here, given
+		// that we deference srec before the if... wenger 2011-02-09
+		//
+		// There wasn't a shadow record, so that agent dies after
+		// deleting match. We want to make sure that we don't
+		// call to start more jobs
+		//
 		StartJobsFlag=FALSE;
 	 }  // big if..else if...
 
-		//
-		// If the job was a local universe job, we will want to
-		// call count on it so that it can be marked idle again
-		// if need be.
-		//
+	//
+	// If the job was a local universe job, we will want to
+	// call count on it so that it can be marked idle again
+	// if need be.
+	//
 	if ( srec_was_local_universe == true ) {
 		JobQueueJob *job_ad = GetJobAd(job_id);
 		count_a_job( job_ad, job_ad->jid, NULL);
 	}
 
-		// If we're not trying to shutdown, now that either an agent
-		// or a shadow (or both) have exited, we should try to
-		// start another job.
-		// AsyncXfer: If we have a match with a paired match that can
-		//   start jobs, we don't want to find another job for this
-		//   match or delete it.
+	// If we're not trying to shutdown, now that either an agent
+	// or a shadow (or both) have exited, we should try to
+	// start another job.
+	// AsyncXfer: If we have a match with a paired match that can
+	//   start jobs, we don't want to find another job for this
+	//   match or delete it.
 	if ( !ExitWhenDone && paired_match_wait ) {
 		return;
 	} else if( ! ExitWhenDone && StartJobsFlag ) {
@@ -11997,12 +12127,10 @@ Scheduler::child_exit(int pid, int status)
 			if( mrec ) {
 				this->StartJob( mrec );
 			}
-		}
-		else {
+		} else {
 			this->ExpediteStartJobs();
 		}
-	}
-	else if( !keep_claim ) {
+	} else if( !keep_claim ) {
 		if( !claim_id.IsEmpty() ) {
 			DelMrec( claim_id.Value() );
 		}
@@ -16642,6 +16770,16 @@ Scheduler::RecycleShadow(int /*cmd*/, Stream *stream)
 		return FALSE;
 	}
 
+		// If this match is earmarked for high-priority job, don't reuse
+		// the shadow.  It's possible that we could, but for now, keep
+		// things simple and only spawn the high-priority job in child_exit().
+	if( mrec->m_next_job.isValid() ) {
+		stream->encode();
+		stream->put((int)0);
+		stream->end_of_message();
+		return FALSE;
+	}
+
 		// verify that whoever is running this command is either the
 		// queue super user or the owner of the claim
 	char const *cmd_user = sock->getOwner();
@@ -17153,8 +17291,6 @@ Scheduler::WriteRestartReport()
 
 
 void handleReassignSlotError( Sock * sock, const char * msg ) {
-	dprintf( D_ALWAYS, * sock, "%s\n", msg );
-
 	ClassAd reply;
 	reply.Assign( ATTR_RESULT, false );
 	reply.Assign( ATTR_ERROR_STRING, msg );
@@ -17187,74 +17323,118 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 		return FALSE;
 	}
 
-	PROC_ID vid; // victim job's job ID.
 	PROC_ID bid; // beneficiary job's job ID.
-	if( ! request.LookupInteger( "Victim" ATTR_CLUSTER_ID, vid.cluster ) ||
-	  ! request.LookupInteger( "Victim" ATTR_PROC_ID, vid.proc ) ||
-	  ! request.LookupInteger( "Beneficiary" ATTR_CLUSTER_ID, bid.cluster ) ||
+	if( ! request.LookupInteger( "Beneficiary" ATTR_CLUSTER_ID, bid.cluster ) ||
 	  ! request.LookupInteger( "Beneficiary" ATTR_PROC_ID, bid.proc ) ) {
-		handleReassignSlotError( sock, "Missing job ID(s)" );
-		return FALSE;
-	}
-	dprintf( D_COMMAND, "REASSIGN_SLOT: from %d.%d to %d.%d\n", vid.cluster, vid.proc, bid.cluster, bid.proc );
-
-	ClassAd * vAd = GetJobAd( vid.cluster, vid.proc );
-	if(! vAd) {
-		handleReassignSlotError( sock, "no such job (victim)" );
-		return FALSE;
-	}
-	if(! OwnerCheck2( vAd, sock->getOwner() )) {
-		handleReassignSlotError( sock, "you do not own the victim" );
+		handleReassignSlotError( sock, "Missing now-job ID" );
 		return FALSE;
 	}
 
-	ClassAd * bAd = GetJobAd( bid.cluster, bid.proc );
-	if(! bAd) {
-		handleReassignSlotError( sock, "no such job (beneficiary)" );
-		return FALSE;
-	}
-	if(! OwnerCheck2( bAd, sock->getOwner() )) {
-		handleReassignSlotError( sock, "you do not own the beneficiary" );
-		return FALSE;
+	PROC_ID vID;
+	unsigned vCount = 1;
+	PROC_ID * vids = & vID;
+
+	std::string vidString;
+	if( request.LookupString( "VictimJobIDs", vidString ) ) {
+		StringList vidList( vidString.c_str() );
+		if( vidList.number() > 0 ) {
+			vids = (PROC_ID *)malloc( sizeof(PROC_ID) * vidList.number() );
+		} else {
+			handleReassignSlotError( sock, "Invalid vacate-job ID list" );
+			return FALSE;
+		}
+
+		vCount = 0;
+		vidList.rewind();
+		char * vs = vidList.next();
+		for( ; vs != NULL; vs = vidList.next() ) {
+			if(! vID.set( vs )) {
+				handleReassignSlotError( sock, "Invalid vacate-job ID in list" );
+				return FALSE;
+			}
+			vids[vCount++] = vID;
+		}
+
+		dprintf( D_COMMAND, "REASSIGN SLOT: to %d.%d from %s\n", bid.cluster, bid.proc, vidString.c_str() );
+	} else {
+		if( ! request.LookupInteger( "Victim" ATTR_CLUSTER_ID, vID.cluster ) ||
+		  ! request.LookupInteger( "Victim" ATTR_PROC_ID, vID.proc ) ) {
+			handleReassignSlotError( sock, "Missing vacate-job ID" );
+			return FALSE;
+		}
+
+		dprintf( D_COMMAND, "REASSIGN_SLOT: from %d.%d to %d.%d\n", vids[0].cluster, vids[0].proc, bid.cluster, bid.proc );
 	}
 
 	// FIXME: Throttling.
 
-	int vju, bju;
-	vAd->LookupInteger( ATTR_JOB_UNIVERSE, vju );
+	ClassAd * bAd = GetJobAd( bid.cluster, bid.proc );
+	if(! bAd) {
+		handleReassignSlotError( sock, "no such job (now-job)" );
+		return FALSE;
+	}
+	if(! OwnerCheck2( bAd, sock->getOwner() )) {
+		handleReassignSlotError( sock, "you must own the now-job" );
+		return FALSE;
+	}
+
+	int bju;
 	bAd->LookupInteger( ATTR_JOB_UNIVERSE, bju );
-	if( vju != CONDOR_UNIVERSE_VANILLA || bju != CONDOR_UNIVERSE_VANILLA ) {
-		handleReassignSlotError( sock, "both jobs must be in the vanilla universe" );
+	if( bju != CONDOR_UNIVERSE_VANILLA ) {
+		handleReassignSlotError( sock, "the now-job must be in the vanilla universe" );
 		return FALSE;
 	}
 
-	int vStatus, bStatus;
-	vAd->LookupInteger( ATTR_JOB_STATUS, vStatus );
+	int bStatus;
 	bAd->LookupInteger( ATTR_JOB_STATUS, bStatus );
-	// FIXME?: according to actOnJobs(), vStatus could also be TRANSFERRING_OUTPUT.
-	if( vStatus != RUNNING || bStatus != IDLE ) {
-		handleReassignSlotError( sock, "the victim must be running and the beneficiary idle" );
+	if( bStatus != IDLE ) {
+		handleReassignSlotError( sock, "the now-job must be idle" );
 		return FALSE;
 	}
 
-	// It's safe to deactivate the victim's claim.  First, record that the
-	// victim's claim's next job will be the beneficiary; this will cause
-	// beneficiary to be scheduled when the shadow either looks for new work
-	// (RecycleShadow()) or terminates (child_exit()).
+	for( unsigned v = 0; v < vCount; ++v ) {
+		ClassAd * vAd = GetJobAd( vids[v].cluster, vids[v].proc );
+		if(! vAd) {
+			handleReassignSlotError( sock, "no such job (vacate-job)" );
+			return FALSE;
+		}
+		if(! OwnerCheck2( vAd, sock->getOwner() )) {
+			handleReassignSlotError( sock, "you must own the vacate-job" );
+			return FALSE;
+		}
 
-	match_rec * match = FindMrecByJobID( vid );
-	if(! match) {
-		handleReassignSlotError( sock, "no match for that job ID" );
+		int vju;
+		vAd->LookupInteger( ATTR_JOB_UNIVERSE, vju );
+		if( vju != CONDOR_UNIVERSE_VANILLA ) {
+			handleReassignSlotError( sock, "vacate-job must be in the vanilla universe" );
+			return FALSE;
+		}
+
+		int vStatus;
+		vAd->LookupInteger( ATTR_JOB_STATUS, vStatus );
+		// FIXME?: according to actOnJobs(), vStatus could also be TRANSFERRING_OUTPUT.
+		if( vStatus != RUNNING ) {
+			handleReassignSlotError( sock, "vacate-job must be running" );
+			return FALSE;
+		}
+	}
+
+	// It's safe to deactivate each victim's claim.
+	if(! pcccNew( bid )) {
+		handleReassignSlotError( sock, "the now-job must not already be scheduled to run immediately" );
 		return FALSE;
 	}
-	match->m_next_job = bid;
+	for( unsigned v = 0; v < vCount; ++v ) {
+		match_rec * match = FindMrecByJobID( vids[v] );
+		if(! match) {
+			handleReassignSlotError( sock, "no match for vacate-job ID" );
+			return FALSE;
+		}
 
-#if defined(REASSIGN_SLOT_USES_SEND_VACATE)
-	send_vacate( match, DEACTIVATE_CLAIM );
-#else
-	// This requires GT#6663 to function properly.
-	enqueueActOnJobMyself( vid, JA_VACATE_FAST_JOBS, true );
-#endif
+		pcccWants( bid, match );
+		match->m_next_job = bid;
+		enqueueActOnJobMyself( vids[v], JA_VACATE_FAST_JOBS, true );
+	}
 
 	// We could return KEEP_STREAM and block the client until we'd actually
 	// started the beneficiary job, but we can skip that for now.

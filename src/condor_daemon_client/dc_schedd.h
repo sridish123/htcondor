@@ -285,7 +285,7 @@ public:
 			@param reply The reply from the schedd (unchanged if none).
 			@param errorMessage The error message (unchanged if none).
 		*/
-	bool reassignSlot( PROC_ID victim, PROC_ID beneficiary, ClassAd & reply, std::string & errorMessage );
+	bool reassignSlot( PROC_ID beneficiary, ClassAd & reply, std::string & errorMessage, PROC_ID * victims, unsigned victimCount );
 
 		/** Get starter connection info for a running job.
 			@param jobid What job to act on
