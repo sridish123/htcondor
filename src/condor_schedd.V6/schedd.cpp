@@ -11818,24 +11818,6 @@ set_job_status(int cluster, int proc, int status)
 // we've queued for deactivation and which claims have actually been
 // deactivated.
 //
-// Initialize the book-keeping by calling pcccNew( nowJob ).  Check the
-// return value, which will be false if that job already has a pending
-// claim coalesce command.  Add match records to the desired set for this
-// job with pcccWants( nowJob, mrec ).  When a shadow exits, call
-// pcccGot( nowJob, mrec ), and then pcccSatisfied( nowJob ) to see if
-// the match we just got was the last one we needed.  If it was, call
-// pcccStartCoalescing( nowJob ) to actually issue the coalesce command.
-// If coalescing succeeds, calls pcccStopCoalescing() to clean-up.  If
-// coalescing fails or times out, call FIXME.
-//
-// When we call pcccGot(), we prevent the schedd from deleting the match
-// record, so we need to call DeleteMrec() on each match record in the
-// got set before we're done.  We also don't want to hold on to the book-
-// keeping forever (e.g., a startd goes away and we never hear back about
-// our last claim deactivation), so set a timer when we say that we want
-// a match.  If it fires, clean up.  For the same reason, we need to set
-// another timer before issuing the coalesce command.
-//
 
 struct ProcIDComparator {
 	bool operator() ( const PROC_ID & a, const PROC_ID & b ) {
@@ -11848,55 +11830,90 @@ struct ProcIDComparator {
 std::map< PROC_ID, std::set< match_rec * >, ProcIDComparator > pcccWantsMap;
 std::map< PROC_ID, std::set< match_rec * >, ProcIDComparator > pcccGotMap;
 std::map< PROC_ID, int, ProcIDComparator > pcccTimerMap;
+// This is stupid, but less troublesome than adding the plumbing to expose
+// the Service pointer the TimerManager is already holding.
+std::map< PROC_ID, Service * > pcccTimerSelfMap;
+
+void
+pcccDumpTable() {
+	dprintf( D_ALWAYS, "pcccDumpTable(): dumping table...\n" );
+	for( auto i = pcccWantsMap.begin(); i != pcccWantsMap.end(); ++i ) {
+		PROC_ID nowJob = i->first;
+		dprintf( D_ALWAYS, "%d.%d = [%p, %p, %d, %p]\n",
+			nowJob.cluster, nowJob.proc,
+			& pcccWantsMap[ nowJob ], & pcccGotMap[ nowJob ],
+			pcccTimerMap[ nowJob ], & pcccTimerSelfMap[ nowJob ] );
+	}
+	dprintf( D_ALWAYS, "pcccDumpTable(): ... done dumping PCCC table.\n" );
+}
 
 bool
 pcccNew( PROC_ID nowJob ) {
 	dprintf( D_ALWAYS, "pcccNew( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
-	if(! pcccWantsMap[ nowJob ].empty()) { return false; }
-	pcccGotMap[ nowJob ].clear();
-	pcccTimerMap[ nowJob ] = -1;
+	if( pcccWantsMap.find( nowJob ) != pcccWantsMap.end() ) { return false; }
+
+	// These should be superflous.
+	// pcccGotMap.erase( nowJob );
+	// pcccTimerMap.erase( nowJob );
+	// pcccTimerSelfMap.erase( nowJob );
+
 	return true;
 }
-
-void
-pcccWants( PROC_ID nowJob, match_rec * match ) {
-	dprintf( D_ALWAYS, "pcccWants( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
-
-	pcccWantsMap[ nowJob ].insert( match );
-}
-
-void pcccDone( PROC_ID nowJob );
 
 class pcccDoneCallback : public Service {
 	public:
 		pcccDoneCallback( PROC_ID nj ) : nowJob(nj) { }
 		void callback() {
 			dprintf( D_ALWAYS, "pcccDoneCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
-			pcccDone( nowJob );
+
+			// Prevent outstanding deactivations for claims we haven't got() yet
+			// from confusing us later.  Instead, we'll just schedule them.
+			std::set< match_rec * > & wantsList = pcccWantsMap[ nowJob ];
+			for( auto i = wantsList.begin(); i != wantsList.end(); ++i ) {
+				(*i)->m_next_job.invalidate();
+			}
 
 			std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
 			for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
-				dprintf( D_ALWAYS, "pcccStopCoalescing( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
+				dprintf( D_ALWAYS, "pcccDoneCallback( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
 				scheduler.DelMrec( *i );
 			}
 
+			pcccWantsMap.erase( nowJob );
+			pcccGotMap.erase( nowJob );
 			pcccTimerMap.erase( nowJob );
+			pcccTimerSelfMap.erase( nowJob );
+
+			pcccDumpTable();
 			delete( this );
 		}
 		PROC_ID nowJob;
 };
 
 void
+pcccWants( PROC_ID nowJob, match_rec * match ) {
+	dprintf( D_ALWAYS, "pcccWants( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
+
+	if( pcccTimerMap.find( nowJob ) == pcccTimerMap.end() ) {
+		pcccDoneCallback * pcd = new pcccDoneCallback( nowJob );
+		pcccTimerSelfMap[ nowJob ] = pcd;
+		pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
+			20 /* years of carefuly research */,
+			(TimerHandlercpp) & pcccDoneCallback::callback,
+			"pcccDoneCallback", pcd );
+		dprintf( D_ALWAYS, "pcccWants( %d.%d, %p ): started timer %d (data %p)\n", nowJob.cluster, nowJob.proc, match, pcccTimerMap[ nowJob ], pcd );
+	} else {
+		// Reschedule the timer for 20 seconds from now, instead?
+	}
+
+	pcccWantsMap[ nowJob ].insert( match );
+}
+
+void
 pcccGot( PROC_ID nowJob, match_rec * match ) {
 	dprintf( D_ALWAYS, "pcccGot( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
 
-	if( pcccTimerMap[ nowJob ] != -1 ) {
-		pcccDoneCallback * pcd = new pcccDoneCallback( nowJob );
-		pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
-			20 /* years of carefuly research */,
-			(TimerHandlercpp) & pcccDoneCallback::callback, "pcccDone", pcd );
-	}
 	pcccGotMap[ nowJob ].insert( match );
 }
 
@@ -11916,57 +11933,78 @@ pcccSatisfied( PROC_ID nowJob ) {
 #endif
 }
 
-void
-pcccDone( PROC_ID nowJob ) {
-	dprintf( D_ALWAYS, "pcccDone( %d.%d )\n", nowJob.cluster, nowJob.proc );
+class pcccStopCallback : public Service {
+	public:
+		pcccStopCallback( PROC_ID nj ) : nowJob(nj) { }
+		void callback() {
+			dprintf( D_ALWAYS, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
-	// Prevent outstanding deactivations for claims we haven't got() yet
-	// from confusing us later.  Instead, we'll just schedule them.
-	std::set< match_rec * > & wantsList = pcccWantsMap[ nowJob ];
-	for( auto i = wantsList.begin(); i != wantsList.end(); ++i ) {
-		(*i)->m_next_job.invalidate();
-	}
+			// If the coalesce command times out, delete -- and try to
+			// deactivate -- all the claims we got.
+			std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
+			for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
+				dprintf( D_ALWAYS, "pcccStopCallback( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
+				scheduler.DelMrec( *i );
+			}
 
-	pcccWantsMap.erase( nowJob );
-	// FIXME: We can't do this if we want to delete match records in
-	// stopCoalescing().  On the other hand, once we've issued the coalesce
-	// command, we should just go ahead and delete the match records there..
-	// except for the bit about not wanting to issue useless deactivates...
-	pcccGotMap.erase( nowJob );
-}
+			pcccGotMap.erase( nowJob );
+			pcccWantsMap.erase( nowJob );
+			pcccTimerMap.erase( nowJob );
+			pcccTimerSelfMap.erase( nowJob );
+
+			pcccDumpTable();
+			delete( this );
+		}
+		PROC_ID nowJob;
+};
 
 void
 pcccStartCoalescing( PROC_ID nowJob ) {
 	dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
-	if( pcccTimerMap[ nowJob ] != -1 ) {
-		// FIXME: we need to free the object pointed to by this timer.
+	if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
+		dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d ): delete( %p )\n", nowJob.cluster, nowJob.proc, pcccTimerSelfMap[ nowJob ] );
+		delete( pcccTimerSelfMap[ nowJob ] );
+		pcccTimerSelfMap.erase( nowJob );
+
+		dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d ): Cancel_Timer( %d )\n", nowJob.cluster, nowJob.proc, pcccTimerMap[ nowJob ] );
 		daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
-		pcccTimerMap[ nowJob ] = -1;
+		pcccTimerMap.erase( nowJob );
 	}
 
-	pcccDone( nowJob );
+	// FIXME: issue coalesce command.
 
-	// FIXME: set pcccStopCallback timer.  It will call pcccStopCoalescing()
-	// as well as clean up whatever schedd state was used to determine what
-	// to do when the startd reply arrived.
-	// FIXME: issue coalesce command
+	pcccStopCallback * pcs = new pcccStopCallback( nowJob );
+	pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
+		20 /* years of carefuly research */,
+		(TimerHandlercpp) & pcccStopCallback::callback, "pcccStop", pcs );
+	pcccTimerSelfMap[ nowJob ] = pcs;
 }
 
 void
 pcccStopCoalescing( PROC_ID nowJob ) {
 	dprintf( D_ALWAYS, "pcccStopCoalescing( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
+	if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
+		daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
+		delete( pcccTimerSelfMap[ nowJob ] );
+	}
+
 	std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
 	for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
 		dprintf( D_ALWAYS, "pcccStopCoalescing( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
-		// The startd has already coalesced this claim, so don't bother to
-		// try to release it.
+		// If the coalesce command succeeds, don't release the coalesced
+		// claims -- they've all already been invalidated.
 		(*i)->needs_release_claim = false;
 		scheduler.DelMrec( *i );
 	}
 
-	
+	pcccWantsMap.erase( nowJob );
+	pcccGotMap.erase( nowJob );
+	pcccTimerMap.erase( nowJob );
+	pcccTimerSelfMap.erase( nowJob );
+
+	pcccDumpTable();
 }
 
 
