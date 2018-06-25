@@ -317,7 +317,7 @@ class match_rec: public ClaimIdParser
 		return m_description.Value();
 	}
 
-	PROC_ID m_next_job;
+	PROC_ID m_now_job;
 };
 
 class UserIdentity {

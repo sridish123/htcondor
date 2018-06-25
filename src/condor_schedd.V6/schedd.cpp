@@ -8525,23 +8525,8 @@ Scheduler::StartJob(match_rec *rec)
 		EXCEPT( "Unknown status in match rec (%d)", rec->status );
 	}
 
-		// This is the case we want to try and start a job.
-	if( rec->m_next_job.isValid() ) {
-		// Choose 'the next job' as the one to try to start.
-		id = rec->m_next_job;
-
-		// Only try to start it once.
-		rec->m_next_job.invalidate();
-
-		// The rest of the code assumes that the job we're trying to start
-		// on a claim is already recorded in the match record; see how
-		// FindRunnableJobForClaim() doesn't return a job ID.  This function
-		// also updates the matchesByJobID hashtable.
-		SetMrecJobID( rec, id );
-	} else {
-		id.cluster = rec->cluster;
-		id.proc = rec->proc;
-	}
+	id.cluster = rec->cluster;
+	id.proc = rec->proc;
 #ifdef USE_VANILLA_START
 	const char * reason = "job was removed";
 	JobQueueJob * job = GetJobAd(id);
@@ -11871,7 +11856,7 @@ class pcccDoneCallback : public Service {
 			// from confusing us later.  Instead, we'll just schedule them.
 			std::set< match_rec * > & wantsList = pcccWantsMap[ nowJob ];
 			for( auto i = wantsList.begin(); i != wantsList.end(); ++i ) {
-				(*i)->m_next_job.invalidate();
+				(*i)->m_now_job.invalidate();
 			}
 
 			std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
@@ -11914,6 +11899,7 @@ void
 pcccGot( PROC_ID nowJob, match_rec * match ) {
 	dprintf( D_ALWAYS, "pcccGot( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
 
+	scheduler.SetMrecJobID( match, 0, 1 );
 	pcccGotMap[ nowJob ].insert( match );
 }
 
@@ -12057,14 +12043,13 @@ Scheduler::child_exit(int pid, int status)
 	// on the code in Scheduler::RecycleShadow(), put this code after
 	// the check to see if the exit has already been handled, but I think
 	// this makes it less likely that changes there will cause problems.
-	if( srec->match && srec->match->m_next_job.isValid() ) {
-		PROC_ID bid = srec->match->m_next_job;
+	if( srec->match && srec->match->m_now_job.isValid() ) {
+		PROC_ID bid = srec->match->m_now_job;
 		pcccGot( bid, srec->match );
 		StartJobsFlag = FALSE;
 		keep_claim = true;
 
 		if( pcccSatisfied( bid ) ) {
-			// FIXME: Start an asynchronous coalescence request.
 			pcccStartCoalescing( bid );
 		}
 	}
@@ -12361,7 +12346,8 @@ Scheduler::jobExitCode( PROC_ID job_id, int exit_code )
 				// JOB_NOT_CKPTED, so we're safe.
 		case JOB_NOT_STARTED:
 			if( srec != NULL && !srec->removed && srec->match ) {
-				if(! srec->match->m_next_job.isValid()) {
+				// Don't delete matches we're trying to use for a now job.
+				if(! srec->match->m_now_job.isValid()) {
 					DelMrec(srec->match);
 				}
 			}
@@ -16856,7 +16842,7 @@ Scheduler::RecycleShadow(int /*cmd*/, Stream *stream)
 		// If this match is earmarked for high-priority job, don't reuse
 		// the shadow.  It's possible that we could, but for now, keep
 		// things simple and only spawn the high-priority job in child_exit().
-	if( mrec->m_next_job.isValid() ) {
+	if( mrec->m_now_job.isValid() ) {
 		stream->encode();
 		stream->put((int)0);
 		stream->end_of_message();
@@ -17515,7 +17501,7 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 		}
 
 		pcccWants( bid, match );
-		match->m_next_job = bid;
+		match->m_now_job = bid;
 		enqueueActOnJobMyself( vids[v], JA_VACATE_FAST_JOBS, true );
 	}
 
