@@ -11899,7 +11899,17 @@ void
 pcccGot( PROC_ID nowJob, match_rec * match ) {
 	dprintf( D_ALWAYS, "pcccGot( %d.%d, %p )\n", nowJob.cluster, nowJob.proc, match );
 
-	scheduler.SetMrecJobID( match, 0, 1 );
+	// We can't invalidate the match record's now job until later, because we
+	// need to keep it marked as special so it's not deleted.  However, if we
+	// just leave it alone, we could blow an assert later, because the job we
+	// just vacated could be rescheduled.  So just unlink the match record
+	// instead.  (Don't release the claim yet -- we need it for the
+	// coalesce command later.)
+	bool later = match->needs_release_claim;
+	match->needs_release_claim = false;
+	scheduler.unlinkMrec( match );
+	match->needs_release_claim = later;
+
 	pcccGotMap[ nowJob ].insert( match );
 }
 
@@ -11926,11 +11936,15 @@ class pcccStopCallback : public Service {
 			dprintf( D_ALWAYS, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
 			// If the coalesce command times out, delete -- and try to
-			// deactivate -- all the claims we got.
+			// release -- all the claims we got.  Don't call DelMrec(),
+			// because we already unlink()ed the match record.
 			std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
 			for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
 				dprintf( D_ALWAYS, "pcccStopCallback( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
-				scheduler.DelMrec( *i );
+				if( (*i)->needs_release_claim ) {
+					send_vacate( *i, RELEASE_CLAIM );
+				}
+				delete( *i );
 			}
 
 			pcccGotMap.erase( nowJob );
@@ -11976,13 +11990,13 @@ pcccStopCoalescing( PROC_ID nowJob ) {
 		delete( pcccTimerSelfMap[ nowJob ] );
 	}
 
+	// If the coalesce command succeeds, don't release the coalesced
+	// claims -- they've all already been invalidated.  Also don't call
+	// DelMrec(), since we already unlink()ed all of the matches.
 	std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
 	for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
 		dprintf( D_ALWAYS, "pcccStopCoalescing( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
-		// If the coalesce command succeeds, don't release the coalesced
-		// claims -- they've all already been invalidated.
-		(*i)->needs_release_claim = false;
-		scheduler.DelMrec( *i );
+		delete( *i );
 	}
 
 	pcccWantsMap.erase( nowJob );
