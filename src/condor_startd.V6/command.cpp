@@ -2662,33 +2662,48 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	ClassAd resourceAd;
 
 	if(! getClassAd( sock, commandAd )) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to get command ad\n" );
 		return FALSE;
 	}
-int cta = 0; commandAd.LookupInteger( "CommandTestAttr", cta );
-dprintf( D_ALWAYS, "command_coalesce_slots(): CommandTestAttr = %d\n", cta );
 
 	if(! getClassAd( sock, resourceAd )) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to get resource request\n" );
 		return FALSE;
 	}
-int jta = 0; resourceAd.LookupInteger( "JobTestAttr", jta );
-dprintf( D_ALWAYS, "command_coalesce_slots(): JobTestAttr = %d\n", jta );
+
+	std::string claimIDListString;
+	if(! commandAd.LookupString( ATTR_CLAIM_ID_LIST, claimIDListString )) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): command ad missing claim ID list\n" );
+		return FALSE;
+	}
+
+	StringList claimIDList( claimIDListString.c_str() );
+	if( claimIDList.isEmpty() ) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): command ad's claim ID list empty or invalid\n" );
+		return FALSE;
+	}
+
+
+	// FIXME: do something useful.
+
 
 	ClassAd replyAd;
-replyAd.InsertAttr( "ReplyTestAttr", 9 );
+	replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_SUCCESS ) );
+
 	ClassAd slotAd;
 slotAd.InsertAttr( "SlotTestAttr", 6 );
 
 	// sleep( 21 );
 
 	if(! putClassAd( sock, replyAd )) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to send reply ad\n" );
 		return FALSE;
 	}
-dprintf( D_ALWAYS, "command_coalesce_slots(): sent reply ad\n" );
 
 	if(! putClassAd( sock, slotAd )) {
+		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to send slot ad\n" );
 		return FALSE;
 	}
-dprintf( D_ALWAYS, "command_coalesce_slots(): sent slot ad\n" );
 
 	return TRUE;
 }

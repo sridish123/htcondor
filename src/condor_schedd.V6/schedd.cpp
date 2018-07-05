@@ -11945,7 +11945,7 @@ class pcccStopCallback : public Service {
 			message.get()->cancelMessage( "coalesce command timed out" );
 		}
 
-		void failed() {
+		static void failed( PROC_ID nowJob ) {
 			// If the coalesce command times out, delete -- and try to
 			// release -- all the claims we got.  Don't call DelMrec(),
 			// because we already unlink()ed the match record.
@@ -11974,10 +11974,9 @@ class pcccStopCallback : public Service {
 
 			switch( msg->deliveryStatus() ) {
 				case DCMsg::DELIVERY_SUCCEEDED: {
-					pcccStopCoalescing( nowJob );
-
 					//
-					// FIXME: run nowJob on the new claim ID.
+					// FIXME: run nowJob on the new claim ID if the coalesce
+					// command succeeded.
 					//
 
 					ClassAd & replyAd = msg->getFirstClassAd();
@@ -11988,14 +11987,16 @@ replyAd.LookupInteger( "ReplyTestAttr", replyTestAttr );
 slotAd.LookupInteger( "SlotTestAttr", slotTestAttr );
 dprintf( D_ALWAYS, "dcMessageCallback(): ReplyTestAttr = %d\n", replyTestAttr );
 dprintf( D_ALWAYS, "dcMessageCallback(): SlotTestAttr = %d\n", slotTestAttr );
+
+					// Deletes this.
+					pcccStopCoalescing( nowJob );
 					} break;
 
 				default:
-					failed();
+					failed( nowJob );
+					delete( this );
 					break;
 			}
-
-			delete( this );
 		}
 
 		PROC_ID nowJob;
@@ -12021,17 +12022,29 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 	std::set< match_rec * > matches = pcccGotMap[ nowJob ];
 	ASSERT(! matches.empty());
 
-	match_rec * match = * matches.begin();
+	auto i = matches.begin();
+	match_rec * match = * i;
 	classy_counted_ptr<DCStartd> startd = new DCStartd( match->description(),
 		NULL, match->peer, NULL );
 
-
 	ClassAd commandAd;
-commandAd.InsertAttr( "CommandTestAttr", 7 );
-	ClassAd jobAd;
-jobAd.InsertAttr( "JobTestAttr", 8 );
+	std::string claimIDList;
+	formatstr( claimIDList, "%s", match->claimId() );
+	for( ; i != matches.end(); ++i ) {
+		formatstr( claimIDList, "%s, %s", claimIDList.c_str(), (* i)->claimId() );
+	}
+	// ATTR_CLAIM_ID_LIST is one of the magic attributes that we automatically
+	// encrypt/decrypt whenever we're about to put/get it on/from the wire.
+	commandAd.InsertAttr( ATTR_CLAIM_ID_LIST, claimIDList.c_str() );
 
-	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, jobAd );
+	ClassAd * jobAd = GetJobAd( nowJob.cluster, nowJob.proc );
+	if(! jobAd) {
+		dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d ): unable to find now job ad.\n", nowJob.cluster, nowJob.proc );
+		pcccStopCallback::failed( nowJob );
+		return;
+	}
+
+	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, * jobAd );
 	cMsg->setStreamType( Stream::reli_sock );
 	cMsg->setSuccessDebugLevel( D_ALWAYS );
 	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg );
