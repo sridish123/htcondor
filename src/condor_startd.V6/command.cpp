@@ -2654,3 +2654,39 @@ command_cancel_drain_jobs( Service*, int /*dc_cmd*/, Stream* s )
 
 	return TRUE;
 }
+
+int
+command_coalesce_slots( Service *, int, Stream * stream ) {
+	Sock * sock = (Sock *)stream;
+	ClassAd commandAd;
+	ClassAd resourceAd;
+
+	if(! getClassAd( sock, commandAd )) {
+		return FALSE;
+	}
+int cta = 0; commandAd.LookupInteger( "CommandTestAttr", cta );
+dprintf( D_ALWAYS, "command_coalesce_slots(): CommandTestAttr = %d\n", cta );
+
+	if(! getClassAd( sock, resourceAd )) {
+		return FALSE;
+	}
+int jta = 0; resourceAd.LookupInteger( "JobTestAttr", jta );
+dprintf( D_ALWAYS, "command_coalesce_slots(): JobTestAttr = %d\n", jta );
+
+	ClassAd replyAd;
+replyAd.InsertAttr( "ReplyTestAttr", 9 );
+	ClassAd slotAd;
+slotAd.InsertAttr( "SlotTestAttr", 0 );
+
+	if(! putClassAd( sock, replyAd )) {
+		return FALSE;
+	}
+dprintf( D_ALWAYS, "command_coalesce_slots(): sent reply ad\n" );
+
+	if(! putClassAd( sock, slotAd )) {
+		return FALSE;
+	}
+dprintf( D_ALWAYS, "command_coalesce_slots(): sent slot ad\n" );
+
+	return TRUE;
+}

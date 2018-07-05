@@ -11972,8 +11972,34 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 		pcccTimerMap.erase( nowJob );
 	}
 
-	// FIXME: issue coalesce command.
 
+	// Issue coalesce command.
+	std::set< match_rec * > matches = pcccGotMap[ nowJob ];
+	ASSERT(! matches.empty());
+
+	match_rec * match = * matches.begin();
+	classy_counted_ptr<DCStartd> startd = new DCStartd( match->description(),
+		NULL, match->peer, NULL );
+
+	// this may need to be functionalized...
+	ClassAd commandAd;
+commandAd.InsertAttr( "CommandTestAttr", 7 );
+	ClassAd jobAd;
+jobAd.InsertAttr( "JobTestAttr", 8 );
+
+	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, jobAd );
+	cMsg->setStreamType( Stream::reli_sock );
+	cMsg->setSuccessDebugLevel( D_ALWAYS );
+	// cMsg->setCallback( ... ); /* FIXME */
+	cMsg->setTimeout( STARTD_CONTACT_TIMEOUT );
+	startd->sendMsg( cMsg.get() );
+
+// FIXME: we want a different timeout (20) for the overall completion time
+// of the command; we have an example of that somewhere.  Also, it seems
+// like pcccStopCallback should be called from the cMsg callback (when it
+// times out and maybe on failure?), instead of on its own timer as here.
+
+	// Set lease for completion of coalesce command.
 	pcccStopCallback * pcs = new pcccStopCallback( nowJob );
 	pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
 		20 /* years of carefuly research */,

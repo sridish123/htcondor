@@ -817,3 +817,53 @@ ChildAliveMsg::messageSendFailed( DCMessenger *messenger )
 		}
 	}
 }
+
+
+TwoClassAdMsg::TwoClassAdMsg( int cmd, ClassAd & first, ClassAd & second ) :
+	DCMsg( cmd ), firstClassAd( first ), secondClassAd( second ) { }
+
+bool
+TwoClassAdMsg::writeMsg( DCMessenger *, Sock * sock ) {
+dprintf( D_ALWAYS, "TwoClassAdMsg::writeMsg()\n" );
+	if(! putClassAd( sock, firstClassAd )) {
+		sockFailed( sock );
+		return false;
+	}
+dprintf( D_ALWAYS, "TwoClassAdMsg::writeMsg(): sent first classad\n" );
+	if(! putClassAd( sock, secondClassAd )) {
+		sockFailed( sock );
+		return false;
+	}
+dprintf( D_ALWAYS, "TwoClassAdMsg::writeMsg(): sent second classad\n" );
+	return true;
+}
+
+bool
+TwoClassAdMsg::readMsg( DCMessenger *, Sock * sock ) {
+dprintf( D_ALWAYS, "TwoClassAdMsg::readMsg()\n" );
+	if(! getClassAd( sock, firstClassAd )) {
+		sockFailed( sock );
+		return false;
+	}
+dprintf( D_ALWAYS, "TwoClassAdMsg::readMsg(): got first class ad\n" );
+	if(! getClassAd( sock, secondClassAd )) {
+		sockFailed( sock );
+		return false;
+	}
+dprintf( D_ALWAYS, "TwoClassAdMsg::readMsg(): got second class ad\n" );
+	return true;
+}
+
+DCMsg::MessageClosureEnum
+TwoClassAdMsg::messageSent( DCMessenger * messenger, Sock * sock ) {
+dprintf( D_ALWAYS, "TwoClassAdMsg::messageSent()\n" );
+	messenger->startReceiveMsg( this, sock );
+	return MESSAGE_CONTINUING;
+}
+
+DCMsg::MessageClosureEnum
+TwoClassAdMsg::messageReceived( DCMessenger * messenger, Sock * ) {
+dprintf( D_ALWAYS, "TwoClassAdMsg::messageReceived()\n" );
+	reportSuccess( messenger );
+	return MESSAGE_FINISHED;
+}
