@@ -11929,18 +11929,29 @@ pcccSatisfied( PROC_ID nowJob ) {
 #endif
 }
 
+void pcccStopCoalescing( PROC_ID nowJob );
+
 class pcccStopCallback : public Service {
 	public:
-		pcccStopCallback( PROC_ID nj ) : nowJob(nj) { }
+		pcccStopCallback( PROC_ID nj, classy_counted_ptr<TwoClassAdMsg> tcam ) : nowJob(nj), message(tcam) { }
+
 		void callback() {
 			dprintf( D_ALWAYS, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
+			// This calls dcMessageCallback(), which turns around and
+			// calls failed(), and then delete()s this.  This sequence
+			// seems a little fragile to me, but there's no way to
+			// unregister a callback.
+			message.get()->cancelMessage( "coalesce command timed out" );
+		}
+
+		void failed() {
 			// If the coalesce command times out, delete -- and try to
 			// release -- all the claims we got.  Don't call DelMrec(),
 			// because we already unlink()ed the match record.
 			std::set< match_rec * > & gotList = pcccGotMap[ nowJob ];
 			for( auto i = gotList.begin(); i != gotList.end(); ++i ) {
-				dprintf( D_ALWAYS, "pcccStopCallback( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
+				dprintf( D_ALWAYS, "pcccStopCallback::failed( %d.%d ): DelMrec( %p )\n", nowJob.cluster, nowJob.proc, *i );
 				if( (*i)->needs_release_claim ) {
 					send_vacate( *i, RELEASE_CLAIM );
 				}
@@ -11953,9 +11964,42 @@ class pcccStopCallback : public Service {
 			pcccTimerSelfMap.erase( nowJob );
 
 			pcccDumpTable();
+		}
+
+		void dcMessageCallback( DCMsgCallback * cb ) {
+			dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d )\n", nowJob.cluster, nowJob.proc );
+
+			// Not sure why this one isn't also a classy_counted_ptr.
+			TwoClassAdMsg * msg = reinterpret_cast<TwoClassAdMsg *>( cb->getMessage() );
+
+			switch( msg->deliveryStatus() ) {
+				case DCMsg::DELIVERY_SUCCEEDED: {
+					pcccStopCoalescing( nowJob );
+
+					//
+					// FIXME: run nowJob on the new claim ID.
+					//
+
+					ClassAd & replyAd = msg->getFirstClassAd();
+					ClassAd & slotAd = msg->getSecondClassAd();
+
+int replyTestAttr = 0, slotTestAttr = 0;
+replyAd.LookupInteger( "ReplyTestAttr", replyTestAttr );
+slotAd.LookupInteger( "SlotTestAttr", slotTestAttr );
+dprintf( D_ALWAYS, "dcMessageCallback(): ReplyTestAttr = %d\n", replyTestAttr );
+dprintf( D_ALWAYS, "dcMessageCallback(): SlotTestAttr = %d\n", slotTestAttr );
+					} break;
+
+				default:
+					failed();
+					break;
+			}
+
 			delete( this );
 		}
+
 		PROC_ID nowJob;
+		classy_counted_ptr<TwoClassAdMsg> message;
 };
 
 void
@@ -11981,7 +12025,7 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 	classy_counted_ptr<DCStartd> startd = new DCStartd( match->description(),
 		NULL, match->peer, NULL );
 
-	// this may need to be functionalized...
+
 	ClassAd commandAd;
 commandAd.InsertAttr( "CommandTestAttr", 7 );
 	ClassAd jobAd;
@@ -11990,21 +12034,15 @@ jobAd.InsertAttr( "JobTestAttr", 8 );
 	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, jobAd );
 	cMsg->setStreamType( Stream::reli_sock );
 	cMsg->setSuccessDebugLevel( D_ALWAYS );
-	// cMsg->setCallback( ... ); /* FIXME */
-	cMsg->setTimeout( STARTD_CONTACT_TIMEOUT );
-	startd->sendMsg( cMsg.get() );
-
-// FIXME: we want a different timeout (20) for the overall completion time
-// of the command; we have an example of that somewhere.  Also, it seems
-// like pcccStopCallback should be called from the cMsg callback (when it
-// times out and maybe on failure?), instead of on its own timer as here.
-
-	// Set lease for completion of coalesce command.
-	pcccStopCallback * pcs = new pcccStopCallback( nowJob );
+	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg );
+	// Annoyingly, the deadline only applies to /sending/ the message.
 	pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
-		20 /* years of carefuly research */,
+		20 /* years of careful research */,
 		(TimerHandlercpp) & pcccStopCallback::callback, "pcccStop", pcs );
 	pcccTimerSelfMap[ nowJob ] = pcs;
+	cMsg->setCallback( new DCMsgCallback( (DCMsgCallback::CppFunction) & pcccStopCallback::dcMessageCallback, pcs ) );
+	cMsg->setDeadlineTimeout( 20 /* years of careful research */ );
+	startd->sendMsg( cMsg.get() );
 }
 
 void

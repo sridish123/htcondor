@@ -2676,7 +2676,9 @@ dprintf( D_ALWAYS, "command_coalesce_slots(): JobTestAttr = %d\n", jta );
 	ClassAd replyAd;
 replyAd.InsertAttr( "ReplyTestAttr", 9 );
 	ClassAd slotAd;
-slotAd.InsertAttr( "SlotTestAttr", 0 );
+slotAd.InsertAttr( "SlotTestAttr", 6 );
+
+	// sleep( 21 );
 
 	if(! putClassAd( sock, replyAd )) {
 		return FALSE;
