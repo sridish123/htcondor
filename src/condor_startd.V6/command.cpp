@@ -2686,14 +2686,14 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 	// FIXME: do something useful.
 
-
 	ClassAd replyAd;
 	replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_SUCCESS ) );
 
 	ClassAd slotAd;
-slotAd.InsertAttr( "SlotTestAttr", 6 );
+	// ATTR_CLAIM_ID is one of the magic attributes that we automatically
+	// encrypt/decrypt whenever we're about to put/get it on/from the wire.
+	slotAd.InsertAttr( ATTR_CLAIM_ID, "FIXME: fake claim ID" );
 
-	// sleep( 21 );
 
 	if(! putClassAd( sock, replyAd )) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to send reply ad\n" );

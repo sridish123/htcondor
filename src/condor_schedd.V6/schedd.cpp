@@ -11974,19 +11974,76 @@ class pcccStopCallback : public Service {
 
 			switch( msg->deliveryStatus() ) {
 				case DCMsg::DELIVERY_SUCCEEDED: {
-					//
-					// FIXME: run nowJob on the new claim ID if the coalesce
-					// command succeeded.
-					//
-
-					ClassAd & replyAd = msg->getFirstClassAd();
+					ClassAd & reply = msg->getFirstClassAd();
 					ClassAd & slotAd = msg->getSecondClassAd();
 
-int replyTestAttr = 0, slotTestAttr = 0;
-replyAd.LookupInteger( "ReplyTestAttr", replyTestAttr );
-slotAd.LookupInteger( "SlotTestAttr", slotTestAttr );
-dprintf( D_ALWAYS, "dcMessageCallback(): ReplyTestAttr = %d\n", replyTestAttr );
-dprintf( D_ALWAYS, "dcMessageCallback(): SlotTestAttr = %d\n", slotTestAttr );
+					std::string resultString;
+					reply.LookupString( ATTR_RESULT, resultString );
+					CAResult result = getCAResultNum( resultString.c_str() );
+					if( result != CA_SUCCESS ) {
+						std::string errorString;
+						reply.LookupString( ATTR_ERROR_STRING, errorString );
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce failed: %s\n", nowJob.cluster, nowJob.proc, errorString.c_str() );
+
+						failed( nowJob );
+						delete( this );
+						return;
+					}
+
+					std::string claimID;
+					if((! slotAd.LookupString( ATTR_CLAIM_ID, claimID )) || claimID.empty() ) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce did not return a claim ID\n", nowJob.cluster, nowJob.proc );
+
+						failed( nowJob );
+						delete( this );
+						return;
+					}
+
+					// Generate a new match record.
+					ClassAd * jobAd = GetJobAd( nowJob.cluster, nowJob.proc );
+					if(! jobAd) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): unable to find now job ad.\n", nowJob.cluster, nowJob.proc );
+
+						failed( nowJob );
+						delete( this );
+						return;
+					}
+
+					std::string owner;
+					jobAd->LookupString( ATTR_OWNER, owner );
+					ASSERT(! owner.empty());
+
+					// This should only exist if the now job is flocking,
+					// FIXME: wtf do we actually do here?
+					std::string pool;
+					jobAd->LookupString( ATTR_REMOTE_POOL, pool );
+
+					Daemon startd( & slotAd, DT_STARTD, NULL );
+					if( (! startd.locate()) || startd.error() ) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): can't find address of startd in coalesced ad (%d: %s):\n", nowJob.cluster, nowJob.proc, startd.errorCode(), startd.error() );
+						dPrintAd( D_ALWAYS, slotAd );
+
+						failed( nowJob );
+						delete( this );
+						return;
+					}
+
+					match_rec * coalescedMatch = scheduler.AddMrec(
+						claimID.c_str(), startd.addr(), & nowJob,
+						& slotAd, owner.c_str(),
+						pool.empty() ? NULL : pool.c_str()
+					);
+					if(! coalescedMatch) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): failed to construct match record!\n", nowJob.cluster, nowJob.proc );
+
+						failed( nowJob );
+						delete( this );
+						return;
+					}
+
+
+					// Start the now job.
+					scheduler.StartJob( coalescedMatch );
 
 					// Deletes this.
 					pcccStopCoalescing( nowJob );
