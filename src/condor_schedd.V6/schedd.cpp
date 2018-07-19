@@ -11838,11 +11838,6 @@ pcccNew( PROC_ID nowJob ) {
 
 	if( pcccWantsMap.find( nowJob ) != pcccWantsMap.end() ) { return false; }
 
-	// These should be superflous.
-	// pcccGotMap.erase( nowJob );
-	// pcccTimerMap.erase( nowJob );
-	// pcccTimerSelfMap.erase( nowJob );
-
 	return true;
 }
 
@@ -11867,8 +11862,19 @@ class pcccDoneCallback : public Service {
 
 			pcccWantsMap.erase( nowJob );
 			pcccGotMap.erase( nowJob );
-			pcccTimerMap.erase( nowJob );
-			pcccTimerSelfMap.erase( nowJob );
+
+			// We shouldn't have to cancel the timer (it was a one-shot),
+			// but since we do need to delete something in pcccTimerSelfMap,
+			// we might as well use the same code as we do elsewhere.
+			if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
+				dprintf( D_ALWAYS, "pcccDoneCallback::callback( %d.%d ): Cancel_Timer( %d )\n", nowJob.cluster, nowJob.proc, pcccTimerMap[ nowJob ] );
+				daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
+				pcccTimerMap.erase( nowJob );
+
+				dprintf( D_ALWAYS, "pcccDoneCallback::callback( %d.%d ): delete( %p )\n", nowJob.cluster, nowJob.proc, pcccTimerSelfMap[ nowJob ] );
+				delete( pcccTimerSelfMap[ nowJob ] );
+				pcccTimerSelfMap.erase( nowJob );
+			}
 
 			pcccDumpTable();
 			delete( this );
@@ -11929,17 +11935,45 @@ pcccSatisfied( PROC_ID nowJob ) {
 #endif
 }
 
+void
+// FIXME: this needs to be tested, but that's blocked on actually writing
+// the startd side of coalesce claim..
+send_matchless_vacate( const char * name, const char * pool, const char * addr, const char * claimID, int cmd ) {
+	classy_counted_ptr<DCStartd> startd = new DCStartd( name, pool, addr, claimID );
+	classy_counted_ptr<DCClaimIdMsg> msg = new DCClaimIdMsg( cmd, claimID );
+
+	msg->setSuccessDebugLevel( D_ALWAYS );
+	msg->setTimeout( STARTD_CONTACT_TIMEOUT );
+	msg->setStreamType( Stream::reli_sock );
+
+	startd->sendMsg( msg.get() );
+}
+
 void pcccStopCoalescing( PROC_ID nowJob );
+void pcccStartCoalescing( PROC_ID nowJob );
+
+class SlowRetryCallback : public Service {
+	public:
+		SlowRetryCallback( PROC_ID nj ) : nowJob(nj) { }
+
+		void callback() {
+			dprintf( D_ALWAYS, "SlowRetryCallback::callback( %d, %d )\n", nowJob.cluster, nowJob.proc );
+			pcccStartCoalescing( nowJob );
+		}
+
+	private:
+		PROC_ID nowJob;
+};
 
 class pcccStopCallback : public Service {
 	public:
-		pcccStopCallback( PROC_ID nj, classy_counted_ptr<TwoClassAdMsg> tcam ) : nowJob(nj), message(tcam) { }
+		pcccStopCallback( PROC_ID nj, classy_counted_ptr<TwoClassAdMsg> tcam, const char * n, const char * a ) : nowJob(nj), message(tcam), name(n), addr(a) { }
 
 		void callback() {
 			dprintf( D_ALWAYS, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
 			// This calls dcMessageCallback(), which turns around and
-			// calls failed(), and then delete()s this.  This sequence
+			// calls failed(), which delete()s this.  This sequence
 			// seems a little fragile to me, but there's no way to
 			// unregister a callback.
 			message.get()->cancelMessage( "coalesce command timed out" );
@@ -11960,8 +11994,19 @@ class pcccStopCallback : public Service {
 
 			pcccGotMap.erase( nowJob );
 			pcccWantsMap.erase( nowJob );
-			pcccTimerMap.erase( nowJob );
-			pcccTimerSelfMap.erase( nowJob );
+
+			// pcccStopCallback::failed() can be called from a timer firing
+			// or from the message callback, so it has to explicitly cancel
+			// the timer.
+			if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
+				dprintf( D_ALWAYS, "pcccStopCallback::failed( %d.%d ): delete( %p )\n", nowJob.cluster, nowJob.proc, pcccTimerSelfMap[ nowJob ] );
+				delete( pcccTimerSelfMap[ nowJob ] );
+				pcccTimerSelfMap.erase( nowJob );
+
+				dprintf( D_ALWAYS, "pcccStopCallback::failed( %d.%d ): Cancel_Timer( %d )\n", nowJob.cluster, nowJob.proc, pcccTimerMap[ nowJob ] );
+				daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
+				pcccTimerMap.erase( nowJob );
+			}
 
 			pcccDumpTable();
 		}
@@ -11980,32 +12025,87 @@ class pcccStopCallback : public Service {
 					std::string resultString;
 					reply.LookupString( ATTR_RESULT, resultString );
 					CAResult result = getCAResultNum( resultString.c_str() );
-					if( result != CA_SUCCESS ) {
-						std::string errorString;
-						reply.LookupString( ATTR_ERROR_STRING, errorString );
-						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce failed: %s\n", nowJob.cluster, nowJob.proc, errorString.c_str() );
+					switch( result ) {
+						default:
+						case CA_FAILURE:
+						case CA_INVALID_REQUEST: {
+							std::string errorString;
+							reply.LookupString( ATTR_ERROR_STRING, errorString );
+							dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce failed: %s\n", nowJob.cluster, nowJob.proc, errorString.c_str() );
 
-						failed( nowJob );
-						delete( this );
-						return;
+							// Deletes this.
+							failed( nowJob );
+							} return;
+
+						case CA_SUCCESS:
+							break;
+
+						case CA_INVALID_STATE:
+							dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): will retry in one second\n", nowJob.cluster, nowJob.proc );
+
+							// FIXME: only retry so many times.
+
+							// Retry one second from now.
+							SlowRetryCallback * srcb = new SlowRetryCallback( nowJob );
+							daemonCore->Register_Timer( 1,
+								(TimerHandlercpp) & SlowRetryCallback::callback,
+								"SlowRetryCallBack", srcb );
+
+							// Kill the timer from this attempt.  Deletes this.
+							if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
+								dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): delete( %p )\n", nowJob.cluster, nowJob.proc, pcccTimerSelfMap[ nowJob ] );
+								delete( pcccTimerSelfMap[ nowJob ] );
+								pcccTimerSelfMap.erase( nowJob );
+
+								dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): Cancel_Timer( %d )\n", nowJob.cluster, nowJob.proc, pcccTimerMap[ nowJob ] );
+								daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
+								pcccTimerMap.erase( nowJob );
+							}
+
+							return;
 					}
+
+					// dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce command returned the following slot ad:\n", nowJob.cluster, nowJob.proc );
+					// dPrintAd( D_ALWAYS, slotAd, false );
 
 					std::string claimID;
-					if((! slotAd.LookupString( ATTR_CLAIM_ID, claimID )) || claimID.empty() ) {
+					if((! reply.LookupString( ATTR_CLAIM_ID, claimID )) || claimID.empty() ) {
 						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce did not return a claim ID\n", nowJob.cluster, nowJob.proc );
 
+						// Deletes this.
 						failed( nowJob );
-						delete( this );
 						return;
 					}
+					// dprintf( D_ALWAYS, "ATTR_CLAIM_ID = %s\n", claimID.c_str() );
 
 					// Generate a new match record.
 					ClassAd * jobAd = GetJobAd( nowJob.cluster, nowJob.proc );
 					if(! jobAd) {
 						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): unable to find now job ad.\n", nowJob.cluster, nowJob.proc );
 
-						failed( nowJob );
-						delete( this );
+						// Once we've received a claim ID for a coalesced slot,
+						// we don't want to waste time trying to release the
+						// old and now-invalidated claims which formed it.
+						//
+						// Further, since we can't split the slot on our own,
+						// (even if CLAIM_PARTIONABLE_LEFTOVERS is on, the slot
+						// isn't a p-slot), release our new claim.
+						send_matchless_vacate( name, NULL, addr,
+							claimID.c_str(), RELEASE_CLAIM );
+						pcccStopCoalescing( nowJob );
+						return;
+					}
+
+					// Make sure the job is still idle.
+					int status;
+					jobAd->LookupInteger( ATTR_JOB_STATUS, status );
+					if( status != IDLE ) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): now job is no longer idle.\n", nowJob.cluster, nowJob.proc );
+
+						send_matchless_vacate( name, NULL, addr,
+							claimID.c_str(), RELEASE_CLAIM );
+						// Deletes this.
+						pcccStopCoalescing( nowJob );
 						return;
 					}
 
@@ -12013,34 +12113,37 @@ class pcccStopCallback : public Service {
 					jobAd->LookupString( ATTR_OWNER, owner );
 					ASSERT(! owner.empty());
 
-					// This should only exist if the now job is flocking,
-					// FIXME: wtf do we actually do here?
-					std::string pool;
-					jobAd->LookupString( ATTR_REMOTE_POOL, pool );
-
 					Daemon startd( & slotAd, DT_STARTD, NULL );
 					if( (! startd.locate()) || startd.error() ) {
 						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): can't find address of startd in coalesced ad (%d: %s):\n", nowJob.cluster, nowJob.proc, startd.errorCode(), startd.error() );
 						dPrintAd( D_ALWAYS, slotAd );
 
-						failed( nowJob );
-						delete( this );
+						send_matchless_vacate( name, NULL, addr,
+							claimID.c_str(), RELEASE_CLAIM );
+						// Deletes this.
+						pcccStopCoalescing( nowJob );
 						return;
 					}
 
+					// We ignore the remote pool attribute because we've
+					// already checked if the job is running.
 					match_rec * coalescedMatch = scheduler.AddMrec(
 						claimID.c_str(), startd.addr(), & nowJob,
-						& slotAd, owner.c_str(),
-						pool.empty() ? NULL : pool.c_str()
+						& slotAd, owner.c_str(), NULL
 					);
 					if(! coalescedMatch) {
 						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): failed to construct match record!\n", nowJob.cluster, nowJob.proc );
 
-						failed( nowJob );
-						delete( this );
+						send_matchless_vacate( name, NULL, addr,
+							claimID.c_str(), RELEASE_CLAIM );
+						pcccStopCoalescing( nowJob );
 						return;
 					}
-
+					// See Scheduler::claimedStartd() for the things we're
+					// skipping.  We're ignoring the auth hole (we're already
+					// talking with the startd); we didn't ask for claim
+					// leftovers, so we'll let the startd deal with them.
+					coalescedMatch->setStatus( M_CLAIMED );
 
 					// Start the now job.
 					scheduler.StartJob( coalescedMatch );
@@ -12050,14 +12153,17 @@ class pcccStopCallback : public Service {
 					} break;
 
 				default:
+					// Deletes this.
 					failed( nowJob );
-					delete( this );
 					break;
 			}
 		}
 
-		PROC_ID nowJob;
-		classy_counted_ptr<TwoClassAdMsg> message;
+		private:
+			PROC_ID nowJob;
+			classy_counted_ptr<TwoClassAdMsg> message;
+			const char * name;
+			const char * addr;
 };
 
 void
@@ -12087,7 +12193,7 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 	ClassAd commandAd;
 	std::string claimIDList;
 	formatstr( claimIDList, "%s", match->claimId() );
-	for( ; i != matches.end(); ++i ) {
+	for( ++i; i != matches.end(); ++i ) {
 		formatstr( claimIDList, "%s, %s", claimIDList.c_str(), (* i)->claimId() );
 	}
 	// ATTR_CLAIM_ID_LIST is one of the magic attributes that we automatically
@@ -12104,7 +12210,7 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, * jobAd );
 	cMsg->setStreamType( Stream::reli_sock );
 	cMsg->setSuccessDebugLevel( D_ALWAYS );
-	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg );
+	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg, match->description(), match->peer );
 	// Annoyingly, the deadline only applies to /sending/ the message.
 	pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
 		20 /* years of careful research */,
