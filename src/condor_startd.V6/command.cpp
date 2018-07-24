@@ -2802,6 +2802,7 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	parent->refresh_classad( A_PUBLIC );
 
 	Claim * leftoverClaim = NULL;
+	dprintf( D_ALWAYS, "command_coalesce_slots(): creating coalesced slot...\n" );
 	Resource * coalescedSlot = initialize_resource( parent, resourceAd, leftoverClaim );
 	if( coalescedSlot == NULL ) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): unable to coalesce slots\n" );

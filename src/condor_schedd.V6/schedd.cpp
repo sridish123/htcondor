@@ -11936,8 +11936,6 @@ pcccSatisfied( PROC_ID nowJob ) {
 }
 
 void
-// FIXME: this needs to be tested, but that's blocked on actually writing
-// the startd side of coalesce claim..
 send_matchless_vacate( const char * name, const char * pool, const char * addr, const char * claimID, int cmd ) {
 	classy_counted_ptr<DCStartd> startd = new DCStartd( name, pool, addr, claimID );
 	classy_counted_ptr<DCClaimIdMsg> msg = new DCClaimIdMsg( cmd, claimID );
@@ -11950,24 +11948,26 @@ send_matchless_vacate( const char * name, const char * pool, const char * addr, 
 }
 
 void pcccStopCoalescing( PROC_ID nowJob );
-void pcccStartCoalescing( PROC_ID nowJob );
+void pcccStartCoalescing( PROC_ID nowJob, int retriesRemaining );
 
 class SlowRetryCallback : public Service {
 	public:
-		SlowRetryCallback( PROC_ID nj ) : nowJob(nj) { }
+		SlowRetryCallback( PROC_ID nj, int rr ) : nowJob(nj), retriesRemaining(rr) { }
 
 		void callback() {
 			dprintf( D_ALWAYS, "SlowRetryCallback::callback( %d, %d )\n", nowJob.cluster, nowJob.proc );
-			pcccStartCoalescing( nowJob );
+			pcccStartCoalescing( nowJob, retriesRemaining - 1 );
+			delete( this );
 		}
 
 	private:
 		PROC_ID nowJob;
+		int retriesRemaining;
 };
 
 class pcccStopCallback : public Service {
 	public:
-		pcccStopCallback( PROC_ID nj, classy_counted_ptr<TwoClassAdMsg> tcam, const char * n, const char * a ) : nowJob(nj), message(tcam), name(n), addr(a) { }
+		pcccStopCallback( PROC_ID nj, classy_counted_ptr<TwoClassAdMsg> tcam, const char * n, const char * a, int rr ) : nowJob(nj), message(tcam), name(n), addr(a), retriesRemaining(rr) { }
 
 		void callback() {
 			dprintf( D_ALWAYS, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
@@ -12041,12 +12041,18 @@ class pcccStopCallback : public Service {
 							break;
 
 						case CA_INVALID_STATE:
-							dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): will retry in one second\n", nowJob.cluster, nowJob.proc );
+							if( retriesRemaining == 0 ) {
+								dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): failed last retry, giving up.\n", nowJob.cluster, nowJob.proc );
 
-							// FIXME: only retry so many times.
+								// Deletes this.
+								failed( nowJob );
+								return;
+							}
+
+							dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): will retry in one second (%d retries remaining)\n", nowJob.cluster, nowJob.proc, retriesRemaining );
 
 							// Retry one second from now.
-							SlowRetryCallback * srcb = new SlowRetryCallback( nowJob );
+							SlowRetryCallback * srcb = new SlowRetryCallback( nowJob, retriesRemaining );
 							daemonCore->Register_Timer( 1,
 								(TimerHandlercpp) & SlowRetryCallback::callback,
 								"SlowRetryCallBack", srcb );
@@ -12061,7 +12067,6 @@ class pcccStopCallback : public Service {
 								daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
 								pcccTimerMap.erase( nowJob );
 							}
-
 							return;
 					}
 
@@ -12164,10 +12169,11 @@ class pcccStopCallback : public Service {
 			classy_counted_ptr<TwoClassAdMsg> message;
 			const char * name;
 			const char * addr;
+			int retriesRemaining;
 };
 
 void
-pcccStartCoalescing( PROC_ID nowJob ) {
+pcccStartCoalescing( PROC_ID nowJob, int retriesRemaining ) {
 	dprintf( D_ALWAYS, "pcccStartCoalescing( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
 	if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
@@ -12210,7 +12216,7 @@ pcccStartCoalescing( PROC_ID nowJob ) {
 	classy_counted_ptr<TwoClassAdMsg> cMsg = new TwoClassAdMsg( COALESCE_SLOTS, commandAd, * jobAd );
 	cMsg->setStreamType( Stream::reli_sock );
 	cMsg->setSuccessDebugLevel( D_ALWAYS );
-	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg, match->description(), match->peer );
+	pcccStopCallback * pcs = new pcccStopCallback( nowJob, cMsg, match->description(), match->peer, retriesRemaining );
 	// Annoyingly, the deadline only applies to /sending/ the message.
 	pcccTimerMap[ nowJob ] = daemonCore->Register_Timer(
 		20 /* years of careful research */,
@@ -12304,7 +12310,7 @@ Scheduler::child_exit(int pid, int status)
 		keep_claim = true;
 
 		if( pcccSatisfied( bid ) ) {
-			pcccStartCoalescing( bid );
+			pcccStartCoalescing( bid, 20 );
 		}
 	}
 
@@ -17735,7 +17741,7 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 
 		int vStatus;
 		vAd->LookupInteger( ATTR_JOB_STATUS, vStatus );
-		// FIXME?: according to actOnJobs(), vStatus could also be TRANSFERRING_OUTPUT.
+		// Assume that we want the vacate-job to finish TRANSFERRING_OUTPUT.
 		if( vStatus != RUNNING ) {
 			handleReassignSlotError( sock, "vacate-job must be running" );
 			return FALSE;
