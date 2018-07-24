@@ -12152,6 +12152,12 @@ class pcccStopCallback : public Service {
 
 					// Start the now job.
 					scheduler.StartJob( coalescedMatch );
+					// If we didn't, delete the mrec so the user can try again
+					// without crashing the schedd.
+					if( coalescedMatch->status != M_ACTIVE ) {
+						dprintf( D_ALWAYS, "pcccStopCallback::dcMessageCallback( %d.%d ): failed to start job on match\n", nowJob.cluster, nowJob.proc );
+						scheduler.DelMrec( coalescedMatch );
+					}
 
 					// Deletes this.
 					pcccStopCoalescing( nowJob );
