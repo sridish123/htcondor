@@ -2850,6 +2850,8 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	coalescedSlot->refresh_classad( A_PUBLIC );
 	parent->refresh_classad( A_PUBLIC );
 
+	dprintf( D_ALWAYS, "command_coalesce_slots(): coalescing complete, sending reply\n" );
+
 	ClassAd replyAd;
 	replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_SUCCESS ) );
 	// ATTR_CLAIM_ID is magic and will be encrypted.
