@@ -8,13 +8,20 @@ from Globals import *
 from Utils import Utils
 
 
-
-
 class CondorJob(object):
 
     def __init__(self, job_args):
         self._cluster_id = None
         self._job_args = job_args
+
+        # If no log file was specified in job_args, we need to add it
+        # Need a better way to generate unique log files, since the executable
+        # name might be "/bin/echo" and that would blow up here
+        if "log" in job_args:
+            self._log = job_args["log"]
+        else:
+            self._log = str(job_args["executable"] + "." + str(os.getpid()) + ".log")
+            self._job_args["log"] = self._log
 
     def FailureCallback(self):
         Utils.TLog("Job cluster " + str(self._cluster_id) + " failure callback invoked")
@@ -52,23 +59,20 @@ class CondorJob(object):
 
     def WaitForFinish(self, timeout=240):
 
-        schedd = htcondor.Schedd()
-        for i in range(timeout):
-            ads = schedd.query("ClusterId == %d" % self._cluster_id, ["JobStatus"])
-            Utils.TLog("Ads = " + str(ads))
+        event_log = htcondor.JobEventLog(self._log)
 
-            # When the job is complete, ads will be empty
-            if len(ads) == 0:
+        if event_log.isInitialized() is False:
+            Utils.TLog("Event log not initialized. Should we abort here?")
+
+        for event in event_log.follow():
+            Utils.TLog("New event logged: " + str(event.type))
+            if event.type is htcondor.JobEventType.JOB_TERMINATED:
                 self.SuccessCallback()
-                return JOB_SUCCESS
-            else:
-                status = ads[0]["JobStatus"]
-                if status == 5:
-                    Utils.TLog("Job was placed on hold. Aborting.")
-                    self.FailureCallback()
-                    return JOB_FAILURE
-            time.sleep(1)
-        
+                return SUCCESS
+            elif event.type is htcondor.JobEventType.JOB_HELD:
+                self.FailureCallback()
+                return JOB_FAILURE
+
         # If we got this far, we hit the timeout and job did not complete
         Utils.TLog("Job failed to complete with timeout = " + str(timeout))
         return JOB_FAILURE

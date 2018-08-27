@@ -28,9 +28,11 @@ class CondorTest(object):
         personal = PersonalCondor(self._name, self._params)
         success = personal.Start()
         if success is not True:
-            return -1
+            Utils.TLog("Failed to start the PersonalCondor environment. Test failed.")
+            sys.exit(TEST_FAILURE)
+        Utils.TLog("PersonalCondor environment started successfully")
         self._personal_condors[0] = personal
-        return 0
+        return personal
 
 
     def End(self):

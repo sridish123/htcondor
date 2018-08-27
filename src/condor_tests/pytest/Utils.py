@@ -1,6 +1,7 @@
 import datetime
 import errno
 import os
+import shutil
 import sys
 import time
 
@@ -37,9 +38,12 @@ class Utils(object):
 
 
     @staticmethod
-    def RemoveIgnoreMissing(file):
+    def RemoveIgnoreMissing(path):
         try:
-            os.unlink(file)
+            if os.path.isfile(path):
+                os.unlink(path)
+            elif os.path.isdir(path):
+                shutil.rmtree(path)
         except:
             exctype, oe = sys.exc_info()[:2]
             if not issubclass(exctype, OSError): raise

@@ -70,6 +70,10 @@ class PersonalCondor(object):
     # Sets up local system environment we'll use to stand up the PersonalCondor instance.
     def SetupLocalEnvironment(self, params=None):
 
+        # First, delete any existing instances of the local directory
+        Utils.RemoveIgnoreMissing(self._local_dir)
+
+        # Now set up the local directory structure
         Utils.MakedirsIgnoreExist(self._local_dir)
         Utils.MakedirsIgnoreExist(self._execute_path)
         Utils.MakedirsIgnoreExist(self._log_path)
@@ -84,6 +88,7 @@ class PersonalCondor(object):
         # Add whatever internal config values we need
         config = "LOCAL_DIR = " + self._local_path + "\n"
         config += "EXECUTE = " + self._execute_path + "\n"
+        config += "LOG = " + self._log_path + "\n"
         config += "LOCK = " + self._lock_path + "\n"
         config += "RUN = " + self._run_path + "\n"
         config += "SPOOL = " + self._spool_path + "\n"
@@ -132,3 +137,12 @@ class PersonalCondor(object):
 
         # If we got this far, we never saw the IsReady notice. Return false
         return False
+
+
+    def SubmitJob(self, job, wait=False):
+
+        # If we submit a job from a personal condor, update CONDOR_CONFIG to use this instance
+        self.SetCondorConfig()
+
+        return job.Submit(wait)
+
