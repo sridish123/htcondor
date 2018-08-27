@@ -55,12 +55,12 @@ def main():
     test_job = CondorJob(job_args)
 
     # Register job handlers
-    test_job.RegisterSuccess(SuccessCallback)
-    test_job.RegisterFailure(FailureCallback)
+    test_job.RegisterJobTerminated(SuccessCallback)
+    test_job.RegisterJobHeld(FailureCallback)
 
     # Submit the test job
-    personal.SubmitJob(test_job)
-    result = test_job.WaitForFinish()
+    test_job.Submit()
+    result = test_job.WaitUntilJobTerminated()
     Utils.TLog("Job returned result: " + str(result))
 
     # The success/failure callbacks handle the sys.exit() calls
