@@ -1,17 +1,16 @@
-import classad
-import errno
-import htcondor
 import os
 import subprocess
-import sys
 import time
+
+import htcondor
 
 from Globals import *
 from Utils import Utils
+from CondorScheduler import CondorScheduler
 
 class PersonalCondor(object):
 
-
+	# For internal use only.  Use CondorTest.StartPersonalCondor(), instead.
     def __init__(self, name, params=None, ordered_params=None):
         self._name = name
         self._params = params
@@ -26,13 +25,58 @@ class PersonalCondor(object):
         self._log_path = self._local_path + "/log"
         self._run_path = self._local_path + "/run"
         self._spool_path = self._local_path + "/spool"
-        self.SetupLocalEnvironment()
+        self._SetupLocalEnvironment()
         Utils.TLog("CondorPersonal initialized with path: " + self._local_path)
+        self._scheduler = None
+
+	# @return True iff this persona condor is ready.
+    def __bool__(self):
+        return self._is_ready
+    __nonzero__ = __bool__
 
 
-    def __del__(self):
-        self.Stop()
+    #
+	# Daemon shims.  This shims are intended to help the test author, and
+	# may be superceded by CondorEasy or other tools intended for our users.
+    #
 
+	def GetScheduler(self, name=None):
+		if self._scheduler is None:
+			# FIXME: Assumes that this PC is active and only has one schedd.
+			schedd = htcondor.Schedd()
+			self._scheduler = CondorScheduler(schedd)
+		return self._scheduler
+
+
+    #
+    # Process control.  Waiting for a personal condor to shut down can take
+    # quite a while, so we let callers split the process up if they've got
+    # more than one.
+    #
+
+    def StartStopping(self):
+        if self._master_process is not None:
+            Utils.TLog("Shutting down PersonalCondor with condor_off -master")
+            os.system("condor_off -master")
+            self._master_process = None
+        if self._is_ready is True:
+            self._is_ready = False
+
+    # FIXME: this is /completely/ untested
+    def FinishStopping(self):
+        while True:
+            # The -log argument should cause condor_who to ignore CONDOR_CONFIG.
+            output = Utils.RunCondorTool("condor_who -quick -log " + self._log_path)
+            for line in iter(output.splittlines()):
+                matches = re.search( '^Master <[^>]+> Exited', line )
+                if matches is not None:
+                    return
+                Utils.TLog( "Master did not exit, checking again in five seconds" )
+                time.sleep( 5 )
+
+    def Stop(self):
+        self.StartStopping()
+        self.FinishStopping()
 
     def Start(self):
         try:
@@ -48,23 +92,13 @@ class PersonalCondor(object):
         Utils.TLog("Started a new condor_master pid " + str(self._master_process.pid))
 
         # Wait until we're sure all daemons have started
-        self._is_ready = self.WaitForReadyDaemons()
+        self._is_ready = self._WaitForReadyDaemons()
         if self._is_ready is False:
             Utils.TLog("Condor daemons did not enter ready state. Exiting.")
             return False
 
         Utils.TLog("Condor daemons are active and ready for jobs")
         return True
-
-
-    def Stop(self):
-        if self._master_process is not None:
-            Utils.TLog("Shutting down PersonalCondor with condor_off -master")
-            os.system("condor_off -master")
-            self._master_process = None
-        if self._is_ready is True:
-            self._is_ready = False
-
 
     default_params = {
         "UPDATE_INTERVAL" : 5,
@@ -76,9 +110,9 @@ class PersonalCondor(object):
         "MachineMaxVacateTime" : 5,
     }
 
-
     # Sets up local system environment we'll use to stand up the PersonalCondor instance.
-    def SetupLocalEnvironment(self):
+    # For internal use only.
+    def _SetupLocalEnvironment(self):
         Utils.MakedirsIgnoreExist(self._local_dir)
         Utils.MakedirsIgnoreExist(self._execute_path)
         Utils.MakedirsIgnoreExist(self._log_path)
@@ -153,13 +187,12 @@ class PersonalCondor(object):
         Utils.RemoveIgnoreMissing(htcondor.param["COLLECTOR_ADDRESS_FILE"])
         Utils.RemoveIgnoreMissing(htcondor.param["SCHEDD_ADDRESS_FILE"])
 
-
     def SetCondorConfig(self):
         os.environ["CONDOR_CONFIG"] = self._local_config
 
-
     # MRC: Eventually want to do this using python bindings
-    def WaitForReadyDaemons(self):
+    # For internal use only.
+    def _WaitForReadyDaemons(self):
         is_ready_attempts = 6
         for i in range(is_ready_attempts):
             time.sleep(5)

@@ -10,62 +10,23 @@ from Utils import Utils
 from htcondor import JobEventLog
 from htcondor import JobEventType
 
-class CondorJob(object):
+class CondorCluster(object):
 
-    def __init__(self, job_args):
-        self._cluster_id = None
-        self._job_args = job_args
-        self._log = None
+	# For internal use only.  Use CondorScheduler.Submit() instead.
+    def __init__(self, cluster_id, log, count, jel):
+        self._cluster_id = cluster_id
+        self._log = log
+        self._count = count
+        self._jel = jel
         self._callbacks = { }
-        self._count = 0
 
-    def clusterID(self):
+    def ClusterID(self):
         return self._cluster_id
-
-    def Submit(self, wait=False, count=1):
-        # It's easier to smash the case of the keys (since ClassAds and the
-        # submit language don't care) than to do the case-insensitive compare.
-        self._job_args = dict([(k.lower(), v) for k, v in self._job_args.items()])
-
-        # Extract the event log filename, or insert one if none.
-        self._log = self._job_args.setdefault( "log", "test-{0}.log".format( os.getpid() ) )
-        self._log = os.path.abspath( self._log )
-
-        # Submit the job defined by submit_args
-        Utils.TLog("Submitting job with arguments: " + str(self._job_args))
-        schedd = htcondor.Schedd()
-        submit = htcondor.Submit(self._job_args)
-        try:
-            with schedd.transaction() as txn:
-                self._cluster_id = submit.queue(txn, count)
-                self._count = count
-        except Exception as e:
-            print( "Job submission failed for an unknown error: " + str(e) )
-            return JOB_FAILURE
-
-        Utils.TLog("Job submitted succeeded with cluster ID " + str(self._cluster_id))
-
-        # We probably don't need self._log, but it seems like it may be
-        # handy for log messages at some point.
-        self._jel = JobEventLog( self._log )
-        if not self._jel.isInitialized():
-            print( "Unable to initialize job event log " + self._log )
-            return JOB_FAILURE
-
-        # Wait until job has finished running?
-        if wait is True:
-            return self.WaitUntilJobTerminated()
-
-        # If we aren't waiting for finish, return None
-        return None
 
     #
     # The timeout for these functions is in seconds, and applies to the
     # whole process, not any individual read.
     #
-
-    # FIXME: timeout makes sense as an optional positional argument, but
-    # proc and count should probably be parameter arguments.
 
     def WaitUntilJobTerminated( self, timeout = 240, proc = 0, count = 0 ):
         return self.WaitUntil( [ JobEventType.JOB_TERMINATED ],
@@ -153,13 +114,3 @@ class CondorJob(object):
 
     def RegisterJobHeld( self, job_held_callback_fn ):
         self._callbacks[ JobEventType.JOB_HELD ] = job_held_callback_fn
-
-
-    # A convenience function.
-    def QueryForJobAd( self, proc = 0 ):
-        queue = htcondor.Schedd()
-        try:
-            return queue.xquery( requirements = "ClusterID == {0} && ProcID == {1}".
-                format( self._cluster_id, proc ) ).next()
-        except StopIteration as si:
-            return None
