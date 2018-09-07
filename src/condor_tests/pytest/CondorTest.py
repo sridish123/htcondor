@@ -1,9 +1,10 @@
 import atexit
 import sys
+import time
 
-from PersonalCondor import PersonalCondor
 from Globals import *
 from Utils import Utils
+from PersonalCondor import PersonalCondor
 
 class CondorTest(object):
 
@@ -26,24 +27,29 @@ class CondorTest(object):
     # its CONDOR_CONFIG in the enviroment).
     #
     @staticmethod
-    StartPersonalCondor( name, params=None, ordered_params=None):
+    def StartPersonalCondor(name, params=None, ordered_params=None):
         pc = CondorTest._personal_condors.get( name )
         if pc is None:
             pc = PersonalCondor( name, params, ordered_params )
             CondorTest._personal_condors[ name ] = pc
+
+        # FIXME: do this once per module load
         atexit.register( CondorTest.ExitHandler )
+        CondorTest._original_exit = sys.exit
+        sys.exit = CondorTest.Exit
+
         pc.Start()
         return pc
 
     @staticmethod
-    StopPersonalCondor( name ):
+    def StopPersonalCondor(name):
         pc = CondorTest._personal_condors.get( name )
         if pc is not None:
             pc.Stop()
 
     @staticmethod
-    StopAllPersonalCondors():
-        for pc in CondorTest._personal_condors:
+    def StopAllPersonalCondors():
+        for name, pc in CondorTest._personal_condors.keys():
             pc.Stop()
 
 
@@ -81,14 +87,17 @@ class CondorTest(object):
     #
     # Exit handling.
     #
+
+    _exit_code = None
+
     @staticmethod
     def ExitHandler():
         # We're headed out the door, start killing our PCs.
-        for pc in CondorTest._personal_condors:
+        for name, pc in CondorTest._personal_condors.items():
             pc.BeginStopping()
 
         # The reporting here is a trifle simplicistic.
-        rv = TEST_SUCCESS
+        rv = CondorTest._exit_code
         for subtest in CondorTest._tests.keys():
             record = CondorTest._tests[subtest]
             if record[0] != TEST_SUCCESS:
@@ -96,15 +105,24 @@ class CondorTest(object):
                 rv = TEST_FAILURE
 
         # Make sure the PCs are really gone.
-        for pc in CondorTest._personal_condors:
+        time.sleep(5)
+        for name, pc in CondorTest._personal_condors.items():
             pc.FinishStopping()
 
-        # If we're the last registered exit handler, this determines the
-        # interpreter's exit code.  [TLM: or so I boldly claim.]
-        raise SystemExit( rv )
+        # If we're the last registered exit handler to raise an exception,
+        # this would determine the interpreter's exit code, but instead
+        # causes a scary-looking KeyError warning from the threading module.
+        #
+        # To avoid that, if we've imported the threading module, remove it
+        # from the sys.modules dictionary.  This is probably wildly unsafe,
+        # but since we're in the exit handler, that probably doesn't matter.
+        if sys.modules.get("threading") is not None:
+        	del sys.modules["threading"]
+        sys.exit(rv)
 
-    # The 'early-out' method.  For now, it has no particular semantic
-    # meaning, but it might later.
+    # The 'early-out' method.  Records the intended exit code, because
+    # Python doesn't.
     @staticmethod
-    def exit( code ):
-        sys.exit( code )
+    def Exit( code ):
+        CondorTest._exit_code = code
+        return CondorTest._original_exit( code )

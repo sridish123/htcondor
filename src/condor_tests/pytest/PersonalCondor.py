@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import time
 
@@ -6,11 +7,11 @@ import htcondor
 
 from Globals import *
 from Utils import Utils
-from CondorScheduler import CondorScheduler
+from CondorCluster import CondorCluster
 
 class PersonalCondor(object):
 
-	# For internal use only.  Use CondorTest.StartPersonalCondor(), instead.
+    # For internal use only.  Use CondorTest.StartPersonalCondor(), instead.
     def __init__(self, name, params=None, ordered_params=None):
         self._name = name
         self._params = params
@@ -29,23 +30,20 @@ class PersonalCondor(object):
         Utils.TLog("CondorPersonal initialized with path: " + self._local_path)
         self._scheduler = None
 
-	# @return True iff this persona condor is ready.
+    # @return True iff this persona condor is ready.
     def __bool__(self):
         return self._is_ready
     __nonzero__ = __bool__
 
 
     #
-	# Daemon shims.  This shims are intended to help the test author, and
-	# may be superceded by CondorEasy or other tools intended for our users.
+    # Return objects which are or use one of our daemons.
     #
 
-	def GetScheduler(self, name=None):
-		if self._scheduler is None:
-			# FIXME: Assumes that this PC is active and only has one schedd.
-			schedd = htcondor.Schedd()
-			self._scheduler = CondorScheduler(schedd)
-		return self._scheduler
+    # def CondorCluster(self, job_args):
+        # FIXME: Ensure that this finds the correct schedd.
+        # schedd = htcondor.Schedd()
+        # return CondorCluster(job_args, schedd)
 
 
     #
@@ -54,25 +52,17 @@ class PersonalCondor(object):
     # more than one.
     #
 
-    def StartStopping(self):
+    def BeginStopping(self):
         if self._master_process is not None:
-            Utils.TLog("Shutting down PersonalCondor with condor_off -master")
+            Utils.TLog("[PC: {0}] Shutting down PersonalCondor with condor_off -master".format(self._name))
             os.system("condor_off -master")
-            self._master_process = None
-        if self._is_ready is True:
             self._is_ready = False
 
-    # FIXME: this is /completely/ untested
     def FinishStopping(self):
-        while True:
-            # The -log argument should cause condor_who to ignore CONDOR_CONFIG.
-            output = Utils.RunCondorTool("condor_who -quick -log " + self._log_path)
-            for line in iter(output.splittlines()):
-                matches = re.search( '^Master <[^>]+> Exited', line )
-                if matches is not None:
-                    return
-                Utils.TLog( "Master did not exit, checking again in five seconds" )
-                time.sleep( 5 )
+        while self._master_process.poll() is None:
+            Utils.TLog("[PC: {0}] Master did not exit, will check again in five seconds".format(self._name))
+            time.sleep( 5 )
+        Utils.TLog("[PC: {0}] Master exited".format(self._name))
 
     def Stop(self):
         self.StartStopping()
@@ -82,22 +72,22 @@ class PersonalCondor(object):
         try:
             process = subprocess.Popen(["condor_master", "-f &"])
             if process < 0:
-                Utils.TLog("Child was terminated by signal: " + str(process))
+                Utils.TLog("[PC: {0}] Child was terminated by signal: {1}".format(self._name, str(process)))
                 return False
         except OSError as e:
-            Utils.TLog("Execution of condor_master failed: " + e)
+            Utils.TLog("[PC: {0}] Execution of condor_master failed: {1}".format(self._name, str(e)))
             return False
 
         self._master_process = process
-        Utils.TLog("Started a new condor_master pid " + str(self._master_process.pid))
+        Utils.TLog("[PC: {0}] Started a new condor_master pid {1}".format( self._name, str(self._master_process.pid)))
 
         # Wait until we're sure all daemons have started
         self._is_ready = self._WaitForReadyDaemons()
         if self._is_ready is False:
-            Utils.TLog("Condor daemons did not enter ready state. Exiting.")
+            Utils.TLog("[PC: {0}] Condor daemons did not enter ready state. Exiting.".format(self._name))
             return False
 
-        Utils.TLog("Condor daemons are active and ready for jobs")
+        Utils.TLog("[PC: {0}] Condor daemons are active and ready for jobs".format(self._name))
         return True
 
     default_params = {
@@ -196,7 +186,7 @@ class PersonalCondor(object):
         is_ready_attempts = 6
         for i in range(is_ready_attempts):
             time.sleep(5)
-            Utils.TLog("Checking for condor_who output")
+            Utils.TLog("[PC: {0}] Checking for condor_who output".format(self._name))
             who_output = Utils.RunCondorTool("condor_who -quick -daemon -log " + self._log_path)
             for line in iter(who_output.splitlines()):
                 if line == "IsReady = true":
@@ -204,3 +194,4 @@ class PersonalCondor(object):
 
         # If we got this far, we never saw the IsReady notice. Return false
         return False
+

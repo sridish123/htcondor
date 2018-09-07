@@ -3,25 +3,63 @@ import htcondor
 import os
 import time
 
-from PersonalCondor import PersonalCondor
 from Globals import *
 from Utils import Utils
+from EventMemory import EventMemory
 
 from htcondor import JobEventLog
 from htcondor import JobEventType
 
 class CondorCluster(object):
 
-	# For internal use only.  Use CondorScheduler.Submit() instead.
-    def __init__(self, cluster_id, log, count, jel):
-        self._cluster_id = cluster_id
-        self._log = log
-        self._count = count
-        self._jel = jel
+    def __init__(self, job_args, schedd=None):
+        self._cluster_id = None
+        self._job_args = job_args
+        self._log = None
         self._callbacks = { }
+        self._count = 0
+        self._schedd = schedd
 
     def ClusterID(self):
         return self._cluster_id
+
+    # @return The corresponding CondorCluster object or None.
+    def Submit(self, count=1):
+        # It's easier to smash the case of the keys (since ClassAds and the
+        # submit language don't care) than to do the case-insensitive compare.
+        self._job_args = dict([(k.lower(), v) for k, v in self._job_args.items()])
+
+        # Extract the event log filename, or insert one if none.
+        self._log = self._job_args.setdefault( "log", "test-{0}.log".format( os.getpid() ) )
+        self._log = os.path.abspath( self._log )
+
+        # Submit the job defined by submit_args
+        Utils.TLog("Submitting job with arguments: " + str(self._job_args))
+        if self._schedd is None:
+            self._schedd = htcondor.Schedd()
+        submit = htcondor.Submit(self._job_args)
+        try:
+            with self._schedd.transaction() as txn:
+                self._cluster_id = submit.queue(txn, count)
+                self._count = count
+        except Exception as e:
+            print( "Job submission failed for an unknown error: " + str(e) )
+            return JOB_FAILURE
+
+        Utils.TLog("Job submitted succeeded with cluster ID " + str(self._cluster_id))
+
+        # We probably don't need self._log, but it seems like it may be
+        # handy for log messages at some point.
+        self._jel = JobEventLog( self._log )
+        if not self._jel.isInitialized():
+            print( "Unable to initialize job event log " + self._log )
+            return JOB_FAILURE
+
+        return None
+
+    def Schedd(self):
+        return self._schedd
+
 
     #
     # The timeout for these functions is in seconds, and applies to the
@@ -73,7 +111,11 @@ class CondorCluster(object):
         Utils.TLog( "[cluster " + str(self._cluster_id) + "] Waiting for " + ",".join( [str(x) for x in successEvents] ) )
 
         successes = 0
+        self._memory = EventMemory()
         for event in self._jel.follow( int(timeout * 1000) ):
+            # Record all events in case we need them later.
+            self._memory.Append( event )
+
             if event.cluster == self._cluster_id and (count > 0 or event.proc == proc):
                 if( not self._callbacks.get( event.type ) is None ):
                     self._callbacks[ event.type ]()
@@ -114,3 +156,26 @@ class CondorCluster(object):
 
     def RegisterJobHeld( self, job_held_callback_fn ):
         self._callbacks[ JobEventType.JOB_HELD ] = job_held_callback_fn
+
+
+    # A convenience function.
+    def QueryForJobAd(self, proc=0):
+        if self._schedd is None:
+            self._schedd = htcondor.Schedd()
+        try:
+            return self._schedd.xquery( requirements = "ClusterID == {0} && ProcID == {1}".
+                format( self._cluster_id, proc ) ).next()
+        except StopIteration as si:
+            return None
+
+
+    #
+    # History.
+    #
+    # @return The reverse-chronological (newest-first) list of events,
+    # filtered by cluster if specified and by proc if specified.  If proc
+    # is specified, but cluster is not, assumes self._cluster_id.
+    def GetPrecedingEvents(self, cluster=None, proc=None):
+        if cluster is None and proc is not None:
+            cluster = self._cluster_id
+        return reversed(self.memory.trace(cluster=cluster, proc=proc))
