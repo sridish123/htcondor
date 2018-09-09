@@ -20,6 +20,10 @@ class CondorTest(object):
     # condor that the test suite should have already started for us.
     # Also, if CONDOR_CONFIG is not set already, complain.
     #
+    # (The above may indicate that this class should really be CondorInstance,
+    # instead.  We also may want to allow a CondorInstance to be constructed
+    # by passing it a (full) filepath to a CONDOR_CONFIG.)
+    #
     # Otherwise, construct a new personal condor and register an
     # atexit function to make sure we shut it down (FIXME: aggressively).
     #
@@ -32,12 +36,6 @@ class CondorTest(object):
         if pc is None:
             pc = PersonalCondor( name, params, ordered_params )
             CondorTest._personal_condors[ name ] = pc
-
-        # FIXME: do this once per module load
-        atexit.register( CondorTest.ExitHandler )
-        CondorTest._original_exit = sys.exit
-        sys.exit = CondorTest.Exit
-
         pc.Start()
         return pc
 
@@ -65,13 +63,13 @@ class CondorTest(object):
     # @param message An arbitrary string explaining why the (sub)test failed.
     @staticmethod
     def RegisterFailure( subtest, message ):
-        Utils.TLog( " [" + subtest + "] FAILURE: " + message )
+        Utils.TLog( "[" + subtest + "] FAILURE: " + message )
         CondorTest._tests[ subtest ] = ( TEST_FAILURE, message )
         return None
 
     @staticmethod
     def RegisterSuccess( subtest, message ):
-        Utils.TLog( " [" + subtest + "] SUCCESS: " + message )
+        Utils.TLog( "[" + subtest + "] SUCCESS: " + message )
         CondorTest._tests[ subtest ] = ( TEST_SUCCESS, message )
         return None
 
@@ -105,6 +103,7 @@ class CondorTest(object):
                 rv = TEST_FAILURE
 
         # Make sure the PCs are really gone.
+        Utils.TLog( "Waiting for personal condor(s) to finish stopping..." )
         time.sleep(5)
         for name, pc in CondorTest._personal_condors.items():
             pc.FinishStopping()
@@ -121,8 +120,15 @@ class CondorTest(object):
         sys.exit(rv)
 
     # The 'early-out' method.  Records the intended exit code, because
-    # Python doesn't.
+    # Python doesn't.  We could skip using the atexit library, but this
+    # is more-obviously correct.
     @staticmethod
     def Exit( code ):
         CondorTest._exit_code = code
         return CondorTest._original_exit( code )
+
+
+# Register the exit handler and wrap sys.exit on module load.
+atexit.register( CondorTest.ExitHandler )
+CondorTest._original_exit = sys.exit
+sys.exit = CondorTest.Exit

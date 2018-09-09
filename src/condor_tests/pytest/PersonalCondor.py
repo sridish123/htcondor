@@ -3,6 +3,7 @@ import re
 import subprocess
 import time
 
+import classad
 import htcondor
 
 from Globals import *
@@ -28,7 +29,7 @@ class PersonalCondor(object):
         self._spool_path = self._local_path + "/spool"
         self._SetupLocalEnvironment()
         Utils.TLog("CondorPersonal initialized with path: " + self._local_path)
-        self._scheduler = None
+        self._schedd = None
 
     # @return True iff this persona condor is ready.
     def __bool__(self):
@@ -40,10 +41,31 @@ class PersonalCondor(object):
     # Return objects which are or use one of our daemons.
     #
 
-    # def CondorCluster(self, job_args):
-        # FIXME: Ensure that this finds the correct schedd.
-        # schedd = htcondor.Schedd()
-        # return CondorCluster(job_args, schedd)
+    def CondorCluster(self, job_args):
+        if self._schedd is None:
+            try:
+                original = self.SetCondorConfig()
+                htcondor.reload_config()
+
+                name = htcondor.param["SCHEDD_ADDRESS_FILE"]
+                f = open( name, 'r' )
+                contents = f.read()
+                f.close()
+
+                c = classad.ClassAd()
+                (address, version, platform) = contents.splitlines()
+                c["MyAddress"] = address
+                c["Name"] = "Unknown"
+                c["CondorVersion"] = version
+                # Utils.TLog( "[PC: {0}] Constructing schedd from address '{1}' with version '{2}'".format(self._name, address, version))
+                self._schedd = htcondor.Schedd(c)
+            except IOError as ioe:
+                # Utils.TLog( "[PC: {0}] Constructing default schedd because of IOError {1}".format(self._name, str(ioe)))
+                self._schedd = htcondor.Schedd()
+            finally:
+                os.environ["CONDOR_CONFIG"] = original
+                htcondor.reload_config()
+        return CondorCluster(job_args, self._schedd)
 
 
     #
@@ -60,7 +82,7 @@ class PersonalCondor(object):
 
     def FinishStopping(self):
         while self._master_process.poll() is None:
-            Utils.TLog("[PC: {0}] Master did not exit, will check again in five seconds".format(self._name))
+            Utils.TLog("[PC: {0}] Master did not exit, will check again in five seconds...".format(self._name))
             time.sleep( 5 )
         Utils.TLog("[PC: {0}] Master exited".format(self._name))
 
@@ -131,8 +153,12 @@ class PersonalCondor(object):
         config += "COLLECTOR_ADDRESS_FILE = $(LOG)/.collector_address\n"
         config += "SCHEDD_ADDRESS_FILE = $(SPOOL)/.schedd_address\n"
         if Utils.IsWindows() is True:
+            # This call to htcondor.param() will return the correct value iff
+            # nobody set CONDOR_CONFIG without calling htcondor.reload_config();
+            # it's not clear if it's better for us to call that before calling
+            # condor_config_val above, or if to avoid perturbing the system
+            # any more than necessary.
             config += "PROCD_ADDRESS = " + str(htcondor.param["PROCD_ADDRESS"]) + str(os.getpid()) + "\n"
-
         config += """
 #
 # Default params
@@ -169,7 +195,9 @@ class PersonalCondor(object):
         # Set CONDOR_CONFIG to apply the changes we just wrote to file
         self.SetCondorConfig()
 
-        # MRC: What does this function actually do?
+		# If we didn't do this, htcondor.param[] would return results from the
+		# old CONDOR_CONFIG, which most would find astonishing (since most of
+		# the time, there will only be a single relevant instance).
         htcondor.reload_config()
 
         # Now that we have our config setup, delete any old files potentially left over
@@ -178,7 +206,9 @@ class PersonalCondor(object):
         Utils.RemoveIgnoreMissing(htcondor.param["SCHEDD_ADDRESS_FILE"])
 
     def SetCondorConfig(self):
+        previous_condor_config = os.environ.get("CONDOR_CONFIG")
         os.environ["CONDOR_CONFIG"] = self._local_config
+        return previous_condor_config
 
     # MRC: Eventually want to do this using python bindings
     # For internal use only.
