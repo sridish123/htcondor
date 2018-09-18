@@ -28,7 +28,6 @@
 #include "util_lib_proto.h"
 #include "gahp_common.h"
 #include "env.h"
-#include "condor_string.h"
 #include "condor_claimid_parser.h"
 #include "authentication.h"
 #include "condor_version.h"
@@ -3025,7 +3024,7 @@ GahpClient::condor_job_submit(const char *schedd_name, ClassAd *job_ad,
 		if ( m_mode == results_only ) {
 			return GAHPCLIENT_COMMAND_NOT_SUBMITTED;
 		}
-		now_pending(command,buf,deleg_proxy);
+		now_pending(command, buf, deleg_proxy, low_prio);
 	}
 
 		// If we made it here, command is pending.
@@ -3106,7 +3105,7 @@ GahpClient::condor_job_update_constrained(const char *schedd_name,
 		if ( m_mode == results_only ) {
 			return GAHPCLIENT_COMMAND_NOT_SUBMITTED;
 		}
-		now_pending(command,buf,deleg_proxy);
+		now_pending(command, buf, deleg_proxy, high_prio);
 	}
 
 		// If we made it here, command is pending.
@@ -3174,7 +3173,7 @@ GahpClient::condor_job_status_constrained(const char *schedd_name,
 		if ( m_mode == results_only ) {
 			return GAHPCLIENT_COMMAND_NOT_SUBMITTED;
 		}
-		now_pending(command,buf,deleg_proxy);
+		now_pending(command, buf, deleg_proxy, high_prio);
 	}
 
 		// If we made it here, command is pending.
@@ -3759,7 +3758,7 @@ GahpClient::condor_job_update_lease(const char *schedd_name,
 		if ( m_mode == results_only ) {
 			return GAHPCLIENT_COMMAND_NOT_SUBMITTED;
 		}
-		now_pending(command,buf,deleg_proxy);
+		now_pending(command, buf, deleg_proxy, high_prio);
 	}
 
 		// If we made it here, command is pending.
@@ -6285,6 +6284,7 @@ GahpClient::cream_set_lease(const char *service, const char *lease_id, time_t &l
 
 int GahpClient::gce_ping( const std::string &service_url,
 						  const std::string &auth_file,
+						  const std::string &account,
 						  const std::string &project,
 						  const std::string &zone )
 {
@@ -6294,7 +6294,9 @@ int GahpClient::gce_ping( const std::string &service_url,
 	std::string reqline;
 	reqline += escapeGahpString( service_url );
 	reqline += " ";
-	reqline += escapeGahpString( auth_file );
+	reqline += escapeGahpString( auth_file.empty() ? NULLSTRING : auth_file.c_str() );
+	reqline += " ";
+	reqline += escapeGahpString( account.empty() ? NULLSTRING : account.c_str() );
 	reqline += " ";
 	reqline += escapeGahpString( project );
 	reqline += " ";
@@ -6343,6 +6345,7 @@ int GahpClient::gce_ping( const std::string &service_url,
 
 int GahpClient::gce_instance_insert( const std::string &service_url,
 									 const std::string &auth_file,
+									 const std::string &account,
 									 const std::string &project,
 									 const std::string &zone,
 									 const std::string &instance_name,
@@ -6360,7 +6363,9 @@ int GahpClient::gce_instance_insert( const std::string &service_url,
 	std::string reqline;
 	reqline += escapeGahpString( service_url );
 	reqline += " ";
-	reqline += escapeGahpString( auth_file );
+	reqline += escapeGahpString( auth_file.empty() ? NULLSTRING : auth_file.c_str() );
+	reqline += " ";
+	reqline += escapeGahpString( account.empty() ? NULLSTRING : account.c_str() );
 	reqline += " ";
 	reqline += escapeGahpString( project );
 	reqline += " ";
@@ -6428,6 +6433,7 @@ int GahpClient::gce_instance_insert( const std::string &service_url,
 
 int GahpClient::gce_instance_delete( std::string service_url,
 									 const std::string &auth_file,
+									 const std::string &account,
 									 const std::string &project,
 									 const std::string &zone,
 									 const std::string &instance_name )
@@ -6438,7 +6444,9 @@ int GahpClient::gce_instance_delete( std::string service_url,
 	std::string reqline;
 	reqline += escapeGahpString( service_url );
 	reqline += " ";
-	reqline += escapeGahpString( auth_file );
+	reqline += escapeGahpString( auth_file.empty() ? NULLSTRING : auth_file.c_str() );
+	reqline += " ";
+	reqline += escapeGahpString( account.empty() ? NULLSTRING : account.c_str() );
 	reqline += " ";
 	reqline += escapeGahpString( project );
 	reqline += " ";
@@ -6489,6 +6497,7 @@ int GahpClient::gce_instance_delete( std::string service_url,
 
 int GahpClient::gce_instance_list( const std::string &service_url,
 								   const std::string &auth_file,
+								   const std::string &account,
 								   const std::string &project,
 								   const std::string &zone,
 								   StringList &instance_ids,
@@ -6502,7 +6511,9 @@ int GahpClient::gce_instance_list( const std::string &service_url,
 	std::string reqline;
 	reqline += escapeGahpString( service_url );
 	reqline += " ";
-	reqline += escapeGahpString( auth_file );
+	reqline += escapeGahpString( auth_file.empty() ? NULLSTRING : auth_file.c_str() );
+	reqline += " ";
+	reqline += escapeGahpString( account.empty() ? NULLSTRING : account.c_str() );
 	reqline += " ";
 	reqline += escapeGahpString( project );
 	reqline += " ";

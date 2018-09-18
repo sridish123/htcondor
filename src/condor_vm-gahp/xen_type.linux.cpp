@@ -21,7 +21,7 @@
 #if defined (HAVE_EXT_LIBVIRT) && !defined(VMWARE_ONLY)
 
 #include "condor_config.h"
-#include "condor_string.h"
+#include "basename.h"
 #include "string_list.h"
 #include "condor_attributes.h"
 #include "condor_classad.h"
@@ -257,9 +257,11 @@ VirshType::Shutdown()
 			    killVM();
 		    }
 		  }
-		// Now we don't need working files any more
-		m_delete_working_files = true;
-		m_is_checkpointed = false;
+		if ( m_vm_no_output_vm  ) {
+			// Now we don't need working files any more
+			m_delete_working_files = true;
+			m_is_checkpointed = false;
+		}
 	}
 
 	setVMStatus(VM_STOPPED);

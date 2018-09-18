@@ -12,6 +12,53 @@ This is the development release series of HTCondor.
 The details of each version are described below.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection*{\label{sec:New-8-7-10}Version 8.7.10}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\noindent Release Notes:
+
+\begin{itemize}
+
+\item HTCondor version 8.7.10 not yet released.
+%\item HTCondor version 8.7.10 released on Month Date, 2018.
+
+\end{itemize}
+
+
+\noindent New Features:
+
+\begin{itemize}
+
+\item Added a new file transfer plugin, \emph{multifile\_curl\_plugin} which is
+able to transfer multiple files with only a single invocation of the plugin, 
+preserving the TCP connection. It also takes a classad as input data, which will 
+allow us to pass in more complex input than the existing \emph{curl\_plugin}.
+\Ticket{6499}
+
+\item Added two new policies, \MacroNI{PREEMPT\_IF\_RUNTIME\_EXCEEDS} and
+\MacroNI{HOLD\_IF\_RUNTIME\_EXCEEDS}.  The former is (intended to be)
+identical to the policy \MacroNI{LIMIT\_JOB\_RUNTIMES}, except without
+ordering constraints with respect to other policy macros.
+(\MacroNI{ALWAYS\_RUN\_JOBS} must still come before any other policy macro,
+but unlike \MacroNI{LIMIT\_JOB\_RUNTIMES},
+\MacroNI{PREEMPT\_IF\_RUNTIME\_EXCEEDS} may come after other policy macros.)
+Additionally, both of the new policies function while the machine is draining.
+\Ticket{6701}
+
+\end{itemize}
+
+\noindent Bugs Fixed:
+
+\begin{itemize}
+
+\item Fixed a bug where \MacroNI{PREEMPT} was not be evaluated if the
+machine was draining.  This prevent the HOLD\_IF series of policies from
+functioning properly in that situation.
+\Ticket{6697}
+
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection*{\label{sec:New-8-7-9}Version 8.7.9}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -19,7 +66,7 @@ The details of each version are described below.
 
 \begin{itemize}
 
-\item HTCondor version 8.7.9 was released on FIXME.
+\item HTCondor version 8.7.9 released on August 1, 2018.
 
 \end{itemize}
 
@@ -28,22 +75,28 @@ The details of each version are described below.
 
 \begin{itemize}
 
+\item Amazon Web Services is deprecating support for the Node.js 4.3 runtime,
+used by \Condor{annex}, on July 31 (2018).  If you ran the \Condor{annex} setup
+command with a previous version, you must update your account to use the new
+runtime.  Follow the link below for simple instructions.  Accounts setup with
+this version of HTCondor will use the new runtime.
+\URL{https://htcondor-wiki.cs.wisc.edu/index.cgi/wiki?p=HowToUpgradeTheAnnexRuntime}
+\Ticket{6665}
+
 \item Policies implemented by the startd may not function as desired while
-the machine is draining.  Specifically, if the \Macro{PREEMPT} expression
+the machine is draining.  Specifically, if the \MacroNI{PREEMPT} expression
 becomes true for a particular slot while a machine is draining, the
 corresponding job will not vacate the slot until draining completes.  For
-example, this renders the policy macro \Macro{HOLD\_IF\_MEMORY\_EXCEEDED}
-inneffective.  This has been a problem since v8.6, but we expect to fix
-this problem in our next stable release (before our next developer release).
+example, this renders the policy macro \MacroNI{HOLD\_IF\_MEMORY\_EXCEEDED}
+ineffective.  This has been a problem since v8.6.
 \Ticket{6697}
 
 \item Policies implemented by the startd may not function as desired while
-the startd is shutting down.  Specifically, if the \Macro{PREEMPT}
+the startd is shutting down peacefully.  Specifically, if the \MacroNI{PREEMPT}
 expression becomes true for a particular slot while the startd is shutting
 down peacefully, the corresponding job will never be vacated.  For example,
-this renders renders the policy macro \Macro{HOLD\_IF\_MEMORY\_EXCEEDED}
-ineffective.  This has been a problem since v8.6, but we expect to fix
-this problem in our next stable release (before our next developer release).
+this renders renders the policy macro \MacroNI{HOLD\_IF\_MEMORY\_EXCEEDED}
+ineffective.  This has been a problem since v8.6.
 \Ticket{6701}
 
 \end{itemize}
@@ -53,30 +106,72 @@ this problem in our next stable release (before our next developer release).
 
 \begin{itemize}
 
+\item The HTCondor Python bindings Submit class can now be initialized from an existing
+\Condor{submit} file including the QUEUE statement.  Python bindings Submit
+class also can now submit a job for each step of a Python iterator.
+\Ticket{6679}
+
+\item VM universe jobs are now given time to shutdown after a power-off
+signal when they are evicted gracefully.
+\Ticket{6705}
+
+\item The \MacroNI{NETWORK\_HOSTNAME} configuration parameter can now be
+set to a fully-qualified hostname that's an alias of one of the machine's
+interfaces.
+\Ticket{6702}
+
+\item Added a new tool, \Condor{now}, which tries to run the specified job
+\emph{now}.  You specify two jobs that you own from the same \Condor{schedd}: the
+now-job and the vacate-job.  The latter is immediately vacated; after the
+vacated job terminates, if the \Condor{schedd} still has the claim to the vacated job's
+slot (and it usually will), the \Condor{schedd} will immediately start the now-job on
+that slot.  The now-job must be idle and the vacate-job must be running.  If
+you're a queue super-user, the jobs must have the same owner, but that owner
+doesn't have to be you.
+\Ticket{6659}
+
 \item HTCondor now supports backfill while draining.  You may now use the
 \Condor{drain} command, or configure the \Condor{defrag} daemon, to set a
-different \Macro{START} expression for the duration of the draining.  See
-the definition of \Macro{DEFRAG\_DRAINING\_START\_EXPR} (
+different \MacroNI{START} expression for the duration of the draining.  See
+the definition of \MacroNI{DEFRAG\_DRAINING\_START\_EXPR} (
 \ref{param:DefragDrainingStartExpr}) and the \Condor{drain} manual (
 \ref{man-condor-drain}) for details.  See also the known issues above for
 information which may influence your choice of \MacroNI{START} expressions.
 \Ticket{6664}
 
-\item Added a new tool, \Condor{now}, which tries to run the specified job
-\emph{now}.  You specify two jobs that you own from the same schedd: the
-now-job and the vacate-job.  The latter is immediately vacated; after the
-vacated job terminates, if the schedd still has the claim to the vacated job's
-slot (and it usually will), the schedd will immediately start the now-job on
-that slot.  The now-job must be idle and the vacate-job must be running.  If
-you're a queue super-user, the jobs must have the same owner, but that owner
-doesn't have to be you.
-\Ticket{6659}
+\item Docker universe jobs now run with the supplemental group ids of the
+running user, not just the primary group.
+\Ticket{6658}
+
+\item Added proxy delegation for vanilla universe jobs that define a X509 proxy
+but do not use the file transfer mechanism.
+\Ticket{6587}
+
+\item Added configuration parameters \MacroNI{GAHP\_SSL\_CADIR} and
+\MacroNI{GAHP\_SSL\_CAFILE} to specify trusted CAs when authenticating
+EC2 and GCE servers.
+This used by be controlled by \MacroNI{SOAP\_SSL\_CA\_DIR} and
+\MacroNI{SOAP\_SSL\_CAFILE}, which have been removed.
+\Ticket{6684}
+
+\item HTCondor can now read the new credentials file format used by
+the Goggle Cloud Platform command-line tools.
+\Ticket{6657}
 
 \end{itemize}
 
 \noindent Bugs Fixed:
 
 \begin{itemize}
+
+\item Fixed a bug where an ill-formed startd docker image cache file
+could cause the starter to crash starting docker universe jobs.
+\Ticket{6699}
+
+\item Fixed a bug that would prevent environment variables defined in a job
+submit file from appearing in jobs running in Singularity containers using
+Singularity version 2.4 and greater.
+\Ticket{6656}
 
 \item Fixed a problem where a \Condor{vacate\_job}, when passed the
 \Opt{-fast} flag, would leave the corresponding slot stuck in
@@ -87,6 +182,10 @@ doesn't have to be you.
 had been specified on the command line, would write a configuration for a
 bogus region rather than the default one.
 \Ticket{6666}
+
+\item The \Condor{history\_helper} program was removed. \Condor{history} is
+now used by the \Condor{schedd} to help with remote history queries.
+\Ticket{6247}
 
 \end{itemize}
 
@@ -159,7 +258,7 @@ the pool nor terminate themselves.
 \Ticket{6638}
 
 \item When running in a HAD setup, there is a configuration parameter,
-\Macro{COLLECTOR\_HOST\_FOR\_NEGOTIATOR} which tells the active negotiator
+\MacroNI{COLLECTOR\_HOST\_FOR\_NEGOTIATOR} which tells the active negotiator
 which collector to prefer.  Previously, this parameter had no default,
 so the negotiator might arbitrarily chose a far-away collector.  Now
 this knob defaults to the local collector in a HAD setup.

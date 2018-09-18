@@ -25,7 +25,6 @@
 #include "env.h"
 #include "condor_environ.h"
 #include "condor_daemon_core.h"
-#include "condor_string.h"
 #include "MyString.h"
 #include "condor_attributes.h"
 #include "condor_vm_universe_types.h"
@@ -944,7 +943,8 @@ VMGahp::executeStatus(VMRequest *req)
 	if(vm == NULL) {
 		req->m_has_result = true;
 		req->m_is_success = true;
-		req->m_result = "Stopped";
+		req->m_result = VMGAHP_STATUS_COMMAND_STATUS;
+		req->m_result += "=Stopped";
 		return;
 	}else {
 		int result = vm->Status();

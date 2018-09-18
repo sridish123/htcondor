@@ -26,7 +26,7 @@
 #include "condor_query.h"
 #include "condor_q.h"
 #include "condor_io.h"
-#include "condor_string.h"
+#include "condor_arglist.h"
 #include "condor_attributes.h"
 #include "match_prefix.h"
 #include "get_daemon_name.h"
@@ -1672,7 +1672,7 @@ processCommandLineArguments (int argc, const char *argv[])
 	if ( ! autoformat_args.empty()) {
 		auto_standard_summary = false; // we will either have a custom summary, or none.
 
-		int nargs = autoformat_args.size();
+		int nargs = (int)autoformat_args.size();
 		autoformat_args.push_back(NULL); // have the last argument be NULL, like argv[cargs] is.
 		classad::References refs;
 		if (dash_tot) {
@@ -2264,7 +2264,7 @@ render_globusHostAndJM(std::string & result, ClassAd *ad, Formatter & /*fmt*/ )
 	char	host[80] = "[?????]";
 	char	jm[80] = "fork";
 	char	*tmp;
-	int	p;
+	size_t	ix;
 	char *attr_value = NULL;
 	char *resource_name = NULL;
 	char *grid_type = NULL;
@@ -2290,21 +2290,21 @@ render_globusHostAndJM(std::string & result, ClassAd *ad, Formatter & /*fmt*/ )
 			 !strcasecmp( grid_type, "globus" ) ) {
 
 			// copy the hostname
-			p = strcspn( resource_name, ":/" );
-			if ( p >= (int) sizeof(host) )
-				p = sizeof(host) - 1;
-			strncpy( host, resource_name, p );
-			host[p] = '\0';
+			ix = strcspn( resource_name, ":/" );
+			if (ix >= (int) sizeof(host) )
+				ix = sizeof(host) - 1;
+			strncpy( host, resource_name, ix);
+			host[ix] = '\0';
 
 			if ( ( tmp = strstr( resource_name, "jobmanager-" ) ) != NULL ) {
 				tmp += 11; // 11==strlen("jobmanager-")
 
 				// copy the jobmanager name
-				p = strcspn( tmp, ":" );
-				if ( p >= (int) sizeof(jm) )
-					p = sizeof(jm) - 1;
-				strncpy( jm, tmp, p );
-				jm[p] = '\0';
+				ix = strcspn( tmp, ":" );
+				if (ix >= (int) sizeof(jm) )
+					ix = sizeof(jm) - 1;
+				strncpy( jm, tmp, ix);
+				jm[ix] = '\0';
 			}
 
 		} else if ( !strcasecmp( grid_type, "gt4" ) ) {
@@ -2331,8 +2331,8 @@ render_globusHostAndJM(std::string & result, ClassAd *ad, Formatter & /*fmt*/ )
 				strncpy( host, resource_name, sizeof(host) );
 				host[sizeof(host)-1] = '\0';
 			}
-			p = strcspn( host, ":/" );
-			host[p] = '\0';
+			ix = strcspn( host, ":/" );
+			host[ix] = '\0';
 		}
 	}
 
@@ -2412,7 +2412,7 @@ render_gridResource(std::string & result, ClassAd * ad, Formatter & /*fmt*/ )
 	std::string mgr = "[?]";
 	std::string host = "[???]";
 	const bool fshow_host_port = false;
-	const unsigned int width = 1+6+1+8+1+18+1;
+	const size_t width = 1+6+1+8+1+18+1;
 
 	if ( ! ad->EvalString(ATTR_GRID_RESOURCE, NULL, str))
 		return false;
@@ -2420,7 +2420,7 @@ render_gridResource(std::string & result, ClassAd * ad, Formatter & /*fmt*/ )
 	// GridResource is a string with the format 
 	//      "type host_url manager" (where manager can contain whitespace)
 	// or   "type host_url/jobmanager-manager"
-	unsigned int ixHost = str.find_first_of(' ');
+	size_t ixHost = str.find_first_of(' ');
 	if (ixHost < str.length()) {
 		grid_type = str.substr(0, ixHost);
 		ixHost += 1; // skip over space.
@@ -2429,19 +2429,19 @@ render_gridResource(std::string & result, ClassAd * ad, Formatter & /*fmt*/ )
 		ixHost = 0;
 	}
 
-	unsigned int ix2 = str.find_first_of(' ', ixHost);
+	size_t ix2 = str.find_first_of(' ', ixHost);
 	if (ix2 < str.length()) {
 		mgr = str.substr(ix2+1);
 	} else {
-		unsigned int ixMgr = str.find("jobmanager-", ixHost);
+		size_t ixMgr = str.find("jobmanager-", ixHost);
 		if (ixMgr < str.length()) 
 			mgr = str.substr(ixMgr+11);	//sizeof("jobmanager-") == 11
 		ix2 = ixMgr;
 	}
 
-	unsigned int ix3 = str.find("://", ixHost);
+	size_t ix3 = str.find("://", ixHost);
 	ix3 = (ix3 < str.length()) ? ix3+3 : ixHost;
-	unsigned int ix4 = str.find_first_of(fshow_host_port ? "/" : ":/",ix3);
+	size_t ix4 = str.find_first_of(fshow_host_port ? "/" : ":/",ix3);
 	if (ix4 > ix2) ix4 = ix2;
 	host = str.substr(ix3, ix4-ix3);
 
@@ -2491,12 +2491,12 @@ render_gridJobId(std::string & jid, ClassAd *ad, Formatter & /*fmt*/ )
 	}
 	bool gram = (MATCH == grid_type.compare("gt5")) || (MATCH == grid_type.compare("gt2"));
 
-	unsigned int ix2 = str.find_last_of(" ");
+	size_t ix2 = str.find_last_of(" ");
 	ix2 = (ix2 < str.length()) ? ix2 + 1 : 0;
 
-	unsigned int ix3 = str.find("://", ix2);
+	size_t ix3 = str.find("://", ix2);
 	ix3 = (ix3 < str.length()) ? ix3+3 : ix2;
-	unsigned int ix4 = str.find_first_of("/",ix3);
+	size_t ix4 = str.find_first_of("/",ix3);
 	ix4 = (ix4 < str.length()) ? ix4 : ix3;
 	host = str.substr(ix3, ix4-ix3);
 
@@ -2504,11 +2504,11 @@ render_gridJobId(std::string & jid, ClassAd *ad, Formatter & /*fmt*/ )
 		jid = host;
 		jid += " : ";
 		if (str[ix4] == '/') ix4 += 1;
-		unsigned int ix5 = str.find_first_of("/",ix4);
+		size_t ix5 = str.find_first_of("/",ix4);
 		jid = str.substr(ix4, ix5-ix4);
 		if (ix5 < str.length()) {
 			if (str[ix5] == '/') ix5 += 1;
-			unsigned int ix6 = str.find_first_of("/",ix5);
+			size_t ix6 = str.find_first_of("/",ix5);
 			jid += ".";
 			jid += str.substr(ix5, ix6-ix5);
 		}
@@ -2772,157 +2772,6 @@ print_full_header(const char * source_label)
 		}
 	}
 }
-
-#ifdef ALLOW_DASH_DAG
-
-static void
-edit_string(clusterProcString *cps)
-{
-	if(!cps->parent) {
-		return;	// Nothing to do
-	}
-	std::string s;
-	int generations = 0;
-	for( clusterProcString* ccps = cps->parent; ccps; ccps = ccps->parent ) {
-		++generations;
-	}
-	int state = 0;
-	for(const char* p = cps->string; *p;){
-		switch(state) {
-		case 0:
-			if(!isspace(*p)){
-				state = 1;
-			} else {
-				s += *p;
-				++p;
-			}
-			break;
-		case 1:
-			if(isspace(*p)){
-				state = 2;
-			} else {
-				s += *p;
-				++p;
-			}
-			break;
-		case 2: if(isspace(*p)){
-				s+=*p;
-				++p;
-			} else {
-				for(int i=0;i<generations;++i){
-					s+=' ';
-				}
-				s +="|-";
-				state = 3;
-			}
-			break;
-		case 3:
-			if(isspace(*p)){
-				state = 4;
-			} else {
-				s += *p;
-				++p;	
-			}
-			break;
-		case 4:
-			int gen_i;
-			for(gen_i=0;gen_i<=generations+1;++gen_i){
-				if(isspace(*p)){
-					++p;
-				} else {
-					break;
-				}
-			}
-			if( gen_i < generations || !isspace(*p) ) {
-				std::string::iterator sp = s.end();
-				--sp;
-				*sp = ' ';
-			}
-			state = 5;
-			break;
-		case 5:
-			s += *p;
-			++p;
-			break;
-		}
-	}
-	char* cpss = cps->string;
-	cps->string = strnewp( s.c_str() );
-	delete[] cpss;
-}
-
-static void
-rewrite_output_for_dag_nodes_in_dag_map()
-{
-	for(dag_map_type::iterator cps = dag_map.begin(); cps != dag_map.end(); ++cps) {
-		edit_string(cps->second);
-	}
-}
-
-// First Pass: Find all the DAGman nodes, and link them up
-// Assumptions of this code: DAG Parent nodes always
-// have cluster ids that are less than those of child
-// nodes. condor_dagman processes have ProcID == 0 (only one per
-// cluster)
-static void
-linkup_dag_nodes_in_dag_map()
-{
-	for(dag_map_type::iterator cps = dag_map.begin(); cps != dag_map.end(); ++cps) {
-		clusterProcString* cpps = cps->second;
-		if(cpps->dagman_cluster_id != cpps->cluster) {
-				// Its probably a DAGman job
-				// This next line is where we assume all condor_dagman
-				// jobs have ProcID == 0
-			clusterProcMapper parent_id(cpps->dagman_cluster_id);
-			dag_map_type::iterator dmp = dag_map.find(parent_id);
-			if( dmp != dag_map.end() ) { // found it!
-				cpps->parent = dmp->second;
-				dmp->second->children.push_back(cpps);
-			} else { // Now search dag_cluster_map
-					// Necessary to find children of dags
-					// which are themselves children (that is,
-					// subdags)
-				clusterIDProcIDMapper cipim(cpps->dagman_cluster_id);
-				dag_cluster_map_type::iterator dcmti = dag_cluster_map.find(cipim);
-				if(dcmti != dag_cluster_map.end() ) {
-					cpps->parent = dcmti->second;
-					dcmti->second->children.push_back(cpps);
-				}
-			}
-		}
-	}
-}
-
-static void print_dag_map_node(clusterProcString* cps,int level)
-{
-	if(cps->parent && level <= 0) {
-		return;
-	}
-	printf("%s",cps->string);
-	for(std::vector<clusterProcString*>::iterator p = cps->children.begin();
-			p != cps->children.end(); ++p) {
-		print_dag_map_node(*p,level+1);
-	}
-}
-
-static void print_dag_map()
-{
-	for(dag_map_type::iterator cps = dag_map.begin(); cps != dag_map.end(); ++cps) {
-		print_dag_map_node(cps->second,0);
-	}
-}
-
-static void clear_dag_map()
-{
-	for(std::map<clusterProcMapper,clusterProcString*,CompareProcMaps>::iterator
-			cps = dag_map.begin(); cps != dag_map.end(); ++cps) {
-		delete[] cps->second->string;
-		delete cps->second;
-	}
-	dag_map.clear();
-	dag_cluster_map.clear();
-}
-#endif // ALLOW_DASH_DAG
 
 /* print-format definition for default "bufferJobShort" output
 SELECT
@@ -3578,9 +3427,9 @@ static void fixup_std_column_widths(int max_cluster, int max_proc, int longest_n
 	if (first_col_is_job_id) {
 		char buf[20];
 		sprintf(buf, "%d", max_cluster);
-		vals.cluster_width = strlen(buf);
+		vals.cluster_width = (int)strlen(buf);
 		sprintf(buf, "%d", max_proc);
-		vals.proc_width = strlen(buf);
+		vals.proc_width = (int)strlen(buf);
 	}
 
 	if (has_owner_column && ! widescreen && longest_name > 14) {
@@ -3706,7 +3555,7 @@ format_name_column_for_dag_nodes(ROD_MAP_BY_ID & results, int name_column, int c
 
 			const char * name = NULL;
 			pcolval->IsStringValue(name);
-			int cch = strlen(name);
+			int cch = (int)strlen(name);
 
 			buf.clear();
 			buf.reserve(cch + 3 + it->second.generation);
@@ -4674,7 +4523,7 @@ show_file_queue(const char* jobads, const char* userlog)
 		
 	} else if (userlog != NULL) {
 		CondorID * JobIds = NULL;
-		int cJobIds = constrID.size();
+		int cJobIds = (int)constrID.size();
 		if (cJobIds > 0) JobIds = &constrID[0];
 
 		if ( ! userlog_to_classads(userlog, AddJobToClassAdCollection, &jobs, JobIds, cJobIds, constr.Expr())) {

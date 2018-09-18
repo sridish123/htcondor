@@ -288,7 +288,6 @@ our %submit_info = (
 								  '-DCLIPPED:BOOL' => 'OFF',
 								  '-DWITH_CREAM:BOOL' => 'OFF',
 								  '-DWITH_BOINC:BOOL' => 'OFF',
-								  '-DPYTHON_VERSION' => '2.7',
 			},
 			'prereqs'	=> [ ],
 			'xtests'	=>	undef,
@@ -487,6 +486,7 @@ our %submit_info = (
 	'x86_64_MacOSX8',	=> 'x86_64_MacOSX',
 	'x86_64_MacOSX9',	=> 'x86_64_MacOSX',
 	'x86_64_MacOSX10',	=> 'x86_64_MacOSX',
+	'x86_64_MacOSX13',	=> 'x86_64_MacOSX',
 
 	#
 	# The SWAMP platforms.
@@ -560,9 +560,7 @@ our %submit_info = (
 
 	'x86_64_Fedora27'	=> {
 		'build' => {
-			'configure_args' => { @minimal_build_configure_args,
-								'-DPYTHON_VERSION' => '2.7',
-			},
+			'configure_args' => { @minimal_build_configure_args },
 			'prereqs'	=> [ @default_prereqs ],
 			'xtests'	=> undef,
 		},
@@ -668,12 +666,24 @@ our %submit_info = (
 		},
 	},
 
-	# Only Ubuntu 16.04 has standard universe port.
 	'x86_64_Ubuntu16'	=> {
 		'build' => {
+			'configure_args' => { @default_build_configure_args },
+			'prereqs'	=> [ @default_prereqs ],
+		},
+
+		'test' => {
+			'configure_args' => { @default_test_configure_args },
+			'prereqs'	=> [ @default_prereqs ],
+			'testclass'	=> [ @default_testclass ],
+		},
+	},
+
+	'x86_64_Ubuntu18'	=> {
+		'build' => {
 			'configure_args' => { @default_build_configure_args,
-				'-DCLIPPED:BOOL' => 'OFF',
-			 },
+								  '-DWITH_CREAM:BOOL' => 'OFF',
+			},
 			'prereqs'	=> [ @default_prereqs ],
 		},
 

@@ -21,7 +21,6 @@
 #include "condor_config.h"
 #include "condor_debug.h"
 #include "condor_network.h"
-#include "condor_string.h"
 #include "spooled_job_files.h"
 #include "subsystem_info.h"
 #include "env.h"
@@ -86,7 +85,6 @@
 #include "vm_univ_utils.h"
 #include "condor_md.h"
 #include "my_popen.h"
-#include "condor_base64.h"
 #include "zkm_base64.h"
 
 #include <algorithm>
@@ -138,6 +136,7 @@ int		DashMaxJobs = 0;	 // maximum number of jobs to create before generating an 
 int		DashMaxClusters = 0; // maximum number of clusters to create before generating an error.
 const char * DashDryRunOutName = NULL;
 int		DumpSubmitHash = 0;
+int		DumpSubmitDigest = 0;
 int		MaxProcsPerCluster;
 int	  ClusterId = -1;
 int	  ProcId = -1;
@@ -610,6 +609,9 @@ main( int argc, const char *argv[] )
 						} else if (YourString(opt) == "def") {
 							DumpSubmitHash &= ~HASHITER_NO_DEFAULTS;
 							needs_file_arg = true;
+						} else if (YourString(opt) == "digest") {
+							DumpSubmitDigest = 1;
+							needs_file_arg = true;
 						} else {
 							int optval = atoi(opt);
 							// if the argument is -dry:<number> and number is > 0x10,
@@ -778,13 +780,13 @@ main( int argc, const char *argv[] )
 					exit(1);
 				}
 				if( PoolName ) {
-					delete [] PoolName;
+					free(PoolName);
 				}
 					// TODO We should try to resolve the name to a full
 					//   hostname, but get_full_hostname() doesn't like
 					//   seeing ":<port>" at the end, which is valid for a
 					//   collector name.
-				PoolName = strnewp( *ptr );
+				PoolName = strdup( *ptr );
 			} else if (is_dash_arg_prefix(ptr[0], "stm", 1)) {
 				if( !(--argc) || !(*(++ptr)) ) {
 					fprintf( stderr, "%s: -stm requires another argument\n",
@@ -1884,6 +1886,10 @@ int submit_jobs (
 			max_materialize = MIN(max_materialize, total_procs);
 			max_materialize = MAX(max_materialize, 1);
 
+			if (DashDryRun && DumpSubmitDigest) {
+				fprintf(stdout, "\n----- submit digest -----\n%s-----\n", submit_digest.c_str());
+			}
+
 			// send the submit digest to the schedd. the schedd will parse the digest at this point
 			// and return success or failure.
 			rval = MyQ->set_Factory(ClusterId, (int)max_materialize, factory_path.c_str(), submit_digest.c_str());
@@ -2547,7 +2553,7 @@ int SendJobCredential()
 			}
 
 			// immediately convert to base64
-			char* ut64 = condor_base64_encode(uber_ticket, bytes_read);
+			char* ut64 = zkm_base64_encode(uber_ticket, bytes_read);
 
 			// sanity check:  convert it back.
 			//unsigned char *zkmbuf = 0;
@@ -2618,33 +2624,33 @@ int SendLastExecutable()
 												true);
 		}
 
-		MyString md5;
+		MyString hash;
 		if (try_ickpt_sharing) {
 			Condor_MD_MAC cmm;
-			unsigned char* md5_raw;
+			unsigned char* hash_raw;
 			if (!cmm.addMDFile(ename)) {
 				dprintf(D_ALWAYS,
 						"SHARE_SPOOLED_EXECUTABLES will not be used: "
 							"MD5 of file %s failed\n",
 						ename);
 			}
-			else if ((md5_raw = cmm.computeMD()) == NULL) {
+			else if ((hash_raw = cmm.computeMD()) == NULL) {
 				dprintf(D_ALWAYS,
 						"SHARE_SPOOLED_EXECUTABLES will not be used: "
 							"no MD5 support in this Condor build\n");
 			}
 			else {
 				for (int i = 0; i < MAC_SIZE; i++) {
-					md5.formatstr_cat("%02x", static_cast<int>(md5_raw[i]));
+					hash.formatstr_cat("%02x", static_cast<int>(hash_raw[i]));
 				}
-				free(md5_raw);
+				free(hash_raw);
 			}
 		}
 		int ret;
-		if ( ! md5.IsEmpty()) {
+		if ( ! hash.IsEmpty()) {
 			ClassAd tmp_ad;
 			tmp_ad.Assign(ATTR_OWNER, owner);
-			tmp_ad.Assign(ATTR_JOB_CMD_MD5, md5.Value());
+			tmp_ad.Assign(ATTR_JOB_CMD_CHECKSUM, hash.Value());
 			ret = MyQ->send_SpoolFileIfNeeded(tmp_ad);
 		}
 		else {

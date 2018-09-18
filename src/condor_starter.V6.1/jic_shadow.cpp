@@ -30,7 +30,8 @@
 #include "ipv6_hostname.h"
 #include "internet.h"
 #include "basename.h"
-#include "condor_string.h"  // for strnewp
+#include "condor_config.h"
+#include "util_lib_proto.h"
 #include "condor_attributes.h"
 #include "condor_commands.h"
 #include "command_strings.h"
@@ -87,6 +88,7 @@ JICShadow::JICShadow( const char* shadow_name ) : JobInfoCommunicator(),
 	fs_domain = NULL;
 
 	transfer_at_vacate = false;
+	m_job_setup_done = false;
 	wants_file_transfer = false;
 	wants_x509_proxy = false;
 	job_cleanup_disconnected = false;
@@ -435,7 +437,8 @@ JICShadow::transferOutput( bool &transient_failure )
 		// finished.  may as well do this in the foreground,
 		// since we do not want to be interrupted by anything
 		// short of a hardkill. 
-	if( filetrans && ((requested_exit == false) || transfer_at_vacate) ) {
+		// Don't transfer if we haven't started the job.
+	if( filetrans && m_job_setup_done && ((requested_exit == false) || transfer_at_vacate) ) {
 
 		if ( shadowDisconnected() ) {
 				// trigger retransfer on reconnect
@@ -782,6 +785,8 @@ JICShadow::reconnect( ReliSock* s, ClassAd* ad )
 void
 JICShadow::notifyJobPreSpawn( void )
 {
+	m_job_setup_done = true;
+
 			// Notify the shadow we're about to exec.
 	REMOTE_CONDOR_begin_execution();
 
@@ -2409,9 +2414,8 @@ JICShadow::beginFileTransfer( void )
 		MyString proxy_source_path;
 		job_ad->LookupString( ATTR_X509_USER_PROXY, proxy_source_path );
 
-			// Get proxy expiration timestamp from the job ad
-		int proxy_expiration;
-		job_ad->LookupInteger( ATTR_X509_USER_PROXY_EXPIRATION, proxy_expiration );
+			// Get proxy expiration timestamp
+		time_t proxy_expiration = GetDesiredDelegatedJobCredentialExpiration( job_ad );
 
 			// Parse proxy filename
 		MyString proxy_filename = condor_basename( proxy_source_path.Value() );

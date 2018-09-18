@@ -1964,9 +1964,9 @@ int Scheduler::history_helper_launcher(const HistoryHelperState &state) {
 	auto_free_ptr history_helper(param("HISTORY_HELPER"));
 	if ( ! history_helper) {
 #ifdef WIN32
-		history_helper.set(expand_param("$(LIBEXEC)\\condor_history_helper.exe"));
+		history_helper.set(expand_param("$(BIN)\\condor_history.exe"));
 #else
-		history_helper.set(expand_param("$(LIBEXEC)/condor_history_helper"));
+		history_helper.set(expand_param("$(BIN)/condor_history"));
 #endif
 	}
 	ArgList args;
@@ -4578,7 +4578,7 @@ Scheduler::WriteFactorySubmitToUserLog( JobQueueCluster* cluster, bool do_fsync 
 
 	if (!status) {
 		dprintf( D_ALWAYS,
-				 "Unable to log ULOG_FACTORY_SUBMIT event for job %d.%d\n",
+				 "Unable to log ULOG_CLUSTER_SUBMIT event for job %d.%d\n",
 				 cluster->jid.cluster, cluster->jid.proc );
 		return false;
 	}
@@ -4616,7 +4616,7 @@ Scheduler::WriteFactoryRemoveToUserLog( JobQueueCluster* cluster, bool do_fsync 
 
 	if (!status) {
 		dprintf( D_ALWAYS,
-				 "Unable to log ULOG_FACTORY_REMOVE event for job %d.%d\n",
+				 "Unable to log ULOG_CLUSTER_REMOVE event for job %d.%d\n",
 				 cluster->jid.cluster, cluster->jid.proc );
 		return false;
 	}

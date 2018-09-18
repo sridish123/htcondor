@@ -20,7 +20,6 @@
 
 #include "condor_common.h"
 #include "condor_attributes.h"
-#include "condor_string.h"
 #include "util_lib_proto.h"
 #include "my_popen.h"
 
@@ -577,8 +576,8 @@ getEventMask()
 			ULOG_GLOBUS_SUBMIT,			// For Pegasus
 			ULOG_JOB_RECONNECT_FAILED,
 			ULOG_GRID_SUBMIT,			// For Pegasus
-			ULOG_FACTORY_SUBMIT,
-			ULOG_FACTORY_REMOVE,
+			ULOG_CLUSTER_SUBMIT,
+			ULOG_CLUSTER_REMOVE,
 			-1
 		};
 

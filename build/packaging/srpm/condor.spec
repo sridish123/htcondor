@@ -234,6 +234,7 @@ BuildRequires: openldap-devel
 BuildRequires: python-devel
 BuildRequires: boost-devel
 BuildRequires: redhat-rpm-config
+BuildRequires: sqlite-devel
 
 %if %uw_build || %std_univ
 BuildRequires: cmake >= 2.8
@@ -288,6 +289,7 @@ BuildRequires: globus-callout-devel
 BuildRequires: globus-common-devel
 BuildRequires: globus-ftp-client-devel
 BuildRequires: globus-ftp-control-devel
+BuildRequires: munge-devel
 BuildRequires: voms-devel
 %endif
 BuildRequires: libtool-ltdl-devel
@@ -586,8 +588,6 @@ host as the DedicatedScheduler.
 %endif
 
 
-# Temporarily turn off python for Fedora
-%if ! 0%{?fedora}
 #######################
 %package python
 Summary: Python bindings for HTCondor.
@@ -609,7 +609,6 @@ Provides: htcondor.so
 %description python
 The python bindings allow one to directly invoke the C++ implementations of
 the ClassAd library and HTCondor from python
-%endif
 
 
 #######################
@@ -721,10 +720,7 @@ Requires: %name-classads = %version-%release
 %if %cream
 Requires: %name-cream-gahp = %version-%release
 %endif
-# Temporarily turn off python for Fedora
-%if ! 0%{?fedora}
 Requires: %name-python = %version-%release
-%endif
 Requires: %name-bosco = %version-%release
 %if %std_univ
 Requires: %name-std-universe = %version-%release
@@ -1007,12 +1003,6 @@ rm -f %{buildroot}/%{_mandir}/man1/condor_glidein.1
 rm -rf %{buildroot}/%{_sysconfdir}/sysconfig
 rm -rf %{buildroot}/%{_sysconfdir}/init.d
 
-# Temporarily turn off python for Fedora
-%if 0%{?fedora}
-rm -f %{buildroot}/%{_bindir}/condor_top
-rm -f %{buildroot}/%{_mandir}/man1/condor_top.1.gz
-%endif
-
 %if %systemd
 # install tmpfiles.d/condor.conf
 mkdir -p %{buildroot}%{_tmpfilesdir}
@@ -1052,13 +1042,10 @@ install -m 0755 src/condor_scripts/CondorPersonal.pm %{buildroot}%{_datadir}/con
 install -m 0755 src/condor_scripts/CondorTest.pm %{buildroot}%{_datadir}/condor/
 install -m 0755 src/condor_scripts/CondorUtils.pm %{buildroot}%{_datadir}/condor/
 
-# Temporarily turn off python for Fedora
-%if ! 0%{?fedora}
 # Install python-binding libs
 mkdir -p %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/{classad,htcondor}.so %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/libpyclassad*.so %{buildroot}%{_libdir}
-%endif
 
 # we must place the config examples in builddir so %doc can find them
 mv %{buildroot}/etc/examples %_builddir/%name-%tarball_version
@@ -1251,7 +1238,6 @@ rm -rf %{buildroot}
 %_libexecdir/condor/sshd.sh
 %_libexecdir/condor/get_orted_cmd.sh
 %_libexecdir/condor/orted_launcher.sh
-%_libexecdir/condor/condor_history_helper
 %_libexecdir/condor/condor_job_router
 %_libexecdir/condor/condor_pid_ns_init
 %_libexecdir/condor/condor_urlfetch
@@ -1303,10 +1289,7 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_gangliad
 %_libexecdir/condor/panda-plugin.so
 %_libexecdir/condor/pandad
-# Temporarily turn off python for Fedora
-%if ! 0%{?fedora}
 %_libexecdir/condor/libcollector_python_plugin.so
-%endif
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_annex.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
@@ -1344,9 +1327,7 @@ rm -rf %{buildroot}
 %_mandir/man1/condor_store_cred.1.gz
 %_mandir/man1/condor_submit.1.gz
 %_mandir/man1/condor_submit_dag.1.gz
-%if ! 0%{?fedora}
 %_mandir/man1/condor_top.1.gz
-%endif
 %_mandir/man1/condor_transfer_data.1.gz
 %_mandir/man1/condor_transform_ads.1.gz
 %_mandir/man1/condor_update_machine_ad.1.gz
@@ -1433,7 +1414,6 @@ rm -rf %{buildroot}
 %_sbindir/condor_credd
 %_sbindir/condor_fetchlog
 %_sbindir/condor_had
-%_sbindir/condor_init
 %_sbindir/condor_master
 %_sbindir/condor_negotiator
 %_sbindir/condor_off
@@ -1695,8 +1675,6 @@ rm -rf %{buildroot}
 %config(noreplace) %_sysconfdir/condor/config.d/20dedicated_scheduler_condor.config
 %endif
 
-# Temporarily turn off python for Fedora
-%if ! 0%{?fedora}
 %files python
 %defattr(-,root,root,-)
 %_bindir/condor_top
@@ -1704,7 +1682,6 @@ rm -rf %{buildroot}
 %_libexecdir/condor/libclassad_python_user.so
 %{python_sitearch}/classad.so
 %{python_sitearch}/htcondor.so
-%endif
 
 %files bosco
 %defattr(-,root,root,-)
@@ -1952,6 +1929,21 @@ fi
 %endif
 
 %changelog
+* Wed Aug 01 2018 Tim Theisen <tim@cs.wisc.edu> - 8.7.9-1
+- Support for Debian 9, Ubuntu 16, and Ubuntu 18
+- Improved Python bindings to support the full range of submit functionality
+- Allows VMs to shutdown when the job is being gracefully evicted
+- Can now specify a host name alias (CNAME) for NETWORK_HOSTNAME
+- Added the ability to run a job immediately by replacing a running job
+
+* Wed Aug 01 2018 Tim Theisen <tim@cs.wisc.edu> - 8.6.12-1
+- Support for Debian 9, Ubuntu 16, and Ubuntu 18
+- Fixed a memory leak that occurred when SSL authentication fails
+- Fixed a bug where invalid transform REQUIREMENTS caused a Job to match
+- Fixed a bug to allow a queue super user to edit protected attributes
+- Fixed a problem setting the job environment in the Singularity container
+- Fixed several other minor problems
+
 * Tue May 22 2018 Tim Theisen <tim@cs.wisc.edu> - 8.7.8-2
 - Reinstate man pages
 - Drop centos from dist tag in 32-bit Enterprise Linux 7 RPMs

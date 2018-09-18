@@ -1,14 +1,15 @@
 # One platform per line.  Comments (starting with #) and blank lines are ignored.
 
 # Officially supported platforms
-x86_64_Debian7
 x86_64_Debian8
 x86_64_Debian9
 x86_64_MacOSX10
+x86_64_MacOSX13
 x86_64_RedHat6
 x86_64_RedHat7
 x86_64_Ubuntu14
 x86_64_Ubuntu16
+x86_64_Ubuntu18
 x86_64_Windows7
 x86_64_Windows8
 x86_64_Windows10

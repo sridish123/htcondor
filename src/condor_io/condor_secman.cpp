@@ -26,7 +26,6 @@
 #include "condor_environ.h"
 
 #include "authentication.h"
-#include "condor_string.h"
 #include "condor_attributes.h"
 #include "condor_adtypes.h"
 #include "my_hostname.h"
@@ -2012,7 +2011,7 @@ SecManStartCommand::authenticate_inner_finish()
 
 			dprintf ( D_SECURITY, "SECMAN: successfully enabled message authenticator!\n");
 		} else {
-			// we aren't going to enable MD5.  but we should still set the secret key
+			// we aren't going to enable hasing.  but we should still set the secret key
 			// in case we decide to turn it on later.
 			m_sock->encode();
 			m_sock->set_MD_mode(MD_OFF, m_private_key);
@@ -2825,7 +2824,6 @@ SecMan::invalidateExpiredCache()
 		}
 	}
 }
-
 
 MyString SecMan::getDefaultAuthenticationMethods() {
 	MyString methods;

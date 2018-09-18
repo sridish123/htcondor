@@ -107,8 +107,8 @@
 //#cmakedefine HAVE_LIBSASL
 ///* check for usable libsasl2 */
 //#cmakedefine HAVE_LIBSASL2
-///* Define if md5sum is available */
-//#cmakedefine HAVE_MD5SUM
+///* Define if sha256sum is available */
+//#cmakedefine HAVE_SHA256SUM
 ///* Define to 1 if you have the <memory.h> header file. */
 //#cmakedefine HAVE_MEMORY_H
 ///* Define to 1 if the tool 'objcopy' is available */
@@ -154,8 +154,6 @@
 /////////////////////////////////////////
 // The following are configurable options
 // previously --enable or --with...
-/* Define if md5 checksums are required for released packages*/
-#cmakedefine ENABLE_CHECKSUM_MD5 1
 
 /* Define if sha1 checksums are required for released packages*/
 #cmakedefine ENABLE_CHECKSUM_SHA1 1
@@ -661,6 +659,7 @@
 #cmakedefine LIBKRB5_SO "${LIBKRB5_SO}"
 #cmakedefine LIBGSSAPI_KRB5_SO "${LIBGSSAPI_KRB5_SO}"
 #cmakedefine LIBSSL_SO "${LIBSSL_SO}"
+#cmakedefine LIBMUNGE_SO "${LIBMUNGE_SO}"
 #cmakedefine LIBLTDL_SO "${LIBLTDL_SO}"
 #cmakedefine LIBGLOBUS_COMMON_SO "${LIBGLOBUS_COMMON_SO}"
 #cmakedefine LIBGLOBUS_CALLOUT_SO "${LIBGLOBUS_CALLOUT_SO}"

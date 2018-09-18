@@ -30,7 +30,6 @@
 #include "directory.h"
 #include "condor_config.h"
 #include "spooled_job_files.h"
-#include "condor_string.h"
 #include "util_lib_proto.h"
 #include "daemon.h"
 #include "daemon_types.h"
@@ -79,6 +78,7 @@ public:
 	FileTransferItem():
 		is_directory(false),
 		is_symlink(false),
+		is_domainsocket(false),
 		file_mode(NULL_FILE_PERMISSIONS),
 		file_size(0) {}
 
@@ -89,6 +89,7 @@ public:
 	std::string dest_dir;
 	bool is_directory;
 	bool is_symlink;
+	bool is_domainsocket;
 	condor_mode_t file_mode;
 	filesize_t file_size;
 };
@@ -207,7 +208,7 @@ FileTransfer::~FileTransfer()
 	if (DontEncryptOutputFiles) delete DontEncryptOutputFiles;
 	if (OutputDestination) delete OutputDestination;
 	if (IntermediateFiles) delete IntermediateFiles;
-	if (SpooledIntermediateFiles) delete SpooledIntermediateFiles;
+	if (SpooledIntermediateFiles) free(SpooledIntermediateFiles);
 	// Note: do _not_ delete FileToSend!  It points to OutputFile or Intermediate.
 	if (last_download_catalog) {
 		// iterate through and delete entries
@@ -622,6 +623,7 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 int
 FileTransfer::InitDownloadFilenameRemaps(ClassAd *Ad) {
 	std::string remap_fname;
+	std::string ulog_fname;
 
 	dprintf(D_FULLDEBUG,"Entering FileTransfer::InitDownloadFilenameRemaps\n");
 
@@ -636,16 +638,16 @@ FileTransfer::InitDownloadFilenameRemaps(ClassAd *Ad) {
 	// If a client is receiving spooled output files which include a
 	// user job log file with a directory component, add a remap.
 	// Otherwise, the user log will end up in the iwd, which is wrong.
-	if (IsClient() && Ad->LookupString(ATTR_ULOG_FILE, remap_fname) &&
-		remap_fname.find(DIR_DELIM_CHAR) != std::string::npos) {
+	if (IsClient() && Ad->LookupString(ATTR_ULOG_FILE, ulog_fname) &&
+		ulog_fname.find(DIR_DELIM_CHAR) != std::string::npos) {
 
 		std::string full_name;
-		if (fullpath(remap_fname.c_str())) {
-			full_name = remap_fname;
+		if (fullpath(ulog_fname.c_str())) {
+			full_name = ulog_fname;
 		} else {
 			Ad->LookupString(ATTR_JOB_IWD, full_name);
 			full_name += DIR_DELIM_CHAR;
-			full_name += remap_fname;
+			full_name += ulog_fname;
 		}
 		AddDownloadFilenameRemap(condor_basename(full_name.c_str()), full_name.c_str());
 	}
@@ -868,7 +870,7 @@ FileTransfer::Init( ClassAd *Ad, bool want_check_perms, priv_state priv,
 				ATTR_TRANSFER_INTERMEDIATE_FILES,
 				dynamic_buf ? dynamic_buf : "(none)");
 		if ( dynamic_buf ) {
-			SpooledIntermediateFiles = strnewp(dynamic_buf);
+			SpooledIntermediateFiles = strdup(dynamic_buf);
 			free(dynamic_buf);
 			dynamic_buf = NULL;
 		}
@@ -1107,7 +1109,7 @@ FileTransfer::ComputeFilesToSend()
 					(modification_time != dir.GetModifyTime()) ) {
 				// file has changed in size or modification time.  this
 				// doesn't catch the case where the file was modified
-				// without changing size and is then back-dated.  use md5
+				// without changing size and is then back-dated.  use a hash
 				// or something if that's truly needed, and compare the
 				// checksums.
 				dprintf( D_FULLDEBUG, 
@@ -4259,7 +4261,7 @@ bool FileTransfer::BuildFileCatalog(time_t spool_time, const char* iwd, FileCata
 
 	// now, iterate the directory and put the relavant info into the catalog.
 	// this currently excludes directories, and only stores the modification
-	// time and filesize.  if you were to add md5 sums, signatures, etc., that
+	// time and filesize.  if you were to add hashes, signatures, etc., that
 	// would go here.
 	//
 	// also note this information is not sufficient to notice a byte changing
@@ -4541,7 +4543,7 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	plugin_args.AppendArg( output_filename.c_str() );
 
 	// Invoke the plugin
-	dprintf( D_FULLDEBUG, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
+	dprintf( D_ALWAYS, "FILETRANSFER: invoking: %s \n", plugin_path.c_str() );
 	FILE* plugin_pipe = my_popen( plugin_args, "r", FALSE, &plugin_env, drop_privs );
 	if( !plugin_pipe ) {
 		dprintf ( D_ALWAYS, "FILETRANSFER: failed to invoke multifile transfer "
@@ -4872,7 +4874,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 	ASSERT( iwd );
 
 		// To simplify error handling, we always want to include an
-		// entry for the specified path, except one case which is
+		// entry for the specified path, except two cases which are
 		// handled later on by removing the entry we add here.
 	expanded_list.push_back( FileTransferItem() );
 	FileTransferItem &file_xfer_item = expanded_list.back();
@@ -4909,7 +4911,17 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 	bool trailing_slash = srclen > 0 && IS_ANY_DIR_DELIM_CHAR(src_path[srclen-1]);
 
 	file_xfer_item.is_symlink = st.IsSymlink();
+	file_xfer_item.is_domainsocket = st.IsDomainSocket();
 	file_xfer_item.is_directory = st.IsDirectory();
+
+		// If this file is a domain socket, we don't want to send it but it's
+		// also not an error. Remove the entry from the list and return true.
+	if( file_xfer_item.is_domainsocket ) {
+		dprintf(D_FULLDEBUG, "FILETRANSFER: File %s is a domain socket, excluding "
+			"from transfer list\n", full_src_path.c_str() );
+		expanded_list.pop_back();
+		return true;
+	}
 
 	if( !file_xfer_item.is_directory ) {
 		file_xfer_item.file_size = st.GetFileSize();
