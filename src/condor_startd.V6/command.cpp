@@ -2686,7 +2686,13 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		delete resourceAd;
 		return FALSE;
 	}
-
+	// Remove duplicate claims.
+	claimIDList.rewind();
+	char * claimID = NULL;
+	std::set< char * > ucil;
+	while( (claimID = claimIDList.next()) != NULL ) {
+		ucil.insert( claimID );
+	}
 
 	//
 	// Coalesce the claims.
@@ -2694,10 +2700,10 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	std::string errorString;
 	CAResult result = CA_SUCCESS;
 
-	claimIDList.rewind();
-	char * claimID = NULL;
 	Resource * parent = NULL;
-	while( (claimID = claimIDList.next()) != NULL ) {
+	for( auto i = ucil.begin(); i != ucil.end(); ++i ) {
+		claimID = * i;
+
 		// If a slot has been preempted, don't coalesce it.
 		Resource * r = resmgr->get_by_cur_id( claimID );
 
@@ -2780,9 +2786,10 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		return FALSE;
 	}
 
-	claimIDList.rewind();
 	dprintf( D_ALWAYS, "command_coalesce_slots(): coalescing slots...\n" );
-	while( (claimID = claimIDList.next()) != NULL ) {
+	for( auto i = ucil.begin(); i != ucil.end(); ++i ) {
+		claimID = * i;
+
 		// If a slot has been preempted, don't coalesce it.
 		Resource * r = resmgr->get_by_cur_id( claimID );
 		dprintf( D_ALWAYS, "command_coalesce_slots(): coalescing %s...\n", r->r_id_str );
