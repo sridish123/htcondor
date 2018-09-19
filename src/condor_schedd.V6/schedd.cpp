@@ -17659,10 +17659,18 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 	}
 
 	PROC_ID bid; // beneficiary job's job ID.
-	if( ! request.LookupInteger( "Beneficiary" ATTR_CLUSTER_ID, bid.cluster ) ||
-	  ! request.LookupInteger( "Beneficiary" ATTR_PROC_ID, bid.proc ) ) {
-		handleReassignSlotError( sock, "Missing now-job ID" );
-		return FALSE;
+	std::string bidString;
+	if( request.LookupString( "BeneficiaryJobID", bidString ) ) {
+		bid = getProcByString( bidString.c_str() );
+		if( bid.cluster == -1 && bid.proc == -1 ) {
+			handleReassignSlotError( sock, "invalid now-job ID" );
+		}
+	} else {
+		if( ! request.LookupInteger( "Beneficiary" ATTR_CLUSTER_ID, bid.cluster ) ||
+		  ! request.LookupInteger( "Beneficiary" ATTR_PROC_ID, bid.proc ) ) {
+			handleReassignSlotError( sock, "missing now-job ID" );
+			return FALSE;
+		}
 	}
 
 	PROC_ID vID;
@@ -17675,7 +17683,7 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 		if( vidList.number() > 0 ) {
 			vids = (PROC_ID *)malloc( sizeof(PROC_ID) * vidList.number() );
 		} else {
-			handleReassignSlotError( sock, "Invalid vacate-job ID list" );
+			handleReassignSlotError( sock, "invalid vacate-job ID list" );
 			return FALSE;
 		}
 
@@ -17684,7 +17692,7 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 		char * vs = vidList.next();
 		for( ; vs != NULL; vs = vidList.next() ) {
 			if(! vID.set( vs )) {
-				handleReassignSlotError( sock, "Invalid vacate-job ID in list" );
+				handleReassignSlotError( sock, "invalid vacate-job ID in list" );
 				return FALSE;
 			}
 			vids[vCount++] = vID;
@@ -17694,7 +17702,7 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 	} else {
 		if( ! request.LookupInteger( "Victim" ATTR_CLUSTER_ID, vID.cluster ) ||
 		  ! request.LookupInteger( "Victim" ATTR_PROC_ID, vID.proc ) ) {
-			handleReassignSlotError( sock, "Missing vacate-job ID" );
+			handleReassignSlotError( sock, "missing vacate-job ID" );
 			return FALSE;
 		}
 

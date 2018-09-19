@@ -2007,11 +2007,15 @@ DCSchedd::reassignSlot( PROC_ID bid, ClassAd & reply, std::string & errorMessage
 	// It would seem obvious to construct a ClassAd list of ClassAds
 	// with attributes "Cluster" and "Proc", but it turns out to be
 	// way easier to send a StringList of the x.y notation, instead.
+	//
+	// It's also marginally more efficient to send a string than two
+	// 64-bit ints, so encode the beneficiary job ID that way.
+	char bidStr[PROC_ID_STR_BUFLEN];
+	ProcIdToStr( bid, bidStr );
 
 	ClassAd request;
 	request.Assign( "VictimJobIDs", vidList.c_str() );
-	request.Assign( "Beneficiary" ATTR_CLUSTER_ID, bid.cluster );
-	request.Assign( "Beneficiary" ATTR_PROC_ID, bid.proc );
+	request.Assign( "BeneficiaryJobID", bidStr );
 
 	sock.encode();
 	if(! putClassAd( & sock, request )) {
