@@ -20,7 +20,8 @@ class CondorCluster(object):
         self._count = 0
         self._schedd = schedd
 
-    def ClusterID(self):
+    @property
+    def cluster_id(self):
         return self._cluster_id
 
     # @return The corresponding CondorCluster object or None.
@@ -43,16 +44,14 @@ class CondorCluster(object):
                 self._cluster_id = submit.queue(txn, count)
                 self._count = count
         except Exception as e:
-            print( "Job submission failed for an unknown error: " + str(e) )
-            return JOB_FAILURE
+            Utils.TLog( "Job submission failed for an unknown error: " + str(e) )
+            raise RuntimeError(e)
 
         Utils.TLog("Job submitted succeeded with cluster ID " + str(self._cluster_id))
 
         # We probably don't need self._log, but it seems like it may be
         # handy for log messages at some point.
         self._jel = JobEventLog( self._log )
-
-        return None
 
     def Schedd(self):
         return self._schedd
@@ -101,6 +100,11 @@ class CondorCluster(object):
               JobEventType.IMAGE_SIZE, JobEventType.SHADOW_EXCEPTION ],
             timeout, -1, self._count )
 
+    def WaitUntilAllJobsEvicted( self, timeout = 240 ):
+        return self.WaitUntil( [ JobEventType.JOB_EVICTED ],
+            [ JobEventType.EXECUTE, JobEventType.SUBMIT,
+              JobEventType.IMAGE_SIZE ],
+            timeout, -1, self._count )
 
     # An event type not listed in successEvents or ignoreeEvents is a failure.
     def WaitUntil( self, successEvents, ignoreEvents, timeout = 240, proc = 0, count = 0 ):

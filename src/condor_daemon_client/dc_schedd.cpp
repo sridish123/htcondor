@@ -1971,7 +1971,7 @@ bool DCSchedd::recycleShadow( int previous_job_exit_reason, ClassAd **new_job_ad
 }
 
 bool
-DCSchedd::reassignSlot( PROC_ID bid, ClassAd & reply, std::string & errorMessage, PROC_ID * vids, unsigned vCount ) {
+DCSchedd::reassignSlot( PROC_ID bid, ClassAd & reply, std::string & errorMessage, PROC_ID * vids, unsigned vCount, int flags ) {
 	std::string vidList;
 	formatstr( vidList, "%d.%d", vids[0].cluster, vids[0].proc );
 	for( unsigned i = 1; i < vCount; ++i ) {
@@ -2016,6 +2016,9 @@ DCSchedd::reassignSlot( PROC_ID bid, ClassAd & reply, std::string & errorMessage
 	ClassAd request;
 	request.Assign( "VictimJobIDs", vidList.c_str() );
 	request.Assign( "BeneficiaryJobID", bidStr );
+	if( flags != 0 ) {
+		request.Assign( "Flags", flags );
+	}
 
 	sock.encode();
 	if(! putClassAd( & sock, request )) {

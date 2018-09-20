@@ -20,7 +20,7 @@ int main( int argc, char ** argv ) {
 		return usage( argv[0] );
 	}
 
-	const char * pool = NULL, * name = NULL;
+	const char * pool = NULL, * name = NULL, * flagstr = NULL;
 
 	int i = 1;
 	for( ; i < argc; ++i ) {
@@ -32,6 +32,8 @@ int main( int argc, char ** argv ) {
 			++i; if( i < argc ) { name = argv[i]; } else { return usage( argv[0] ); }
 		} else if( strcmp( argv[i], "-debug" ) == 0 ) {
 			dprintf_set_tool_debug( "TOOL", 0 );
+		} else if( strcmp( argv[i], "--flags" ) == 0 ) {
+			++i; if( i < argc ) { flagstr = argv[i]; } else { fprintf( stderr, "Do not use the --flags option.\n" ); return 1; }
 		} else {
 			break;
 		}
@@ -62,6 +64,15 @@ int main( int argc, char ** argv ) {
 		else { return usage( argv[0] ); }
 	}
 
+	int flags = 0;
+	if( flagstr ) {
+		flags = strtol( flagstr, & endptr, 0 );
+		if( endptr[0] != '\0' ) {
+			fprintf( stderr, "Do not use the --flags option.\n" );
+			return 1;
+		}
+	}
+
 	DCSchedd schedd( name, pool );
 	if( schedd.locate() == false ) {
 		fprintf( stderr, "Unable to locate schedd, aborting.\n" );
@@ -70,7 +81,7 @@ int main( int argc, char ** argv ) {
 
 	ClassAd reply;
 	std::string errorMessage;
-	if(! schedd.reassignSlot( bid, reply, errorMessage, vids, vCount )) {
+	if(! schedd.reassignSlot( bid, reply, errorMessage, vids, vCount, flags )) {
 		fprintf( stderr, "Unable to reassign slot: %s.\n", errorMessage.c_str() );
 		return 1;
 	}

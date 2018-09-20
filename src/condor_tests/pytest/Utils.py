@@ -87,6 +87,7 @@ class Utils(object):
             self.error = error
 
         def __bool__(self):
+            Utils.TLog("{0} =?= {1}".format(self.result, self._expected_result))
             return self.result == self._expected_result
         # Python 3 compability.
         __nonzero__ = __bool__

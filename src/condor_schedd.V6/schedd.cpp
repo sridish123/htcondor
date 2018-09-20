@@ -17636,6 +17636,7 @@ void handleReassignSlotError( Sock * sock, const char * msg ) {
 	}
 }
 
+#define RS_TEST_SMV		1
 int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 	ASSERT( cmd == REASSIGN_SLOT );
 	Sock * sock = reinterpret_cast<Sock *>(s);
@@ -17762,21 +17763,38 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 		}
 	}
 
-	// It's safe to deactivate each victim's claim.
-	if(! pcccNew( bid )) {
-		handleReassignSlotError( sock, "the now-job must not already be scheduled to run immediately" );
-		return FALSE;
-	}
-	for( unsigned v = 0; v < vCount; ++v ) {
-		match_rec * match = FindMrecByJobID( vids[v] );
-		if(! match) {
-			handleReassignSlotError( sock, "no match for vacate-job ID" );
+	int flags = 0;
+	request.LookupInteger( "Flags", flags );
+
+	// If we're testing send_matchless_vacate(), don't do anything else.
+	if( flags & RS_TEST_SMV ) {
+		for( unsigned v = 0; v < vCount; ++v ) {
+			match_rec * match = FindMrecByJobID( vids[v] );
+			if(! match) {
+				handleReassignSlotError( sock, "no match for vacate-job ID" );
+				return FALSE;
+			}
+
+			send_matchless_vacate( match->description(), NULL, match->peer,
+				match->claimId(), RELEASE_CLAIM );
+		}
+	} else {
+		// It's safe to deactivate each victim's claim.
+		if(! pcccNew( bid )) {
+			handleReassignSlotError( sock, "the now-job must not already be scheduled to run immediately" );
 			return FALSE;
 		}
+		for( unsigned v = 0; v < vCount; ++v ) {
+			match_rec * match = FindMrecByJobID( vids[v] );
+			if(! match) {
+				handleReassignSlotError( sock, "no match for vacate-job ID" );
+				return FALSE;
+			}
 
-		pcccWants( bid, match );
-		match->m_now_job = bid;
-		enqueueActOnJobMyself( vids[v], JA_VACATE_FAST_JOBS, true );
+			pcccWants( bid, match );
+			match->m_now_job = bid;
+			enqueueActOnJobMyself( vids[v], JA_VACATE_FAST_JOBS, true );
+		}
 	}
 
 	// We could return KEEP_STREAM and block the client until we'd actually
