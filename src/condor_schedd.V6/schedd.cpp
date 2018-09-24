@@ -11805,7 +11805,7 @@ set_job_status(int cluster, int proc, int status)
 //
 
 struct ProcIDComparator {
-	bool operator() ( const PROC_ID & a, const PROC_ID & b ) {
+	bool operator() ( const PROC_ID & a, const PROC_ID & b ) const {
 		if( a.cluster < b.cluster ) { return true; }
 		if( a.cluster == b.cluster ) { return a.proc < b.proc; }
 		return false;
