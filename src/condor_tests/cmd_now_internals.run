@@ -8,8 +8,11 @@ from pytest.Globals import *
 from pytest.PersonalCondor import PersonalCondor
 from pytest.Utils import Utils
 
+from htcondor import JobEventType
+import htcondor
+
 def main():
-	CondorTest.RegisterTests( [ 'send_matchless_vacate' ] )
+	CondorTest.RegisterTests( [ 'send_matchless_vacate', 'pcccTest' ] )
 
 	params = {
 		"NUM_CPUS": 2,
@@ -26,7 +29,7 @@ use feature : PartitionableSlot
 		"should_transfer_files":	"true",
 		"universe":					"vanilla",
 		"arguments": 				"600",
-		"log":						"cmd_now_internal-send_matchless_vacate.log"
+		"log":						"cmd_now_internals-send_matchless_vacate.log"
 	}
 
 	victimCluster = pc.CondorCluster(job_params)
@@ -67,9 +70,57 @@ use feature : PartitionableSlot
 	if not victimCluster.WaitUntilAllJobsEvicted(60):
 		CondorTest.RegisterFailure("send_matchless_vacate",
 			"Jobs were not evicted before deadline" )
+		sys.exit(1)
 	else:
 		CondorTest.RegisterSuccess("send_matchless_vacate",
 			"Jobs were evicted as expected" )
+
+	#
+	# Testing the pccc code deliberately terminates the schedd, so do it last.
+	#
+
+	# There's only three jobs inthe queue right now, so at least one of the
+	# previous victim jobs must end up running.
+	if not victimCluster.WaitUntil( [ JobEventType.EXECUTE ],
+		[ JobEventType.SUBMIT, JobEventType.IMAGE_SIZE ], 60, -1, 1 ):
+		CondorTest.RegisterFailure( "pcccTest", "no job started executing" )
+		sys.exit(1)
+
+	# There must be a less-silly way of doing this...
+	jobAd = victimCluster.QueryForJobAd(0)
+	if jobAd["JobStatus"] == JobStatus.Number["Running"]:
+		runningJobID = "{0}.0".format(victimCluster.cluster_id)
+	else:
+		idleJobID = "{0}.0".format(victimCluster.cluster_id)
+
+	jobAd = victimCluster.QueryForJobAd(1)
+	if jobAd["JobStatus"] == JobStatus.Number["Running"]:
+		runningJobID = "{0}.1".format(victimCluster.cluster_id)
+	else:
+		idleJobID = "{0}.1".format(victimCluster.cluster_id)
+
+	jobAd = beneficiaryCluster.QueryForJobAd(0)
+	if jobAd["JobStatus"] == JobStatus.Number["Running"]:
+		runningJobID = "{0}.0".format(beneficiaryCluster.cluster_id)
+	else:
+		idleJobID = "{0}.0".format(beneficiaryCluster.cluster_id)
+
+	# Run the pccc test.
+	result = Utils.RunCommandCarefully( [ 'condor_now', '--flags', '2', idleJobID, runningJobID ] )
+	if result:
+		CondorTest.RegisterFailure( "pcccTest", "condor_now --flags 2 must fail" )
+		sys.exit(1)
+
+	# Grovel the log.
+	scheddLogFile = htcondor.param["SCHEDD_LOG"]
+	scheddLogFD = open( scheddLogFile )
+	for line in scheddLogFD.readlines():
+		if line.endswith( "pcccTest(): Succeeded.\n" ):
+			CondorTest.RegisterSuccess( "pcccTest", "Found test success message in log." );
+			break
+	else:
+		CondorTest.RegisterFailure( "pcccTest", "Did not find test success message in log." )
+
 
 	# Nothing, possibly aside from the functionality under test, went wrong.
 	sys.exit(0)

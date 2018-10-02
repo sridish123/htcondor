@@ -502,3 +502,163 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 			break;
 	}
 }
+
+// Test functions -------------------------------------------------------------
+
+int accounting_single( PROC_ID nowJob ) {
+	static int clusterID = 99;
+
+	PROC_ID jobID;
+	ClassAd matchAd;
+
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchA = scheduler.AddMrec( "A", "peerA", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchB = scheduler.AddMrec( "B", "peerB", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchC = scheduler.AddMrec( "C", "peerC", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchD = scheduler.AddMrec( "D", "peerD", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchE = scheduler.AddMrec( "E", "peerE", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchF = scheduler.AddMrec( "F", "peerF", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchG = scheduler.AddMrec( "G", "peerG", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchH = scheduler.AddMrec( "H", "peerH", & jobID, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchI = scheduler.AddMrec( "I", "peerI", & jobID, & matchAd, "tlmiller", NULL );
+
+	if(! pcccNew( nowJob ) ) { return __LINE__; }
+	if(! pcccSatisfied( nowJob )) { return __LINE__; }
+
+	pcccWants( nowJob, matchA );
+	if( pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccGot( nowJob, matchA );
+	if(! pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccWants( nowJob, matchB );
+	pcccGot( nowJob, matchC );
+	if( pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccGot( nowJob, matchB );
+	if( pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccWants( nowJob, matchC );
+	if(! pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccWants( nowJob, matchD );
+	pcccWants( nowJob, matchE );
+	pcccWants( nowJob, matchF );
+	if( pcccSatisfied( nowJob ) ) { return __LINE__; }
+
+	pcccGot( nowJob, matchD );
+	pcccGot( nowJob, matchE );
+	pcccGot( nowJob, matchF );
+	if(! pcccSatisfied( nowJob )) { return __LINE__; }
+
+	// Add a few things to the want list for testing purposes later.
+	pcccWants( nowJob, matchG );
+	pcccWants( nowJob, matchH );
+	pcccWants( nowJob, matchI );
+
+	return 0;
+}
+
+int accounting_multiple( PROC_ID jobA, PROC_ID jobB, PROC_ID jobC ) {
+	static int clusterID = 199;
+
+	PROC_ID jobID;
+	ClassAd matchAd;
+
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchA = scheduler.AddMrec( "A", "peerA", & jobA, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchB = scheduler.AddMrec( "B", "peerB", & jobB, & matchAd, "tlmiller", NULL );
+	jobID = PROC_ID( ++clusterID, 0 );
+	match_rec * matchC = scheduler.AddMrec( "C", "peerC", & jobC, & matchAd, "tlmiller", NULL );
+
+	if(! pcccNew( jobA )) { return __LINE__; }
+	if(! pcccNew( jobB )) { return __LINE__; }
+
+	pcccWants( jobA, matchA );
+	pcccWants( jobB, matchB );
+
+	if(! pcccNew( jobC )) { return __LINE__; }
+
+	pcccGot( jobB, matchA );
+	pcccGot( jobA, matchC );
+
+	if( pcccSatisfied( jobA ) ) { return __LINE__; }
+	if( pcccSatisfied( jobB ) ) { return __LINE__; }
+
+	pcccWants( jobC, matchC );
+	pcccGot( jobA, matchA );
+
+	if( pcccSatisfied( jobC ) ) { return __LINE__; }
+
+	pcccWants( jobA, matchC );
+	if(! pcccSatisfied( jobA )) { return __LINE__; }
+
+	pcccWants( jobB, matchA );
+	pcccGot( jobB, matchB );
+	if(! pcccSatisfied( jobB )) { return __LINE__; }
+
+	pcccGot( jobC, matchC );
+	if(! pcccSatisfied( jobC )) { return __LINE__; }
+
+	return 0;
+}
+
+bool pcccTest() {
+	// Basic accounting test.
+	int line = accounting_single( PROC_ID( 1, 0 ) );
+	if( line != 0 ) {
+		dprintf( D_ALWAYS, "pcccTest(): Failed accounting_single( 1.0 ) at line %d.\n", line );
+		return false;
+	}
+	dprintf( D_ALWAYS, "pcccTest(): Passed accounting_single( 1.0 ).\n" );
+
+	// Repeat it for another cluster.
+	line = accounting_single( PROC_ID( 2, 0 ) );
+	if( line != 0 ) {
+		dprintf( D_ALWAYS, "pcccTest(): Failed accounting_single( 2.0 ) at line %d.\n", line );
+		return false;
+	}
+	dprintf( D_ALWAYS, "pcccTest(): Passed accounting_single( 2.0 ).\n" );
+
+	// Repeat it for another proc ID.
+	line = accounting_single( PROC_ID( 2, 1 ) );
+	if( line != 0 ) {
+		dprintf( D_ALWAYS, "pcccTest(): Failed accounting_single( 2.1 ) at line %d.\n", line );
+		return false;
+	}
+	dprintf( D_ALWAYS, "pcccTest(): Passed accounting_single( 2.1 ).\n" );
+
+	// Interleave three different now jobs.
+	line = accounting_multiple( PROC_ID( 3, 0 ), PROC_ID( 3, 1 ), PROC_ID( 4, 0 ) );
+	if( line != 0 ) {
+		dprintf( D_ALWAYS, "pcccTest(): Failed accounting_multiple( 3.0, 3.1, 4.0 ) at line %d.\n", line );
+		return false;
+	}
+	dprintf( D_ALWAYS, "pcccTest(): Passed accounting_multiple( 3.0, 3.1, 3.2 ).\n" );
+
+	// We can't really test coalescing except functionally (or by writing
+	// a DCStartd mock object, which seems like more work than its worth it,
+	// given that we want a functional test anyway).
+
+	// We could test the clean-up of a failed coalesce by registering a timer
+	// for 21 seconds from now, but faking all of those match records well
+	// enough to prevent the schedd from falling over in the interim seems
+	// like it would be rather tricky.  The test would have to check that:
+	//		* the now jobs' entries in all four maps have been erased;
+	//		* bone of the match records we called pcccGot() on exist;
+	//		* and the other match records we created have an invalid m_now_job.
+	// We'd have to look up match[G,H,I] up in the schedd's usual data
+	// structures (and verify that match[A-F] aren't in there).
+
+	dprintf( D_ALWAYS, "pcccTest(): Succeeded.\n" );
+	return true;
+}

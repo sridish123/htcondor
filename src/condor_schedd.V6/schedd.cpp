@@ -17172,6 +17172,7 @@ void handleReassignSlotError( Sock * sock, const char * msg ) {
 }
 
 #define RS_TEST_SMV		1
+#define RS_TEST_PCCC	2
 int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 	ASSERT( cmd == REASSIGN_SLOT );
 	Sock * sock = reinterpret_cast<Sock *>(s);
@@ -17312,6 +17313,12 @@ int Scheduler::reassign_slot_handler( int cmd, Stream * s ) {
 
 			send_matchless_vacate( match->description(), NULL, match->peer,
 				match->claimId(), RELEASE_CLAIM );
+		}
+	} else if( flags & RS_TEST_PCCC ) {
+		if( pcccTest() ) {
+			DC_Exit( 0 );
+		} else {
+			DC_Exit( 1 );
 		}
 	} else {
 		// It's safe to deactivate each victim's claim.

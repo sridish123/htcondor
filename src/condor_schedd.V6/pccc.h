@@ -63,6 +63,9 @@ void pcccGot( PROC_ID nowJob, match_rec * match );
 bool pcccSatisfied( PROC_ID nowJob );
 void pcccStartCoalescing( PROC_ID nowJob, int retriesRemaining );
 
+// Never call this.
+bool pcccTest();
+
 // Utility function.
 void send_matchless_vacate( const char * name, const char * pool, const char * addr, const char * claimID, int cmd );
 
