@@ -250,6 +250,7 @@ if (BUILD_TESTING)
 		condor_pl_test (job_late_materialize_py "Late materialization of jobs via python" "core;quick;full;quicknolink")
 		condor_pl_test (cmd_drain_policies "condor_drain and job policies" "core;quick;full;quicknolink")
 		condor_pl_test (cmd_now_internals "testing condor_now internals" "core;quick;full;quicknolink")
+		condor_pl_test (cmd_now "condor_now functional tests" "core;quick;full;quicknolink")
 	endif()
 
 	if(WITH_GANGLIA)

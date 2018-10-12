@@ -24,6 +24,15 @@ class CondorCluster(object):
     def cluster_id(self):
         return self._cluster_id
 
+    def Remove(self):
+        if self._schedd is None:
+            self._schedd = htcondor.Schedd()
+        constraint = "ClusterId == {0}".format(self._cluster_id)
+        ad = self._schedd.act(htcondor.JobAction.Remove, constraint)
+        if ad["TotalSuccess"] != self._count:
+            return False
+        return True
+
     # @return The corresponding CondorCluster object or None.
     def Submit(self, count=1):
         # It's easier to smash the case of the keys (since ClassAds and the
@@ -81,6 +90,12 @@ class CondorCluster(object):
         # hold event, o/w fail.  TODO: file a bug to prevent the
         # shadow exception event from entering the user log when
         # a job goes on hold.
+
+    def WaitUntilJobEvicted( self, timeout = 240, proc = 0, count = 0 ):
+        return self.WaitUntil( [ JobEventType.JOB_EVICTED ],
+            [ JobEventType.EXECUTE, JobEventType.SUBMIT,
+              JobEventType.IMAGE_SIZE ],
+            timeout, proc, count )
 
     # WaitUntilAll*() won't work with 'advanced queue statements' because we
     # don't know how many procs to expect.  That's OK for now, since this

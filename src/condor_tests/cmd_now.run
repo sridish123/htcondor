@@ -1,0 +1,106 @@
+#!/usr/bin/env python
+
+import sys
+
+from pytest.CondorCluster import CondorCluster
+from pytest.CondorTest import CondorTest
+from pytest.Globals import *
+from pytest.PersonalCondor import PersonalCondor
+from pytest.Utils import Utils
+
+from htcondor import JobEventType
+import htcondor
+
+# At most how many slots do we try to coalesce?
+maxVictimJobs = 3
+
+def runCondorNowTest(pc, victimCount):
+	# Sleep for way longer than the startd will need in order to evict.
+	job_params = {
+		"executable": 				"x_sleep.pl",
+		"transfer_executable":		"true",
+		"should_transfer_files":	"true",
+		"universe":					"vanilla",
+		"arguments": 				"600",
+		"log":						"cmd_now-{0}.log".format(victimCount)
+	}
+
+	victimCluster = pc.CondorCluster(job_params)
+	try:
+		victimCluster.Submit(maxVictimJobs)
+	except RuntimeError as re:
+		Utils.TLog("Failed to submit {1} victim job(s) ({0}), aborting.".format(str(re), victimCount))
+		sys.exit(1)
+
+	if not victimCluster.WaitUntilAllExecute(60):
+		Utils.TLog("Victim jobs did not start, aborting.")
+		sys.exit(1)
+
+	vIDs = []
+	for proc in range(0,victimCount):
+		vIDs.append("{0}.{1}".format(victimCluster.cluster_id, proc))
+
+	beneficiaryCluster = pc.CondorCluster(job_params)
+	try:
+		beneficiaryCluster.Submit(1)
+	except RuntimeError as re:
+		Utils.TLog("Failed to submit beneficiary job ({0}), aborting.".format(str(re)))
+		sys.exit(1)
+
+	bID = "{0}.0".format(beneficiaryCluster.cluster_id)
+	Utils.TLog( "Running " + " ".join( [ 'condor_now', bID ] + vIDs ) )
+	result = Utils.RunCommandCarefully( [ 'condor_now', bID ] + vIDs )
+	if not result:
+		Utils.TLog("Failed run condor_now command, aborting.")
+		Utils.TLog("stdout:")
+		Utils.TLog(result.output)
+		Utils.TLog("stderr:")
+		Utils.TLog(result.error)
+		sys.exit(1)
+
+
+	# Wait for victim job(s) to be evicted.
+	for proc in range(victimCount):
+		if not victimCluster.WaitUntilJobEvicted(60, -1, 1):
+			CondorTest.RegisterFailure("runCondorNowTest-{0}".format(victimCount),
+				"Jobs were not evicted before deadline" )
+			sys.exit(1)
+
+	# Wait for beneficiary job to start running.
+	if not beneficiaryCluster.WaitUntilExecute(60):
+		CondorTest.RegisterFailure("runCondorNowTest-{0}".format(victimCount),
+			"Job was not run before deadline" )
+		sys.exit(1)
+
+	if not victimCluster.Remove():
+		CondorTest.RegisterFailure("runCondorNowTest-{0}".format(victimCount),
+			"Failed to remove victim cluster" )
+		sys.exit(1)
+	if not beneficiaryCluster.Remove():
+		CondorTest.RegisterFailure("runCondorNowTest-{0}".format(victimCount),
+			"Failed to remove beneficiary cluster" )
+		sys.exit(1)
+
+	CondorTest.RegisterSuccess("runCondorNowTest-{0}".format(victimCount),
+		"Victim jobs were evicted, and beneficiary job run, as expected" )
+
+
+def main():
+	params = {
+		"NUM_CPUS": maxVictimJobs
+	}
+	ordered_params = """
+use feature : PartitionableSlot
+"""
+	pc = CondorTest.StartPersonalCondor( "cmd_now", params, ordered_params )
+
+	for i in range(maxVictimJobs):
+		runCondorNowTest(pc, i + 1)
+
+	# FIXME: check failure cases.
+
+	# Nothing, possibly aside from the functionality under test, went wrong.
+	sys.exit(0)
+
+if __name__ == "__main__":
+	main()
