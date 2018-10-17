@@ -30,6 +30,8 @@
 #include "module_lock.h"
 #include "query_iterator.h"
 #include "submit_utils.h"
+#include "condor_arglist.h"
+#include "my_popen.h"
 
 using namespace boost::python;
 
@@ -2246,7 +2248,6 @@ public:
 				const char * qa = SubmitHash::is_queue_statement(qline);
 				if (qa) {
 					m_qargs = qa;
-
 					// store the rest of the submit file raw. we can't parse it yet, but it might contain itemdata
 					size_t cbremain;
 					const char * remain = ms.remainder(cbremain);
@@ -2256,7 +2257,7 @@ public:
 					}
 				}
 			}
-		}
+        }
 	}
 
 
@@ -3051,7 +3052,76 @@ private:
 // shared source for all instances of MacroStreamMemoryFile that have an empty stream
 MACRO_SOURCE Submit::EmptyMacroSrc = { false, false, 3, -2, -1, -2 }; 
 
+struct Dag
+{
+public:
 
+    Dag()
+    {
+    }
+
+    Dag(std::string dagfile)
+        : m_dagfile(dagfile)
+    {
+        m_subfile = m_dagfile + ".condor.sub";
+    }
+
+    std::string toString() const
+    {
+        return m_dagfile;
+    }
+
+    boost::shared_ptr<Submit>
+    GetSubmit() {
+
+        ArgList csd_args;
+        char* sub_data;
+        FILE* dag_fp = NULL;
+        FILE* sub_fp = NULL;
+        MyString csd_out;
+        size_t sub_size;
+        std::string sub_args;
+
+        // Invoke condor_submit_dag with the -no_submit flag, so it produces
+        // the necessary .dagman.sub file.
+        csd_args.AppendArg("condor_submit_dag");
+        csd_args.AppendArg("-no_submit");
+        csd_args.AppendArg(m_dagfile);
+
+        dag_fp = my_popen(csd_args, "r", FALSE);
+        csd_out.readLine(dag_fp);
+        my_pclose(dag_fp);
+
+        // Now open the file
+        sub_fp = safe_fopen_wrapper_follow(m_subfile.c_str(), "r");
+        if(sub_fp == NULL) {
+            printf("ERROR: Could not read generated DAG submit file %s\n", m_subfile.c_str());
+            return NULL;
+        }
+
+        // Determine size of the file and store its contents in a buffer
+        fseek(sub_fp, 0, SEEK_END);
+        sub_size = ftell(sub_fp);
+        sub_data = new char[sub_size];
+        rewind(sub_fp);
+        if(fread(sub_data, sizeof(char), sub_size, sub_fp) != sub_size) {
+            printf("ERROR: DAG submit file %s returned wrong size\n", m_subfile.c_str());
+        }
+        fclose(sub_fp);
+
+        printf("Read from %s:\n%s\n", m_subfile.c_str(), sub_data);
+        sub_args = sub_data;
+        delete[] sub_data;
+
+        // Create a Submit object with contents of the .condor.sub file
+        boost::shared_ptr<Submit> sub(new Submit(sub_args));
+        return sub;
+    }
+
+private:
+    std::string m_dagfile;
+    std::string m_subfile;
+};
 
 
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(query_overloads, query, 0, 5);
@@ -3282,6 +3352,7 @@ void export_schedd()
         .def("setdefault", &Submit::setDefault, "Set a default value for a command")
         .def("update", &Submit::update, "Copy the contents of a given Submit object into the current object")
         ;
+    register_ptr_to_python< boost::shared_ptr<Submit> >();
 
     class_<SubmitResult>("SubmitResult", no_init)
         .def("__str__", &SubmitResult::toString)
@@ -3331,6 +3402,12 @@ void export_schedd()
         .def("done", &QueryIterator::done, "Returns True if the iterator is finished; False otherwise.")
         .def("watch", &QueryIterator::watch, "Returns a file descriptor associated with this query.")
         .def("__iter__", &QueryIterator::pass_through)
+        ;
+
+    class_<Dag>("Dag")
+        .def(init<std::string>())
+        .def("__str__", &Dag::toString)
+        .def("GetSubmit", &Dag::GetSubmit, "Returns a Submit object for this DAG.")
         ;
 
     register_ptr_to_python< boost::shared_ptr<ScheddNegotiate> >();
