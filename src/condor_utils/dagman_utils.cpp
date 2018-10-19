@@ -25,9 +25,17 @@
 #include "dagman_utils.h"
 #include "my_popen.h"
 #include "MyString.h"
+#include "read_multiple_logs.h"
 #include "tmp_dir.h"
 #include "which.h"
 
+
+static void
+AppendError(MyString &errMsg, const MyString &newError)
+{
+    if ( errMsg != "" ) errMsg += "; ";
+    errMsg += newError;
+}
 
 bool
 EnvFilter::ImportFilter( const MyString &var, const MyString &val ) const
@@ -470,78 +478,254 @@ DagmanUtils::runSubmitDag( const SubmitDagDeepOptions &deepOpts,
 
 //---------------------------------------------------------------------------
 /** Set up things in deep and shallow options that aren't directly specified
-	on the command line.
-	@param deepOpts: the condor_submit_dag deep options
-	@param shallowOpts: the condor_submit_dag shallow options
-	@return 0 if successful, 1 if failed
+    on the command line.
+    @param deepOpts: the condor_submit_dag deep options
+    @param shallowOpts: the condor_submit_dag shallow options
+    @return 0 if successful, 1 if failed
 */
 int
 DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
-			SubmitDagShallowOptions &shallowOpts,
-			StringList &dagFileAttrLines )
+            SubmitDagShallowOptions &shallowOpts,
+            StringList &dagFileAttrLines )
 {
-	shallowOpts.strLibOut = shallowOpts.primaryDagFile + ".lib.out";
-	shallowOpts.strLibErr = shallowOpts.primaryDagFile + ".lib.err";
+    shallowOpts.strLibOut = shallowOpts.primaryDagFile + ".lib.out";
+    shallowOpts.strLibErr = shallowOpts.primaryDagFile + ".lib.err";
 
-	if ( deepOpts.strOutfileDir != "" ) {
-		shallowOpts.strDebugLog = deepOpts.strOutfileDir + DIR_DELIM_STRING +
-					condor_basename( shallowOpts.primaryDagFile.Value() );
-	} else {
-		shallowOpts.strDebugLog = shallowOpts.primaryDagFile;
-	}
-	shallowOpts.strDebugLog += ".dagman.out";
+    if ( deepOpts.strOutfileDir != "" ) {
+        shallowOpts.strDebugLog = deepOpts.strOutfileDir + DIR_DELIM_STRING +
+                    condor_basename( shallowOpts.primaryDagFile.Value() );
+    } else {
+        shallowOpts.strDebugLog = shallowOpts.primaryDagFile;
+    }
+    shallowOpts.strDebugLog += ".dagman.out";
 
-	shallowOpts.strSchedLog = shallowOpts.primaryDagFile + ".dagman.log";
-	shallowOpts.strSubFile = shallowOpts.primaryDagFile + DAG_SUBMIT_FILE_SUFFIX;
+    shallowOpts.strSchedLog = shallowOpts.primaryDagFile + ".dagman.log";
+    shallowOpts.strSubFile = shallowOpts.primaryDagFile + DAG_SUBMIT_FILE_SUFFIX;
 
-	MyString	rescueDagBase;
+    MyString    rescueDagBase;
 
-		// If we're running each DAG in its own directory, write any rescue
-		// DAG to the current directory, to avoid confusion (since the
-		// rescue DAG must be run from the current directory).
-	if ( deepOpts.useDagDir ) {
-		if ( !condor_getcwd( rescueDagBase ) ) {
-			fprintf( stderr, "ERROR: unable to get cwd: %d, %s\n",
-					errno, strerror(errno) );
-			return 1;
-		}
-		rescueDagBase += DIR_DELIM_STRING;
-		rescueDagBase += condor_basename(shallowOpts.primaryDagFile.Value());
-	} else {
-		rescueDagBase = shallowOpts.primaryDagFile;
-	}
+        // If we're running each DAG in its own directory, write any rescue
+        // DAG to the current directory, to avoid confusion (since the
+        // rescue DAG must be run from the current directory).
+    if ( deepOpts.useDagDir ) {
+        if ( !condor_getcwd( rescueDagBase ) ) {
+            fprintf( stderr, "ERROR: unable to get cwd: %d, %s\n",
+                    errno, strerror(errno) );
+            return 1;
+        }
+        rescueDagBase += DIR_DELIM_STRING;
+        rescueDagBase += condor_basename(shallowOpts.primaryDagFile.Value());
+    } else {
+        rescueDagBase = shallowOpts.primaryDagFile;
+    }
 
-		// If we're running multiple DAGs, put "_multi" in the rescue
-		// DAG name to indicate that the rescue DAG is for *all* of
-		// the DAGs we're running.
-	if ( shallowOpts.dagFiles.number() > 1 ) {
-		rescueDagBase += "_multi";
-	}
+        // If we're running multiple DAGs, put "_multi" in the rescue
+        // DAG name to indicate that the rescue DAG is for *all* of
+        // the DAGs we're running.
+    if ( shallowOpts.dagFiles.number() > 1 ) {
+        rescueDagBase += "_multi";
+    }
 
-	shallowOpts.strRescueFile = rescueDagBase + ".rescue";
+    shallowOpts.strRescueFile = rescueDagBase + ".rescue";
 
-	shallowOpts.strLockFile = shallowOpts.primaryDagFile + ".lock";
+    shallowOpts.strLockFile = shallowOpts.primaryDagFile + ".lock";
 
-	if (deepOpts.strDagmanPath == "" ) {
-		deepOpts.strDagmanPath = which( dagman_exe );
-	}
+    if (deepOpts.strDagmanPath == "" ) {
+        deepOpts.strDagmanPath = which( dagman_exe );
+    }
 
-	if (deepOpts.strDagmanPath == "")
-	{
-		fprintf( stderr, "ERROR: can't find %s in PATH, aborting.\n",
-				 dagman_exe );
-		return 1;
-	}
+    if (deepOpts.strDagmanPath == "")
+    {
+        fprintf( stderr, "ERROR: can't find %s in PATH, aborting.\n",
+                 dagman_exe );
+        return 1;
+    }
 
-    /*
-	MyString	msg;
-	if ( !GetConfigAndAttrs( shallowOpts.dagFiles, deepOpts.useDagDir,
-				shallowOpts.strConfigFile,
-				dagFileAttrLines, msg) ) {
-		fprintf( stderr, "ERROR: %s\n", msg.Value() );
-		return 1;
-	}
-    */
+    MyString    msg;
+    if ( !GetConfigAndAttrs( shallowOpts.dagFiles, deepOpts.useDagDir,
+                shallowOpts.strConfigFile,
+                dagFileAttrLines, msg) ) {
+        fprintf( stderr, "ERROR: %s\n", msg.Value() );
+        return 1;
+    }
 
-	return 0;
+    return 0;
 }
+
+/** Get the configuration file (if any) and the submit append commands
+	(if any), specified by the given list of DAG files.  If more than one
+	DAG file specifies a configuration file, they must specify the same file.
+	@param dagFiles: the list of DAG files
+	@param useDagDir: run DAGs in directories from DAG file paths 
+			if true
+	@param configFile: holds the path to the config file; if a config
+			file is specified on the command line, configFile should
+			be set to that value before this method is called; the
+			value of configFile will be changed if it's not already
+			set and the DAG file(s) specify a configuration file
+	@param attrLines: a StringList to receive the submit attributes
+	@param errMsg: a MyString to receive any error message
+	@return true if the operation succeeded; otherwise false
+*/
+bool
+DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir, 
+            MyString &configFile, StringList &attrLines, MyString &errMsg )
+{
+    bool        result = true;
+
+        // Note: destructor will change back to original directory.
+    TmpDir        dagDir;
+
+    dagFiles.rewind();
+    char *dagFile;
+    while ( (dagFile = dagFiles.next()) != NULL ) {
+
+            //
+            // Change to the DAG file's directory if necessary, and
+            // get the filename we need to use for it from that directory.
+            //
+        const char *    newDagFile;
+        if ( useDagDir ) {
+            MyString    tmpErrMsg;
+            if ( !dagDir.Cd2TmpDirFile( dagFile, tmpErrMsg ) ) {
+                AppendError( errMsg,
+                        MyString("Unable to change to DAG directory ") +
+                        tmpErrMsg );
+                return false;
+            }
+            newDagFile = condor_basename( dagFile );
+        } else {
+            newDagFile = dagFile;
+        }
+
+        StringList        configFiles;
+
+            // Note: destructor will close file.
+        MultiLogFiles::FileReader reader;
+        errMsg = reader.Open( newDagFile );
+        if ( errMsg != "" ) {
+            return false;
+        }
+
+        MyString logicalLine;
+        while ( reader.NextLogicalLine( logicalLine ) ) {
+            if ( logicalLine != "" ) {
+                    // Note: StringList constructor removes leading
+                    // whitespace from lines.
+                StringList tokens( logicalLine.Value(), " \t" );
+                tokens.rewind();
+
+                const char *firstToken = tokens.next();
+                if ( !strcasecmp( firstToken, "config" ) ) {
+
+                        // Get the value.
+                    const char *newValue = tokens.next();
+                    if ( !newValue || !strcmp( newValue, "" ) ) {
+                        AppendError( errMsg, "Improperly-formatted "
+                                    "file: value missing after keyword "
+                                    "CONFIG" );
+                        result = false;
+                    } else {
+
+                            // Add the value we just found to the config
+                            // files list (if it's not already in the
+                            // list -- we don't want duplicates).
+                        configFiles.rewind();
+                        char *existingValue;
+                        bool alreadyInList = false;
+                        while ( ( existingValue = configFiles.next() ) ) {
+                            if ( !strcmp( existingValue, newValue ) ) {
+                                alreadyInList = true;
+                            }
+                        }
+
+                        if ( !alreadyInList ) {
+                                // Note: append copies the string here.
+                            configFiles.append( newValue );
+                        }
+                    }
+
+                    //some DAG commands are needed for condor_submit_dag, too...
+                } else if ( !strcasecmp( firstToken, "SET_JOB_ATTR" ) ) {
+                        // Strip of DAGMan-specific command name; the
+                        // rest we pass to the submit file.
+                    logicalLine.replaceString( "SET_JOB_ATTR", "" );
+                    logicalLine.trim();
+                    if ( logicalLine == "" ) {
+                        AppendError( errMsg, "Improperly-formatted "
+                                    "file: value missing after keyword "
+                                    "SET_JOB_ATTR" );
+                        result = false;
+                    } else {
+                        attrLines.append( logicalLine.Value() );
+                    }
+                }
+            }
+        }
+    
+        reader.Close();
+
+            //
+            // Check the specified config file(s) against whatever we
+            // currently have, setting the config file if it hasn't
+            // been set yet, flagging an error if config files conflict.
+            //
+        configFiles.rewind();
+        char *cfgFile;
+        while ( (cfgFile = configFiles.next()) ) {
+            MyString cfgFileMS = cfgFile;
+            MyString tmpErrMsg;
+            if ( MakePathAbsolute( cfgFileMS, tmpErrMsg ) ) {
+                if ( configFile == "" ) {
+                    configFile = cfgFileMS;
+                } else if ( configFile != cfgFileMS ) {
+                    AppendError( errMsg, MyString("Conflicting DAGMan ") +
+                                "config files specified: " + configFile +
+                                " and " + cfgFileMS );
+                    result = false;
+                }
+            } else {
+                AppendError( errMsg, tmpErrMsg );
+                result = false;
+            }
+        }
+
+            //
+            // Go back to our original directory.
+            //
+        MyString tmpErrMsg;
+        if ( !dagDir.Cd2MainDir( tmpErrMsg ) ) {
+            AppendError( errMsg,
+                    MyString("Unable to change to original directory ") +
+                    tmpErrMsg );
+            result = false;
+        }
+    }
+
+    return result;
+}
+
+/** Make the given path into an absolute path, if it is not already.
+	@param filePath: the path to make absolute (filePath is changed)
+	@param errMsg: a MyString to receive any error message.
+	@return true if the operation succeeded; otherwise false
+*/
+bool
+DagmanUtils::MakePathAbsolute(MyString &filePath, MyString &errMsg)
+{
+	bool result = true;
+
+	if ( !fullpath( filePath.Value() ) ) {
+		MyString currentDir;
+		if ( !condor_getcwd( currentDir ) ) {
+			formatstr( errMsg, "condor_getcwd() failed with errno %d (%s) at %s:%d",
+			           errno, strerror(errno), __FILE__, __LINE__ );
+			result = false;
+		}
+
+		filePath = currentDir + DIR_DELIM_STRING + filePath;
+	}
+
+	return result;
+}
+

@@ -169,6 +169,11 @@ public:
         SubmitDagShallowOptions &shallowOpts,
         StringList &dagFileAttrLines );
 
+    bool GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir, 
+        MyString &configFile, StringList &attrLines, MyString &errMsg );
+
+    bool MakePathAbsolute(MyString &filePath, MyString &errMsg);
+
 };
 
 

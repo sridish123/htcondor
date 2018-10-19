@@ -33,31 +33,6 @@ const int MAX_RESCUE_DAG_DEFAULT = 100;
 	// is normally configured lower).
 const int ABS_MAX_RESCUE_DAG_NUM = 999;
 
-/** Get the configuration file (if any) and the submit append commands
-	(if any), specified by the given list of DAG files.  If more than one
-	DAG file specifies a configuration file, they must specify the same file.
-	@param dagFiles: the list of DAG files
-	@param useDagDir: run DAGs in directories from DAG file paths 
-			if true
-	@param configFile: holds the path to the config file; if a config
-			file is specified on the command line, configFile should
-			be set to that value before this method is called; the
-			value of configFile will be changed if it's not already
-			set and the DAG file(s) specify a configuration file
-	@param attrLines: a StringList to receive the submit attributes
-	@param errMsg: a MyString to receive any error message
-	@return true if the operation succeeded; otherwise false
-*/
-bool GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir,
-			MyString &configFile, StringList &attrLines, MyString &errMsg );
-
-/** Make the given path into an absolute path, if it is not already.
-	@param filePath: the path to make absolute (filePath is changed)
-	@param errMsg: a MyString to receive any error message.
-	@return true if the operation succeeded; otherwise false
-*/
-bool MakePathAbsolute(MyString &filePath, MyString &errMsg);
-
 /** Finds the number of the last existing rescue DAG file for the
 	given "primary" DAG.
 	@param primaryDagFile The primary DAG file name

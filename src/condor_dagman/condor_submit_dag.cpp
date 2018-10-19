@@ -674,7 +674,7 @@ parseCommandLine(SubmitDagDeepOptions &deepOpts,
 					// as full paths, to make it easier to determine whether
 					// several paths point to the same file.
 				MyString	errMsg;
-				if (!MakePathAbsolute(shallowOpts.strConfigFile, errMsg)) {
+				if (!dagmanUtils.MakePathAbsolute(shallowOpts.strConfigFile, errMsg)) {
 					fprintf( stderr, "%s\n", errMsg.Value() );
    					exit( 1 );
 				}
