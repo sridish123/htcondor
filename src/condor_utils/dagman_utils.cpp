@@ -20,23 +20,14 @@
 #include "condor_common.h"
 #include "condor_arglist.h"
 #include "condor_attributes.h"
+#include "condor_getcwd.h"
 #include "condor_version.h"
 #include "dagman_utils.h"
-#include "env.h"
 #include "my_popen.h"
 #include "MyString.h"
 #include "tmp_dir.h"
 #include "which.h"
 
-
-class EnvFilter : public Env
-{
-public:
-    EnvFilter( void ) { };
-    virtual ~EnvFilter( void ) { };
-    virtual bool ImportFilter( const MyString & /*var*/,
-                               const MyString & /*val*/ ) const;
-};
 
 bool
 EnvFilter::ImportFilter( const MyString &var, const MyString &val ) const
@@ -347,7 +338,15 @@ DagmanUtils::writeSubmitFile( /* const */ SubmitDagDeepOptions &deepOpts,
     fclose(pSubFile);
 }
 
-
+/** Run condor_submit_dag on the given DAG file.
+@param opts: the condor_submit_dag options
+@param dagFile: the DAG file to process
+@param directory: the directory from which the DAG file should
+    be processed (ignored if NULL)
+@param priority: the priority of this DAG
+@param isRetry: whether this is a retry
+@return 0 if successful, 1 if failed
+*/
 int
 DagmanUtils::runSubmitDag( const SubmitDagDeepOptions &deepOpts,
             const char *dagFile, const char *directory, int priority,
@@ -467,4 +466,82 @@ DagmanUtils::runSubmitDag( const SubmitDagDeepOptions &deepOpts,
     }
 
     return result;
+}
+
+//---------------------------------------------------------------------------
+/** Set up things in deep and shallow options that aren't directly specified
+	on the command line.
+	@param deepOpts: the condor_submit_dag deep options
+	@param shallowOpts: the condor_submit_dag shallow options
+	@return 0 if successful, 1 if failed
+*/
+int
+DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
+			SubmitDagShallowOptions &shallowOpts,
+			StringList &dagFileAttrLines )
+{
+	shallowOpts.strLibOut = shallowOpts.primaryDagFile + ".lib.out";
+	shallowOpts.strLibErr = shallowOpts.primaryDagFile + ".lib.err";
+
+	if ( deepOpts.strOutfileDir != "" ) {
+		shallowOpts.strDebugLog = deepOpts.strOutfileDir + DIR_DELIM_STRING +
+					condor_basename( shallowOpts.primaryDagFile.Value() );
+	} else {
+		shallowOpts.strDebugLog = shallowOpts.primaryDagFile;
+	}
+	shallowOpts.strDebugLog += ".dagman.out";
+
+	shallowOpts.strSchedLog = shallowOpts.primaryDagFile + ".dagman.log";
+	shallowOpts.strSubFile = shallowOpts.primaryDagFile + DAG_SUBMIT_FILE_SUFFIX;
+
+	MyString	rescueDagBase;
+
+		// If we're running each DAG in its own directory, write any rescue
+		// DAG to the current directory, to avoid confusion (since the
+		// rescue DAG must be run from the current directory).
+	if ( deepOpts.useDagDir ) {
+		if ( !condor_getcwd( rescueDagBase ) ) {
+			fprintf( stderr, "ERROR: unable to get cwd: %d, %s\n",
+					errno, strerror(errno) );
+			return 1;
+		}
+		rescueDagBase += DIR_DELIM_STRING;
+		rescueDagBase += condor_basename(shallowOpts.primaryDagFile.Value());
+	} else {
+		rescueDagBase = shallowOpts.primaryDagFile;
+	}
+
+		// If we're running multiple DAGs, put "_multi" in the rescue
+		// DAG name to indicate that the rescue DAG is for *all* of
+		// the DAGs we're running.
+	if ( shallowOpts.dagFiles.number() > 1 ) {
+		rescueDagBase += "_multi";
+	}
+
+	shallowOpts.strRescueFile = rescueDagBase + ".rescue";
+
+	shallowOpts.strLockFile = shallowOpts.primaryDagFile + ".lock";
+
+	if (deepOpts.strDagmanPath == "" ) {
+		deepOpts.strDagmanPath = which( dagman_exe );
+	}
+
+	if (deepOpts.strDagmanPath == "")
+	{
+		fprintf( stderr, "ERROR: can't find %s in PATH, aborting.\n",
+				 dagman_exe );
+		return 1;
+	}
+
+    /*
+	MyString	msg;
+	if ( !GetConfigAndAttrs( shallowOpts.dagFiles, deepOpts.useDagDir,
+				shallowOpts.strConfigFile,
+				dagFileAttrLines, msg) ) {
+		fprintf( stderr, "ERROR: %s\n", msg.Value() );
+		return 1;
+	}
+    */
+
+	return 0;
 }

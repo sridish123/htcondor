@@ -24,6 +24,7 @@
 #include "condor_config.h"
 #include "../condor_dagman/debug.h"
 #include "condor_string.h"
+#include "env.h"
 #include "MyString.h"
 #include "string_list.h"
 
@@ -38,6 +39,14 @@
 #define valgrind_exe "valgrind"
 #endif
 
+class EnvFilter : public Env
+{
+public:
+    EnvFilter( void ) { };
+    virtual ~EnvFilter( void ) { };
+    virtual bool ImportFilter( const MyString & /*var*/,
+                               const MyString & /*val*/ ) const;
+};
 
     //
     // These are options that are *not* passed to lower levels of
@@ -152,18 +161,13 @@ public:
         /* const */ SubmitDagShallowOptions &shallowOpts,
         /* const */ StringList &dagFileAttrLines );
     
-    /** Run condor_submit_dag on the given DAG file.
-    @param opts: the condor_submit_dag options
-    @param dagFile: the DAG file to process
-    @param directory: the directory from which the DAG file should
-        be processed (ignored if NULL)
-    @param priority: the priority of this DAG
-    @param isRetry: whether this is a retry
-    @return 0 if successful, 1 if failed
-    */
     int runSubmitDag( const SubmitDagDeepOptions &deepOpts,
         const char *dagFile, const char *directory, int priority,
         bool isRetry );
+
+    int setUpOptions( SubmitDagDeepOptions &deepOpts,
+        SubmitDagShallowOptions &shallowOpts,
+        StringList &dagFileAttrLines );
 
 };
 

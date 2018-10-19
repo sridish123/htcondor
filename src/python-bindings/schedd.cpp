@@ -17,6 +17,7 @@
 #include "selector.h"
 #include "my_username.h"
 #include "condor_version.h"
+#include "../condor_utils/dagman_utils.h"
 
 #include <classad/operators.h>
 
@@ -3061,7 +3062,8 @@ public:
     }
 
     Dag(std::string dagfile)
-        : m_dagfile(dagfile)
+        : m_dagmanUtils(DagmanUtils()),
+          m_dagfile(dagfile)
     {
         m_subfile = m_dagfile + ".condor.sub";
     }
@@ -3074,23 +3076,19 @@ public:
     boost::shared_ptr<Submit>
     GetSubmit() {
 
-        ArgList csd_args;
         char* sub_data;
-        FILE* dag_fp = NULL;
         FILE* sub_fp = NULL;
-        MyString csd_out;
         size_t sub_size;
         std::string sub_args;
 
-        // Invoke condor_submit_dag with the -no_submit flag, so it produces
-        // the necessary .dagman.sub file.
-        csd_args.AppendArg("condor_submit_dag");
-        csd_args.AppendArg("-no_submit");
-        csd_args.AppendArg(m_dagfile);
-
-        dag_fp = my_popen(csd_args, "r", FALSE);
-        csd_out.readLine(dag_fp);
-        my_pclose(dag_fp);
+        // Write out the .condor.sub file we need to submit the DAG
+        SubmitDagDeepOptions deepOpts;
+        SubmitDagShallowOptions shallowOpts;
+        StringList dagFileAttrLines;
+        shallowOpts.dagFiles.insert(m_dagfile.c_str());
+        shallowOpts.primaryDagFile = m_dagfile;
+        m_dagmanUtils.setUpOptions(deepOpts, shallowOpts, dagFileAttrLines);
+        m_dagmanUtils.writeSubmitFile(deepOpts, shallowOpts, dagFileAttrLines);
 
         // Now open the file
         sub_fp = safe_fopen_wrapper_follow(m_subfile.c_str(), "r");
@@ -3109,7 +3107,6 @@ public:
         }
         fclose(sub_fp);
 
-        printf("Read from %s:\n%s\n", m_subfile.c_str(), sub_data);
         sub_args = sub_data;
         delete[] sub_data;
 
@@ -3119,6 +3116,7 @@ public:
     }
 
 private:
+    DagmanUtils m_dagmanUtils;
     std::string m_dagfile;
     std::string m_subfile;
 };
