@@ -45,7 +45,6 @@ ProcIDToServiceMap pcccTimerSelfMap;
 
 // Forward declarations -------------------------------------------------------
 
-void pcccDumpTable();
 void pcccStopCoalescing( PROC_ID nowJob );
 
 class pcccDoneCallback : public Service {
@@ -173,7 +172,12 @@ pcccStartCoalescing( PROC_ID nowJob, int retriesRemaining ) {
 
 	ClassAd * jobAd = GetJobAd( nowJob.cluster, nowJob.proc );
 	if(! jobAd) {
-		dprintf( D_FULLDEBUG, "pcccStartCoalescing( %d.%d ): unable to find now job ad.\n", nowJob.cluster, nowJob.proc );
+		// We checked that the now job existed when we accepted the coalesce
+		// request, so this is rather unexpected.  However, we should note it
+		// in the log whenever it happens, so that the admin has something to
+		// find if a user asks why their now job failed to run after their
+		// condor_now command succeeded.
+		dprintf( D_ALWAYS, "[now job %d.%d]: unable to find now job ad, failing\n", nowJob.cluster, nowJob.proc );
 		pcccStopCallback::failed( nowJob );
 		return;
 	}
@@ -233,16 +237,16 @@ pcccStopCoalescing( PROC_ID nowJob ) {
 }
 
 void
-pcccDumpTable() {
-	dprintf( D_FULLDEBUG, "pcccDumpTable(): dumping table...\n" );
+pcccDumpTable( int flags ) {
+	dprintf( flags, "pcccDumpTable(): dumping table...\n" );
 	for( auto i = pcccWantsMap.begin(); i != pcccWantsMap.end(); ++i ) {
 		PROC_ID nowJob = i->first;
-		dprintf( D_FULLDEBUG, "%d.%d = [%p, %p, %d, %p]\n",
+		dprintf( flags, "%d.%d = [%p, %p, %d, %p]\n",
 			nowJob.cluster, nowJob.proc,
 			& pcccWantsMap[ nowJob ], & pcccGotMap[ nowJob ],
 			pcccTimerMap[ nowJob ], & pcccTimerSelfMap[ nowJob ] );
 	}
-	dprintf( D_FULLDEBUG, "pcccDumpTable(): ... done dumping PCCC table.\n" );
+	dprintf( flags, "pcccDumpTable(): ... done dumping PCCC table.\n" );
 }
 
 void
@@ -301,6 +305,9 @@ class SlowRetryCallback : public Service {
 
 void
 pcccStopCallback::callback() {
+	// If "coalesce command timed out" doesn't appear in a D_ALWAYS log,
+	// we need to add a D_ALWAYS message to help the admin out when an
+	// accepted condor_now request doesn't result in the now job running.
 	dprintf( D_FULLDEBUG, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
 
 	// This calls dcMessageCallback(), which turns around and
@@ -364,7 +371,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 				case CA_INVALID_REQUEST: {
 					std::string errorString;
 					reply.LookupString( ATTR_ERROR_STRING, errorString );
-					dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce failed: %s\n", nowJob.cluster, nowJob.proc, errorString.c_str() );
+					dprintf( D_ALWAYS, "[now job %d.%d]: coalesce failed: %s\n", nowJob.cluster, nowJob.proc, errorString.c_str() );
 
 					// Deletes this.
 					failed( nowJob );
@@ -375,7 +382,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 
 				case CA_INVALID_STATE:
 					if( retriesRemaining == 0 ) {
-						dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): failed last retry, giving up.\n", nowJob.cluster, nowJob.proc );
+						dprintf( D_ALWAYS, "[now job %d.%d]: coalesce failed last retry, giving up.\n", nowJob.cluster, nowJob.proc );
 
 						// Deletes this.
 						failed( nowJob );
@@ -408,7 +415,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 
 			std::string claimID;
 			if((! reply.LookupString( ATTR_CLAIM_ID, claimID )) || claimID.empty() ) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): coalesce did not return a claim ID\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d] coalesce did not return a claim ID, failing\n", nowJob.cluster, nowJob.proc );
 
 				// Deletes this.
 				failed( nowJob );
@@ -419,7 +426,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 			// Generate a new match record.
 			ClassAd * jobAd = GetJobAd( nowJob.cluster, nowJob.proc );
 			if(! jobAd) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): unable to find now job ad.\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d]: unable to find now job ad, failing\n", nowJob.cluster, nowJob.proc );
 
 				// Once we've received a claim ID for a coalesced slot,
 				// we don't want to waste time trying to release the
@@ -438,7 +445,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 			int status;
 			jobAd->LookupInteger( ATTR_JOB_STATUS, status );
 			if( status != IDLE ) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): now job is no longer idle.\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d]: now job is no longer idle, failing\n", nowJob.cluster, nowJob.proc );
 
 				send_matchless_vacate( name, NULL, addr,
 					claimID.c_str(), RELEASE_CLAIM );
@@ -453,8 +460,10 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 
 			Daemon startd( & slotAd, DT_STARTD, NULL );
 			if( (! startd.locate()) || startd.error() ) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): can't find address of startd in coalesced ad (%d: %s):\n", nowJob.cluster, nowJob.proc, startd.errorCode(), startd.error() );
+				dprintf( D_ALWAYS, "[now job %d.%d]: can't find address of startd in coalesced ad (%d: %s), failing\n", nowJob.cluster, nowJob.proc, startd.errorCode(), startd.error() );
+				dprintf( D_FULLDEBUG, "[now job %d.%d]: printing slot ad...\n", nowJob.cluster, nowJob.proc );
 				dPrintAd( D_FULLDEBUG, slotAd );
+				dprintf( D_FULLDEBUG, "[now job %d.%d]: ... slot ad complete\n", nowJob.cluster, nowJob.proc );
 
 				send_matchless_vacate( name, NULL, addr,
 					claimID.c_str(), RELEASE_CLAIM );
@@ -470,7 +479,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 				& slotAd, owner.c_str(), NULL
 			);
 			if(! coalescedMatch) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): failed to construct match record!\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d]: failed to construct match record\n", nowJob.cluster, nowJob.proc );
 
 				send_matchless_vacate( name, NULL, addr,
 					claimID.c_str(), RELEASE_CLAIM );
@@ -488,7 +497,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 			// If we didn't, delete the mrec so the user can try again
 			// without crashing the schedd.
 			if( coalescedMatch->status != M_ACTIVE ) {
-				dprintf( D_FULLDEBUG, "pcccStopCallback::dcMessageCallback( %d.%d ): failed to start job on match\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d]: failed to start job on match\n", nowJob.cluster, nowJob.proc );
 				scheduler.DelMrec( coalescedMatch );
 			}
 

@@ -72,6 +72,13 @@ def runCondorNowTest(pc, victimCount):
 			"Job was not run before deadline" )
 		sys.exit(1)
 
+	# We could also check, I suppose, to make sure that correct jobs were
+	# evicted...
+
+	# ... and, with condor_status -direct <schedd> -startd and inspecting
+	# the D_TEST log output, that the pccc table is empty and that the
+	# match list contains what we expect it to contain.
+
 	if not victimCluster.Remove():
 		CondorTest.RegisterFailure("runCondorNowTest-{0}".format(victimCount),
 			"Failed to remove victim cluster" )
@@ -98,6 +105,17 @@ use feature : PartitionableSlot
 		runCondorNowTest(pc, i + 1)
 
 	# FIXME: check failure cases.
+
+	#
+	# The basic idea here is to set a failure-injecting config knob in the
+	# startd and then run condor_now.  The command-line tool will succeed,
+	# but the schedd should log (at D_ALWAYS) an error and, when prompted by
+	# condor_status -direct <schedd> -startd, log (at D_TEST) the relevant
+	# internal state of the schedd (the pccc table and the match records).
+	# We then check to make sure the state is what we expect it to be
+	# (the pccc table empty, the matches involved in the now command empty,
+	# and all the other matches still present).
+	#
 
 	# Nothing, possibly aside from the functionality under test, went wrong.
 	sys.exit(0)

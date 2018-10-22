@@ -66,6 +66,9 @@ void pcccStartCoalescing( PROC_ID nowJob, int retriesRemaining );
 // Never call this.
 bool pcccTest();
 
+// For testing purposes only.
+void pcccDumpTable( int flags = D_FULLDEBUG );
+
 // Utility function.
 void send_matchless_vacate( const char * name, const char * pool, const char * addr, const char * claimID, int cmd );
 

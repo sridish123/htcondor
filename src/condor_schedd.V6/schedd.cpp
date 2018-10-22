@@ -1816,29 +1816,76 @@ int Scheduler::make_ad_list(
    return ads.Length();
 }
 
+int Scheduler::handleMachineAdsQuery( Stream * stream, ClassAd & ) {
+	int more = 1;
+	int num_ads = 0;
+
+	pcccDumpTable( D_TEST );
+
+	stream->encode();
+
+	// The HashTable class is /so/ broken:
+	//	* no operator !=
+	//	* post-increment operator modifies the base class
+	//	* no pre-increment operator
+	//	* i->second doesn't work, but (*i).second does
+	//  * will not work with C++11 for( auto && i : v ) {}
+	auto i = matches->begin();
+	dprintf( D_TEST, "Dumping match records (with now jobs)...\n" );
+	for( ; !(i == matches->end()); i.advance() ) {
+		match_rec * match = (*i).second;
+
+		if( !stream->code( more ) || !putClassAd( stream, * match->my_match_ad ) ) {
+			dprintf( D_ALWAYS, "Error sending query result to client, aborting.\n" );
+			return FALSE;
+		}
+
+		if( match->m_now_job.isValid() ) {
+			dprintf( D_TEST, "Match record '%s' has now job %d.%d\n",
+				(*i).first.c_str(), match->m_now_job.cluster, match->m_now_job.proc );
+		}
+
+		num_ads++;
+	}
+	dprintf( D_TEST, "... done dumping match records.\n" );
+
+	more = 0;
+	if( !stream->code(more) || !stream->end_of_message() ) {
+		dprintf( D_ALWAYS, "Error sending end-of-query to client, aborting.\n" );
+		return FALSE;
+	}
+
+	dprintf( D_FULLDEBUG, "Sent %d ads in response to query\n", num_ads );
+	return TRUE;
+}
+
 // in support of condor_status -direct.  allow the query for SCHEDULER and SUBMITTER ads
 //
-int Scheduler::command_query_ads(int, Stream* stream) 
+int Scheduler::command_query_ads(int command, Stream* stream)
 {
 	ClassAd queryAd;
 	ClassAd *ad;
 	ClassAdList ads;
 	int more = 1, num_ads = 0;
-   
+
 	dprintf( D_FULLDEBUG, "In command_query_ads\n" );
 
 	stream->decode();
-    stream->timeout(15);
+	stream->timeout(15);
 	if( !getClassAd(stream, queryAd) || !stream->end_of_message()) {
-        dprintf( D_ALWAYS, "Failed to receive query on TCP: aborting\n" );
+		dprintf( D_ALWAYS, "Failed to receive query on TCP: aborting\n" );
 		return FALSE;
+	}
+
+	if( command == QUERY_STARTD_ADS ) {
+		return handleMachineAdsQuery( stream, queryAd );
 	}
 
 		// Construct a list of all our ClassAds. we pass queryAd 
 		// through so that if there is a STATISTICS_TO_PUBLISH attribute
 		// it can be used to control the verbosity of statistics
-    this->make_ad_list(ads, &queryAd);
-	
+	this->make_ad_list(ads, &queryAd);
+
 		// Now, find the ClassAds that match.
 	stream->encode();
 	ads.Open();
@@ -1850,7 +1897,7 @@ int Scheduler::command_query_ads(int, Stream* stream)
 				return FALSE;
 			}
 			num_ads++;
-        }
+		}
 	}
 
 		// Finally, close up shop.  We have to send NO_MORE.
@@ -1859,7 +1906,7 @@ int Scheduler::command_query_ads(int, Stream* stream)
 		dprintf( D_ALWAYS, "Error sending EndOfResponse (0) to client\n" );
 		return FALSE;
 	}
-    dprintf( D_FULLDEBUG, "Sent %d ads in response to query\n", num_ads ); 
+	dprintf( D_FULLDEBUG, "Sent %d ads in response to query\n", num_ads ); 
 	return TRUE;
 }
 
@@ -13659,6 +13706,9 @@ Scheduler::Register()
                                 (CommandHandlercpp)&Scheduler::command_query_ads,
                                  "command_query_ads", this, READ);
 	daemonCore->Register_CommandWithPayload(QUERY_SUBMITTOR_ADS,"QUERY_SUBMITTOR_ADS",
+                                (CommandHandlercpp)&Scheduler::command_query_ads,
+                                 "command_query_ads", this, READ);
+	daemonCore->Register_CommandWithPayload(QUERY_STARTD_ADS,"QUERY_STARTD_ADS",
                                 (CommandHandlercpp)&Scheduler::command_query_ads,
                                  "command_query_ads", this, READ);
 

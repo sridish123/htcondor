@@ -2723,7 +2723,7 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		}
 
 		// This is a hack to allow the schedd to retry instead of fixing the
-		// race condition where a starter tells the shadow its done but,
+		// race condition where a starter tells the shadow it's done but,
 		// because it exits an arbitrary amount of time later (after deleting
 		// the sandbox), the startd doesn't switch the slot's state to Idle.
 		if( r->activity() != idle_act ) {
@@ -2793,9 +2793,6 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		// If a slot has been preempted, don't coalesce it.
 		Resource * r = resmgr->get_by_cur_id( claimID );
 		dprintf( D_ALWAYS, "command_coalesce_slots(): coalescing %s...\n", r->r_id_str );
-
-		// FIXME: r could be NULL here if there were duplicate claim IDs
-		// in the list.  We should handle that more gracefully.
 
 		// Despite appearances, this also transfers the nonfungible resources.
 		*(parent->r_attr) += *(r->r_attr);
