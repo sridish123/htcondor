@@ -251,7 +251,7 @@ pcccDumpTable( int flags ) {
 
 void
 pcccDoneCallback::callback() {
-	dprintf( D_FULLDEBUG, "pcccDoneCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
+	dprintf( D_ALWAYS, "[now job %d.%d]: targeted job(s) did not vacate quickly enough, failing\n", nowJob.cluster, nowJob.proc );
 
 	// Prevent outstanding deactivations for claims we haven't got() yet
 	// from confusing us later.  Instead, we'll just schedule them.
