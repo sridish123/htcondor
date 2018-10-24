@@ -79,7 +79,7 @@ use feature : PartitionableSlot
 	# Testing the pccc code deliberately terminates the schedd, so do it last.
 	#
 
-	# There's only three jobs inthe queue right now, so at least one of the
+	# There's only three jobs in the queue right now, so at least one of the
 	# previous victim jobs must end up running.
 	if not victimCluster.WaitUntil( [ JobEventType.EXECUTE ],
 		[ JobEventType.SUBMIT, JobEventType.IMAGE_SIZE ], 60, -1, 1 ):

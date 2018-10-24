@@ -79,6 +79,14 @@ command_handler( Service*, int cmd, Stream* stream )
 int
 deactivate_claim(Stream *stream, Resource *rip, bool graceful)
 {
+	static int failureMode = -1;
+	if( failureMode == -1 ) {
+		failureMode = param_integer( "COALESCE_FAILURE_MODE", 0 );
+	}
+	if( failureMode == 5 ) {
+		return FALSE;
+	}
+
 	int rval;
 	bool claim_is_closing = rip->curClaimIsClosing();
 
@@ -2662,6 +2670,14 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	// This becomes owned by the new slot's claim.
 	ClassAd * resourceAd = new ClassAd();
 
+	int failureMode = param_integer( "COALESCE_FAILURE_MODE", 0 );
+
+	if( failureMode == 1 ) {
+		// FIXME: Consider dprintf() ing and returning FALSE, instead, as
+		// that may be better for the startd than a long blocking call here.
+		sleep( 21 );
+	}
+
 	if(! getClassAd( sock, commandAd )) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to get command ad\n" );
 		return FALSE;
@@ -2754,6 +2770,14 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 			result = CA_INVALID_REQUEST;
 			break;
 		}
+	}
+
+	if( failureMode == 2 ) {
+		result = CA_FAILURE;
+		errorString = "FAILURE INJECTION: 2";
+	} else if( failureMode == 3 ) {
+		result = CA_INVALID_STATE;
+		errorString = "FAILURE INJECTION: 3";
 	}
 
 	if( result != CA_SUCCESS ) {
@@ -2858,9 +2882,11 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 	ClassAd replyAd;
 	replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_SUCCESS ) );
+
 	// ATTR_CLAIM_ID is magic and will be encrypted.
-	replyAd.InsertAttr( ATTR_CLAIM_ID, coalescedSlot->r_cur->id() );
-	// dprintf( D_ALWAYS, "ATTR_CLAIM_ID = %s\n", coalescedSlot->r_cur->id() );
+	if( failureMode != 4 ) {
+		replyAd.InsertAttr( ATTR_CLAIM_ID, coalescedSlot->r_cur->id() );
+	}
 
 	if(! putClassAd( sock, replyAd )) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to send reply ad\n" );
