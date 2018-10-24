@@ -272,6 +272,8 @@ pcccDoneCallback::callback() {
 	// We shouldn't have to cancel the timer (it was a one-shot),
 	// but since we do need to delete something in pcccTimerSelfMap,
 	// we might as well use the same code as we do elsewhere.
+	//
+	// Deletes this.
 	if( pcccTimerMap.find( nowJob ) != pcccTimerMap.end() ) {
 		dprintf( D_FULLDEBUG, "pcccDoneCallback::callback( %d.%d ): Cancel_Timer( %d )\n", nowJob.cluster, nowJob.proc, pcccTimerMap[ nowJob ] );
 		daemonCore->Cancel_Timer( pcccTimerMap[ nowJob ] );
@@ -283,7 +285,6 @@ pcccDoneCallback::callback() {
 	}
 
 	pcccDumpTable();
-	delete( this );
 }
 
 
@@ -305,10 +306,7 @@ class SlowRetryCallback : public Service {
 
 void
 pcccStopCallback::callback() {
-	// If "coalesce command timed out" doesn't appear in a D_ALWAYS log,
-	// we need to add a D_ALWAYS message to help the admin out when an
-	// accepted condor_now request doesn't result in the now job running.
-	dprintf( D_FULLDEBUG, "pcccStopCallback::callback( %d.%d )\n", nowJob.cluster, nowJob.proc );
+	dprintf( D_ALWAYS, "[now job %d.%d]: coalesce command timed out, failing\n", nowJob.cluster, nowJob.proc );
 
 	// This calls dcMessageCallback(), which turns around and
 	// calls failed(), which delete()s this.  This sequence
