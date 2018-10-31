@@ -6,7 +6,6 @@
 # % define uw_build 1
 # % define std_univ 1
 
-%define aviary 0
 %define plumage 0
 %define systemd 0
 %define cgroups 0
@@ -64,11 +63,6 @@
 %if 0%{?hcc}
 %define blahp 0
 %define cream 0
-%if 0%{?rhel} >= 7
-%define aviary 0
-%else
-%define aviary 1
-%endif
 %if 0%{?rhel} >= 6
 %define std_univ 0
 %endif
@@ -82,7 +76,6 @@
 %endif
 
 %if 0%{?osg} && 0%{?rhel} == 7
-%define aviary 0
 %define std_univ 0
 %endif
 
@@ -210,10 +203,6 @@ Source123: zlib-1.2.3.tar.gz
 Patch8: osg_sysconfig_in_init_script.patch
 #% endif
 
-# HCC patches
-# See gt3158
-Patch15: wso2-axis2.patch
-
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 BuildRequires: cmake
@@ -293,11 +282,6 @@ BuildRequires: munge-devel
 BuildRequires: voms-devel
 %endif
 BuildRequires: libtool-ltdl-devel
-
-%if %aviary
-BuildRequires: wso2-wsf-cpp-devel >= 2.1.0-4
-BuildRequires: wso2-axis2-devel >= 2.1.0-4
-%endif
 
 %if %plumage
 BuildRequires: mongodb-devel >= 1.6.4-3
@@ -417,48 +401,6 @@ Obsoletes: condor-qmf-plugins
 
 %description qmf
 Components to connect HTCondor to the QMF management bus.
-%endif
-
-#######################
-%if %aviary
-%package aviary-common
-Summary: HTCondor Aviary development components
-Group: Applications/System
-Requires: %name = %version-%release
-Requires: python-suds >= 0.4.1
-
-%description aviary-common
-Components to develop against simplified WS interface to HTCondor.
-
-%package aviary
-Summary: HTCondor Aviary components
-Group: Applications/System
-Requires: %name = %version-%release
-Requires: %name-classads = %{version}-%{release}
-Requires: condor-aviary-common = %{version}-%{release}
-
-%description aviary
-Components to provide simplified WS interface to HTCondor.
-
-%package aviary-hadoop-common
-Summary: HTCondor Aviary Hadoop development components
-Group: Applications/System
-Requires: %name = %version-%release
-Requires: python-suds >= 0.4.1
-Requires: condor-aviary-common = %{version}-%{release}
-
-%description aviary-hadoop-common
-Components to develop against simplified WS interface to HTCondor.
-
-%package aviary-hadoop
-Summary: HTCondor Aviary Hadoop components
-Group: Applications/System
-Requires: %name = %version-%release
-Requires: condor-aviary = %{version}-%{release}
-Requires: condor-aviary-hadoop-common = %{version}-%{release}
-
-%description aviary-hadoop
-Aviary Hadoop plugin and components.
 %endif
 
 #######################
@@ -763,10 +705,6 @@ exit 0
 %patch8 -p1
 %endif
 
-%if 0%{?hcc}
-%patch15 -p0
-%endif
-
 # fix errant execute permissions
 find src -perm /a+x -type f -name "*.[Cch]" -exec chmod a-x {} \;
 
@@ -845,11 +783,6 @@ cmake \
 %else
        -DWITH_PLUMAGE:BOOL=FALSE \
 %endif
-%if %aviary
-       -DWITH_AVIARY:BOOL=TRUE \
-%else
-       -DWITH_AVIARY:BOOL=FALSE \
-%endif
        -DWANT_FULL_DEPLOYMENT:BOOL=TRUE \
 %if %qmf
        -DWITH_TRIGGERD:BOOL=TRUE \
@@ -918,7 +851,7 @@ populate %{_libdir}/ %{buildroot}/%{_datadir}/condor/libclassad.so*
 rm -f %{buildroot}/%{_datadir}/condor/libclassad.a
 mv %{buildroot}%{_datadir}/condor/lib*.so %{buildroot}%{_libdir}/
 
-%if %aviary || %qmf
+%if %qmf
 populate %{_libdir}/condor/plugins %{buildroot}/%{_usr}/libexec/*-plugin.so
 %endif
 
@@ -956,24 +889,11 @@ populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/00-small-shadow
 %endif
 
 populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/00-single-node
+populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/50ec2.config
 
 %if %qmf
 # Install condor-qmf's base plugin configuration
 populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/60condor-qmf.config
-%endif
-%if %aviary
-# Install condor-aviary's base plugin configuration
-populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/61aviary.config
-populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/63aviary-hadoop.config
-
-mkdir -p %{buildroot}/%{_var}/lib/condor/aviary
-populate %{_var}/lib/condor/aviary %{buildroot}/usr/axis2.xml
-populate %{_var}/lib/condor/aviary %{buildroot}/usr/services/
-populate %{_libdir}/condor/plugins src/condor_contrib/aviary/src/collector/libaviary_collector_axis.so
-populate %{_libdir}/condor/plugins src/condor_contrib/aviary/src/collector/AviaryCollectorPlugin-plugin.so
-populate %{_libdir}/condor/plugins src/condor_contrib/aviary/src/hadoop/AviaryHadoopPlugin-plugin.so
-populate %{_libdir}/condor/plugins src/condor_contrib/aviary/src/job/AviaryScheddPlugin-plugin.so
-populate %{_libdir}/condor/plugins src/condor_contrib/aviary/src/locator/AviaryLocatorPlugin-plugin.so
 %endif
 
 %if %plumage
@@ -1146,8 +1066,10 @@ rm -rf %{buildroot}%{_datadir}/condor/{libpyclassad*,htcondor,classad}.so
 mkdir -p %{buildroot}%{python_sitelib}
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/python-lib/GlideinWMS %{buildroot}%{python_sitelib}
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/python-lib/campus_factory %{buildroot}%{python_sitelib}
-%if 0%{?osg} || 0%{?hcc}
+%if 0%{?hcc}
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/share/condor/condor_config.factory %{buildroot}%{_sysconfdir}/condor/config.d/60-campus_factory.config
+%endif
+%if 0%{?osg} || 0%{?hcc}
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/etc/campus_factory.conf %{buildroot}%{_sysconfdir}/condor/
 %endif
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/share %{buildroot}%{_datadir}/condor/campus_factory
@@ -1498,94 +1420,6 @@ rm -rf %{buildroot}
 %endif
 
 #################
-%if %aviary
-%files aviary-common
-%defattr(-,root,root,-)
-%doc LICENSE-2.0.txt NOTICE.txt
-%_sysconfdir/condor/config.d/61aviary.config
-%dir %_libdir/condor/plugins
-%_libdir/condor/plugins/AviaryScheddPlugin-plugin.so
-%_libdir/condor/plugins/AviaryLocatorPlugin-plugin.so
-%_libdir/condor/plugins/AviaryCollectorPlugin-plugin.so
-%_libdir/condor/plugins/libaviary_collector_axis.so
-%_sbindir/aviary_query_server
-%dir %_datadir/condor/aviary
-%_datadir/condor/aviary/jobcontrol.py*
-%_datadir/condor/aviary/jobquery.py*
-%_datadir/condor/aviary/submissions.py*
-%_datadir/condor/aviary/submission_ids.py*
-%_datadir/condor/aviary/subinventory.py*
-%_datadir/condor/aviary/submit.py*
-%_datadir/condor/aviary/setattr.py*
-%_datadir/condor/aviary/jobinventory.py*
-%_datadir/condor/aviary/locator.py*
-%_datadir/condor/aviary/collector_tool.py*
-%dir %_datadir/condor/aviary/dag
-%_datadir/condor/aviary/dag/diamond.dag
-%_datadir/condor/aviary/dag/dag-submit.py*
-%_datadir/condor/aviary/dag/job.sub
-%dir %_datadir/condor/aviary/module
-%_datadir/condor/aviary/module/aviary/util.py*
-%_datadir/condor/aviary/module/aviary/https.py*
-%_datadir/condor/aviary/module/aviary/__init__.py*
-%_datadir/condor/aviary/README
-%dir %_var/lib/condor/aviary
-%_var/lib/condor/aviary/axis2.xml
-%dir %_var/lib/condor/aviary/services
-%dir %_var/lib/condor/aviary/services/job
-%_var/lib/condor/aviary/services/job/services.xml
-%_var/lib/condor/aviary/services/job/aviary-common.xsd
-%_var/lib/condor/aviary/services/job/aviary-job.xsd
-%_var/lib/condor/aviary/services/job/aviary-job.wsdl
-%dir %_var/lib/condor/aviary/services/query
-%_var/lib/condor/aviary/services/query/services.xml
-%_var/lib/condor/aviary/services/query/aviary-common.xsd
-%_var/lib/condor/aviary/services/query/aviary-query.xsd
-%_var/lib/condor/aviary/services/query/aviary-query.wsdl
-%dir %_var/lib/condor/aviary/services/locator
-%_var/lib/condor/aviary/services/locator/services.xml
-%_var/lib/condor/aviary/services/locator/aviary-common.xsd
-%_var/lib/condor/aviary/services/locator/aviary-locator.xsd
-%_var/lib/condor/aviary/services/locator/aviary-locator.wsdl
-%dir %_var/lib/condor/aviary/services/collector
-%_var/lib/condor/aviary/services/collector/services.xml
-%_var/lib/condor/aviary/services/collector/aviary-common.xsd
-%_var/lib/condor/aviary/services/collector/aviary-collector.xsd
-%_var/lib/condor/aviary/services/collector/aviary-collector.wsdl
-%_var/lib/condor/aviary/services/collector/libaviary_collector_axis.so
-
-%files aviary
-%defattr(-,root,root,-)
-%doc LICENSE-2.0.txt NOTICE.txt
-%_libdir/libaviary_axis_provider.so
-%_libdir/libaviary_wso2_common.so
-%dir %_libdir/condor/plugins
-%_var/lib/condor/aviary/services/job/libaviary_job_axis.so
-%_var/lib/condor/aviary/services/query/libaviary_query_axis.so
-%_var/lib/condor/aviary/services/locator/libaviary_locator_axis.so
-
-%files aviary-hadoop-common
-%defattr(-,root,root,-)
-%doc LICENSE-2.0.txt NOTICE.txt
-%_var/lib/condor/aviary/services/hadoop/services.xml
-%_var/lib/condor/aviary/services/hadoop/aviary-common.xsd
-%_var/lib/condor/aviary/services/hadoop/aviary-hadoop.xsd
-%_var/lib/condor/aviary/services/hadoop/aviary-hadoop.wsdl
-%_datadir/condor/aviary/hadoop_tool.py*
-
-%files aviary-hadoop
-%defattr(-,root,root,-)
-%doc LICENSE-2.0.txt NOTICE.txt
-%_var/lib/condor/aviary/services/hadoop/libaviary_hadoop_axis.so
-%_libdir/condor/plugins/AviaryHadoopPlugin-plugin.so
-%_sysconfdir/condor/config.d/63aviary-hadoop.config
-%_datadir/condor/aviary/hdfs_datanode.sh
-%_datadir/condor/aviary/hdfs_namenode.sh
-%_datadir/condor/aviary/mapred_jobtracker.sh
-%_datadir/condor/aviary/mapred_tasktracker.sh
-%endif
-
-#################
 %if %plumage
 %files plumage
 %defattr(-,root,root,-)
@@ -1697,9 +1531,11 @@ rm -rf %{buildroot}
 
 %files bosco
 %defattr(-,root,root,-)
+%if 0%{?hcc}
+%config(noreplace) %_sysconfdir/condor/config.d/60-campus_factory.config
+%endif
 %if 0%{?osg} || 0%{?hcc}
 %config(noreplace) %_sysconfdir/condor/campus_factory.conf
-%config(noreplace) %_sysconfdir/condor/config.d/60-campus_factory.config
 %endif
 %_libexecdir/condor/shellselector
 %_libexecdir/condor/campus_factory
@@ -1946,6 +1782,21 @@ fi
 %endif
 
 %changelog
+* Wed Oct 31 2018 Tim Theisen <tim@cs.wisc.edu> - 8.7.10-1
+- Can now interactively submit Docker jobs
+- The administrator can now add arguments to the Singularity command line
+- The MUNGE security method is now supported on all Linux platforms
+- The grid universe can create and manage VM instances in Microsoft Azure
+- Added a single-node package to facilitate using a personal HTCondor
+
+* Wed Oct 31 2018 Tim Theisen <tim@cs.wisc.edu> - 8.6.13-1
+- Made the Python 'in' operator case-insensitive for ClassAd attributes
+- Python bindings are now built for the Debian and Ubuntu platforms
+- Fixed a memory leak in the Python bindings
+- Fixed a bug where absolute paths failed for output/error files on Windows
+- Fixed a bug using Condor-C to run Condor-C jobs
+- Fixed a bug where Singularity could not be used if Docker was not present
+
 * Wed Aug 01 2018 Tim Theisen <tim@cs.wisc.edu> - 8.7.9-1
 - Support for Debian 9, Ubuntu 16, and Ubuntu 18
 - Improved Python bindings to support the full range of submit functionality

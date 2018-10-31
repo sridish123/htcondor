@@ -3690,6 +3690,13 @@ ResponsibleForPeriodicExprs( JobQueueJob *jobad, int & status )
 	if( univ==CONDOR_UNIVERSE_SCHEDULER || univ==CONDOR_UNIVERSE_LOCAL ) {
 		return 1;
 	} else if(univ==CONDOR_UNIVERSE_GRID) {
+		if( status == REMOVED && !jobManagedDone(jobad) && jobad->LookupString(ATTR_GRID_JOB_ID, NULL, 0) ) {
+			// Looks like the job's remote job id is still valid,
+			// so there is still a job submitted remotely somewhere,
+			// and the gridmanager hasn't said it's done with it.
+			// Don't do policy evaluation or call DestroyProc() yet.
+			return 0;
+		}
 		return 1;
 	} else {
 		switch(status) {
@@ -3780,16 +3787,7 @@ PeriodicExprEval(JobQueueJob *jobad, const JOB_ID_KEY & /*jid*/, void *)
 	}
 
 	if ( status == COMPLETED || status == REMOVED ) {
-		// Note: should also call DestroyProc on REMOVED, but 
-		// that will screw up globus universe jobs until we fix
-		// up confusion w/ MANAGED==True.  The issue is a job may be
-		// removed; if the remove failed, it may be placed on hold
-		// with managed==false.  If it is released again, we want the 
-		// gridmanager to go at it again.....  
-		// So for now, just call if status==COMPLETED -Todd <tannenba@cs.wisc.edu>
-		if ( status == COMPLETED ) {
-			DestroyProc(cluster,proc);
-		}
+		DestroyProc(cluster,proc);
 		return 1;
 	}
 
@@ -5204,8 +5202,6 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 	jobs = new ExtArray<PROC_ID>;
 	ASSERT(jobs);
 
-	setQSock(rsock);	// so OwnerCheck() will work
-
 	time_t now = time(NULL);
 	dprintf( D_FULLDEBUG, "Looking at spooling: mode is %d\n", mode);
 	switch(mode) {
@@ -5220,7 +5216,9 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 					// to do so.
 					// cuz only the owner of a job (or queue super user) 
 					// is allowed to transfer data to/from a job.
-				if (OwnerCheck(a_job.cluster,a_job.proc)) {
+				MyString job_owner;
+				GetAttributeString(a_job.cluster,a_job.proc,ATTR_OWNER,job_owner);
+				if (OwnerCheck2(NULL,rsock->getOwner(),job_owner.c_str())) {
 					(*jobs)[i] = a_job;
 					formatstr_cat(job_ids_string, "%d.%d, ", a_job.cluster, a_job.proc);
 
@@ -5236,7 +5234,6 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 						         " stagein for job %d.%d, because stagein"
 						         " already finished for this job.\n",
 						         a_job.cluster, a_job.proc);
-						unsetQSock();
 						delete jobs;
 						return FALSE;
 					}
@@ -5253,7 +5250,6 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 							dprintf( D_AUDIT | D_FAILURE, *rsock, "Job %d.%d is not in hold state for "
 								"spooling. Do not allow stagein\n",
 								a_job.cluster, a_job.proc);
-							unsetQSock();
 							delete jobs;
 							return FALSE;
 						}
@@ -5272,8 +5268,8 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 			JobAdsArrayLen = 0;
 			while (tmp_ad) {
 				if ( tmp_ad->LookupInteger(ATTR_CLUSTER_ID,a_job.cluster) &&
-				 	tmp_ad->LookupInteger(ATTR_PROC_ID,a_job.proc) &&
-				 	OwnerCheck(a_job.cluster, a_job.proc) )
+					tmp_ad->LookupInteger(ATTR_PROC_ID,a_job.proc) &&
+					OwnerCheck2(tmp_ad,rsock->getOwner()) )
 				{
 					(*jobs)[JobAdsArrayLen++] = a_job;
 					formatstr_cat(job_ids_string, "%d.%d, ", a_job.cluster, a_job.proc);
@@ -5297,8 +5293,6 @@ Scheduler::spoolJobFiles(int mode, Stream* s)
 			break;
 
 	}
-
-	unsetQSock();
 
 	rsock->end_of_message();
 
@@ -5468,11 +5462,9 @@ Scheduler::updateGSICred(int cmd, Stream* s)
 		// cuz only the owner of a job (or queue super user) is allowed
 		// to transfer data to/from a job.
 	bool authorized = false;
-	setQSock(rsock);	// so OwnerCheck() will work
-	if (OwnerCheck(jobid.cluster,jobid.proc)) {
+	if (OwnerCheck2(jobad,rsock->getOwner())) {
 		authorized = true;
 	}
-	unsetQSock();
 	if ( !authorized ) {
 		dprintf( D_AUDIT | D_FAILURE, *rsock, "updateGSICred(%d): failed, "
 				 "user %s not authorized to edit job %d.%d\n", cmd,
@@ -5971,10 +5963,6 @@ Scheduler::actOnJobs(int, Stream* s)
 
 	JobActionResults results( result_type );
 
-		// Set the Q_SOCK so that qmgmt will perform checking on the
-		// classads it's touching to enforce the owner...
-	setQSock( rsock );
-
 		// begin a transaction for qmgmt operations
 	if( needs_transaction ) { 
 		BeginTransaction();
@@ -6039,11 +6027,21 @@ Scheduler::actOnJobs(int, Stream* s)
 			// Check to make sure the job's status makes sense for
 			// the command we're trying to perform
 		int status;
+		MyString job_owner;
 		int on_release_status = IDLE;
 		int hold_reason_code = -1;
 		if( GetAttributeInt(tmp_id.cluster, tmp_id.proc, 
-							ATTR_JOB_STATUS, &status) < 0 ) {
+							ATTR_JOB_STATUS, &status) < 0 ||
+			GetAttributeString(tmp_id.cluster, tmp_id.proc,
+							   ATTR_OWNER, job_owner) < 0)
+		{
 			results.record( tmp_id, AR_NOT_FOUND );
+			jobs[i].cluster = -1;
+			continue;
+		}
+		// Check that this user is allowed to modify this job.
+		if( !OwnerCheck2(NULL, rsock->getOwner(), job_owner.Value()) ) {
+			results.record( tmp_id, AR_PERMISSION_DENIED );
 			jobs[i].cluster = -1;
 			continue;
 		}
@@ -6152,22 +6150,9 @@ Scheduler::actOnJobs(int, Stream* s)
 		    action == JA_CONTINUE_JOBS ) {
 				// vacate is a special case, since we're not
 				// trying to modify the job in the queue at
-				// all, so we just need to make sure we're
-				// authorized to vacate this job, and if so,
+				// all, so we just need to
 				// record that we found this job_id and we're
 				// done.
-			ClassAd *cad = GetJobAd(tmp_id);
-			if( ! cad ) {
-					// Maybe change EXCEPT to print to the audit log with D_AUDIT
-				EXCEPT( "impossible: GetJobAd(%d.%d) returned false "
-						"yet GetAttributeInt(%s) returned success",
-						tmp_id.cluster, tmp_id.proc, ATTR_JOB_STATUS );
-			}
-			if( !OwnerCheck(cad, rsock->getOwner()) ) {
-				results.record( tmp_id, AR_PERMISSION_DENIED );
-				jobs[i].cluster = -1;
-				continue;
-			}
 			results.record( tmp_id, AR_SUCCESS );
 			num_success++;
 			continue;
@@ -6210,7 +6195,8 @@ Scheduler::actOnJobs(int, Stream* s)
 
 		case JA_HOLD_JOBS:
 			if (clusterad->factory) {
-				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmHold) < 0) {
+				if (OwnerCheck2(clusterad, rsock->getOwner()) == false ||
+					SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmHold) < 0) {
 					results.record( tmp_id, AR_PERMISSION_DENIED );
 					// if we failed to set the pause attribute, take this cluster out of the list so we don't try
 					// and actually pause the factory
@@ -6226,7 +6212,8 @@ Scheduler::actOnJobs(int, Stream* s)
 
 		case JA_RELEASE_JOBS:
 			if (clusterad->factory) {
-				if (SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmRunning) < 0) {
+				if (OwnerCheck2(clusterad, rsock->getOwner()) == false ||
+					SetAttributeInt(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, mmRunning) < 0) {
 					results.record( tmp_id, AR_PERMISSION_DENIED );
 					// if we failed to set the pause attribute, take this cluster out of the list so we don't try
 					// and actually pause the factory
@@ -6245,7 +6232,8 @@ Scheduler::actOnJobs(int, Stream* s)
 			if (clusterad->factory) {
 				// check to see if we are allowed to pause this factory, but don't actually change it's
 				// pause state, the mmClusterRemoved pause mode is a runtime-only schedd state.
-				if (SetAttribute(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, "3", SetAttribute_QueryOnly) < 0) {
+				if (OwnerCheck2(clusterad, rsock->getOwner()) == false ||
+					SetAttribute(tmp_id.cluster, tmp_id.proc, ATTR_JOB_MATERIALIZE_PAUSED, "3", SetAttribute_QueryOnly) < 0) {
 					results.record( tmp_id, AR_PERMISSION_DENIED );
 					clusters[i].cluster = -1;
 				} else {
@@ -6290,7 +6278,6 @@ Scheduler::actOnJobs(int, Stream* s)
 		if( needs_transaction ) {
 			AbortTransaction();
 		}
-		unsetQSock();
 		return FALSE;
 	}
 
@@ -6301,7 +6288,6 @@ Scheduler::actOnJobs(int, Stream* s)
 		if( needs_transaction ) {
 			AbortTransaction();
 		}
-		unsetQSock();
 		return FALSE;
 	}
 
@@ -6314,7 +6300,6 @@ Scheduler::actOnJobs(int, Stream* s)
 		if( needs_transaction ) {
 			AbortTransaction();
 		}
-		unsetQSock();
 		return FALSE;
 	}
 
@@ -6330,8 +6315,6 @@ Scheduler::actOnJobs(int, Stream* s)
 		dprintf( D_FULLDEBUG, "actOnJobs(): CommitTransaction() took %ld seconds to run\n", after - before );
 	}
 		
-	unsetQSock();
-
 		// If we got this far, we can tell the tool we're happy,
 		// since if that CommitTransaction failed, we'd EXCEPT()
 	rsock->encode();
@@ -7987,7 +7970,8 @@ Scheduler::makeReconnectRecords( PROC_ID* job, const ClassAd* match_ad )
 			// rely on the claim id to tell us how to connect to the startd.
 		dprintf( D_ALWAYS, "WARNING: %s not in job queue for %d.%d, "
 				 "so using claimid.\n", ATTR_STARTD_IP_ADDR, cluster, proc );
-		startd_addr = getAddrFromClaimId( claim_id );
+		ClaimIdParser id_parser(claim_id);
+		startd_addr = strdup(id_parser.startdSinfulAddr());
 		SetAttributeString(cluster, proc, ATTR_STARTD_IP_ADDR, startd_addr);
 	}
 	
@@ -13905,23 +13889,19 @@ prio_compar(prio_rec* a, prio_rec* b)
 {
 	 /* compare submitted job preprio's: higher values have more priority */
 	 /* Typically used to prioritize entire DAG jobs over other DAG jobs */
-	 if (a->pre_job_prio1 > INT_MIN && b->pre_job_prio1 > INT_MIN ) { 
-	      if( a->pre_job_prio1 < b->pre_job_prio1 ) {
-		  return 1;
-              }
-	      if( a->pre_job_prio1 > b->pre_job_prio1 ) {
-		  return -1;
-	      }
-	 }
-		 
-	 if( a->pre_job_prio2 > INT_MIN && b->pre_job_prio2 > INT_MIN ) {
-	      if( a->pre_job_prio2 < b->pre_job_prio2 ) {
-		  return 1;
-	      }
-	      if( a->pre_job_prio2 > b->pre_job_prio2 ) {
-		  return -1;
-	      }
-	 }
+	if( a->pre_job_prio1 < b->pre_job_prio1 ) {
+		return 1;
+	}
+	if( a->pre_job_prio1 > b->pre_job_prio1 ) {
+		return -1;
+	}
+
+	if( a->pre_job_prio2 < b->pre_job_prio2 ) {
+		return 1;
+	}
+	if( a->pre_job_prio2 > b->pre_job_prio2 ) {
+		return -1;
+	}
 	 
 	 /* compare job priorities: higher values have more priority */
 	 if( a->job_prio < b->job_prio ) {
@@ -13933,24 +13913,20 @@ prio_compar(prio_rec* a, prio_rec* b)
 	 
 	 /* compare submitted job postprio's: higher values have more priority */
 	 /* Typically used to prioritize entire DAG jobs over other DAG jobs */
-	 if( a->post_job_prio1 > INT_MIN && b->post_job_prio1 > INT_MIN ) {
-	      if( a->post_job_prio1 < b->post_job_prio1 ) {
-		  return 1;
-	      }
-	      if( a->post_job_prio1 > b->post_job_prio1 ) {
-		  return -1;
-	      }
-	 }
-	 
-	 if( a->post_job_prio2 > INT_MIN && b->post_job_prio2 > INT_MIN ) {
-	      if( a->post_job_prio2 < b->post_job_prio2 ) {
-		  return 1;
-	      }
-	      if( a->post_job_prio2 > b->post_job_prio2 ) {
-		  return -1;
-	      }
-	 }
-	      
+	if( a->post_job_prio1 < b->post_job_prio1 ) {
+		return 1;
+	}
+	if( a->post_job_prio1 > b->post_job_prio1 ) {
+		return -1;
+	}
+
+	if( a->post_job_prio2 < b->post_job_prio2 ) {
+		return 1;
+	}
+	if( a->post_job_prio2 > b->post_job_prio2 ) {
+		return -1;
+	}
+
 	 /* here,updown priority and job_priority are both equal */
 
 	 /* check for job submit times */
