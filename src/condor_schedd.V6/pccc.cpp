@@ -413,7 +413,7 @@ pcccStopCallback::dcMessageCallback( DCMsgCallback * cb ) {
 
 			std::string claimID;
 			if((! reply.LookupString( ATTR_CLAIM_ID, claimID )) || claimID.empty() ) {
-				dprintf( D_ALWAYS, "[now job %d.%d] coalesce did not return a claim ID, failing\n", nowJob.cluster, nowJob.proc );
+				dprintf( D_ALWAYS, "[now job %d.%d]: coalesce did not return a claim ID, failing\n", nowJob.cluster, nowJob.proc );
 
 				// Deletes this.
 				failed( nowJob );
