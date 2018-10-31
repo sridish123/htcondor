@@ -148,8 +148,29 @@ use feature : PartitionableSlot
 		Utils.TLog(result.error)
 		sys.exit(1)
 
+	if failureNo == 3:
+		time.sleep(20)
+
+		found = False
+		for i in range(20):
+			log = "{0}/SchedLog".format(pc._log_path)
+			with open(log, "r") as fd:
+				for line in fd:
+					if "[now job {0}]: coalesce failed last retry, giving up".format(bID) in line:
+						Utils.TLog( "Found ..." )
+						found = True
+			if found:
+				break
+			Utils.TLog( "Will check schedd log again in a second." )
+			time.sleep(1)
+		else:
+			Utils.TLog( "Failed to find coalesce failure before deadline." )
+			CondorTest.StopPersonalCondor(pc._name)
+			CondorTest.RegisterFailure("condor_now-failure-{0}".format(failureNo),
+				"coalesce took too long to fail")
+
 	# Some of the failures are time-outs.
-	if failureNo == 1 or failureNo == 3 or failureNo == 5:
+	if failureNo == 1 or failureNo == 5:
 		time.sleep( 21 )
 	else:
 		# The reason we retry coalesce commands is because of a stupid
