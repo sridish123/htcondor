@@ -18,12 +18,9 @@
  ***************************************************************/
 
 #include "condor_common.h"
-<<<<<<< HEAD
-=======
 #if 0 // Moved to dagman_utils
 #include "dagman_recursive_submit.h"
 #endif
->>>>>>> master
 #include "../condor_utils/dagman_utils.h"
 #include "MyString.h"
 #include "which.h"
@@ -43,8 +40,6 @@
 #include "condor_attributes.h"
 #include "dag_tokener.h"
 
-<<<<<<< HEAD
-=======
 #if 0 // Moved to dagman_utils
 #ifdef WIN32
 const char* dagman_exe = "condor_dagman.exe";
@@ -54,7 +49,6 @@ const char* dagman_exe = "condor_dagman";
 const char* valgrind_exe = "valgrind";
 #endif
 #endif
->>>>>>> master
 
 int printUsage(int iExitCode=1); // NOTE: printUsage calls exit(1), so it doesn't return
 void parseCommandLine(SubmitDagDeepOptions &deepOpts,
@@ -67,27 +61,21 @@ int doRecursionNew( SubmitDagDeepOptions &deepOpts,
 int parseJobOrDagLine( const char *dagLine, dag_tokener &tokens,
 			const char *fileType, const char *&submitOrDagFile,
 			const char *&directory );
-<<<<<<< HEAD
-=======
 #if 0 // Moved to dagman_utils
 int setUpOptions( SubmitDagDeepOptions &deepOpts,
 			SubmitDagShallowOptions &shallowOpts,
 			StringList &dagFileAttrLines );
 #endif
->>>>>>> master
 void ensureOutputFilesExist(const SubmitDagDeepOptions &deepOpts,
 			SubmitDagShallowOptions &shallowOpts);
 int getOldSubmitFlags( SubmitDagShallowOptions &shallowOpts );
 int parseArgumentsLine( const MyString &subLine,
 			SubmitDagShallowOptions &shallowOpts );
-<<<<<<< HEAD
-=======
 #if 0 // Moved to dagman_utils
 void writeSubmitFile(/* const */ SubmitDagDeepOptions &deepOpts,
 			/* const */ SubmitDagShallowOptions &shallowOpts,
 			/* const */ StringList &dagFileAttrLines );
 #endif
->>>>>>> master
 int submitDag( SubmitDagShallowOptions &shallowOpts );
 
 // Initial DagmanUtils object
