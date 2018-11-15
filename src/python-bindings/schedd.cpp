@@ -34,6 +34,9 @@
 #include "condor_arglist.h"
 #include "my_popen.h"
 
+#include <algorithm>
+#include <string>
+
 using namespace boost::python;
 
 #define DO_ACTION(action_name) \
@@ -3062,16 +3065,65 @@ public:
     {
     }
 
-    Dag(std::string dagfile)
+    Dag(std::string dag_filename)
         : m_dagmanUtils(DagmanUtils()),
-          m_dagfile(dagfile)
+          m_dag_filename(dag_filename)
     {
-        m_subfile = m_dagfile + ".condor.sub";
+        m_sub_filename = m_dag_filename + ".condor.sub";
+    }
+
+    Dag(std::string dag_filename, boost::python::dict dag_args)
+    : m_dagmanUtils(DagmanUtils()),
+      m_dag_filename(dag_filename)
+    {
+        m_sub_filename = m_dag_filename + ".condor.sub";
+
+        // Iterate over the list of arguments passed in and set the appropriate
+        // values in m_shallowOpts and m_deepOpts
+        boost::python::object iter = dag_args.attr("__iter__")();
+        while (true) {
+            PyObject *pyobj = PyIter_Next(iter.ptr());
+            if (!pyobj) break;
+            if (PyErr_Occurred()) {
+                boost::python::throw_error_already_set();
+            }
+
+            // Wrestle the key-value pair out of the dict object and save them
+            // both as string objects. 
+            // We can assume the key is a string type but the the value can be 
+            // a string or an int (or other?)
+            std::string key, value;
+            boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
+            key = boost::python::extract<std::string>(key_obj);
+            boost::python::object value_obj = boost::python::extract<boost::python::object>(dag_args[key]);
+            std::string value_type = boost::python::extract<std::string>(value_obj.attr("__class__").attr("__name__"));
+            if(value_type == "str") {
+                value = boost::python::extract<std::string>(dag_args[key]);
+            }
+            else if(value_type == "int") {
+                int value_int = boost::python::extract<int>(dag_args[key]);
+                value = std::to_string(value_int);
+            }
+
+            // Set shallowOpts or deepOpts variables as appropriate
+            std::string key_lc = key;
+            std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
+            if (key_lc == "maxidle") 
+                m_shallowOpts.iMaxIdle = atoi(value.c_str());
+            else if (key_lc == "maxjobs") 
+                m_shallowOpts.iMaxJobs = atoi(value.c_str());
+            else if (key_lc == "maxpre")
+                m_shallowOpts.iMaxPre = atoi(value.c_str());
+            else if (key_lc == "maxpost")
+                m_shallowOpts.iMaxPre = atoi(value.c_str());
+            else
+                printf("WARNING: DAGMan attribute '%s' not recognized, skipping\n", key.c_str());
+        }
     }
 
     std::string toString() const
     {
-        return m_dagfile;
+        return m_dag_filename;
     }
 
     boost::shared_ptr<Submit>
@@ -3083,18 +3135,16 @@ public:
         std::string sub_args;
 
         // Write out the .condor.sub file we need to submit the DAG
-        SubmitDagDeepOptions deepOpts;
-        SubmitDagShallowOptions shallowOpts;
         StringList dagFileAttrLines;
-        shallowOpts.dagFiles.insert(m_dagfile.c_str());
-        shallowOpts.primaryDagFile = m_dagfile;
-        m_dagmanUtils.setUpOptions(deepOpts, shallowOpts, dagFileAttrLines);
-        m_dagmanUtils.writeSubmitFile(deepOpts, shallowOpts, dagFileAttrLines);
+        m_shallowOpts.dagFiles.insert(m_dag_filename.c_str());
+        m_shallowOpts.primaryDagFile = m_dag_filename;
+        m_dagmanUtils.setUpOptions(m_deepOpts, m_shallowOpts, dagFileAttrLines);
+        m_dagmanUtils.writeSubmitFile(m_deepOpts, m_shallowOpts, dagFileAttrLines);
 
         // Now open the file
-        sub_fp = safe_fopen_wrapper_follow(m_subfile.c_str(), "r");
+        sub_fp = safe_fopen_wrapper_follow(m_sub_filename.c_str(), "r");
         if(sub_fp == NULL) {
-            printf("ERROR: Could not read generated DAG submit file %s\n", m_subfile.c_str());
+            printf("ERROR: Could not read generated DAG submit file %s\n", m_sub_filename.c_str());
             return NULL;
         }
 
@@ -3104,7 +3154,7 @@ public:
         sub_data = new char[sub_size];
         rewind(sub_fp);
         if(fread(sub_data, sizeof(char), sub_size, sub_fp) != sub_size) {
-            printf("ERROR: DAG submit file %s returned wrong size\n", m_subfile.c_str());
+            printf("ERROR: DAG submit file %s returned wrong size\n", m_sub_filename.c_str());
         }
         fclose(sub_fp);
 
@@ -3118,8 +3168,10 @@ public:
 
 private:
     DagmanUtils m_dagmanUtils;
-    std::string m_dagfile;
-    std::string m_subfile;
+    std::string m_dag_filename;
+    std::string m_sub_filename;
+    SubmitDagDeepOptions m_deepOpts;
+    SubmitDagShallowOptions m_shallowOpts;
 };
 
 
@@ -3405,6 +3457,7 @@ void export_schedd()
 
     class_<Dag>("Dag")
         .def(init<std::string>())
+        .def(init<std::string, boost::python::dict>())
         .def("__str__", &Dag::toString)
         .def("GetSubmit", &Dag::GetSubmit, "Returns a Submit object for this DAG.")
         ;
