@@ -3072,67 +3072,21 @@ public:
         m_sub_filename = m_dag_filename + ".condor.sub";
     }
 
-    Dag(std::string dag_filename, boost::python::dict dag_args)
-    : m_dagmanUtils(DagmanUtils()),
-      m_dag_filename(dag_filename)
-    {
-        m_sub_filename = m_dag_filename + ".condor.sub";
-
-        // Iterate over the list of arguments passed in and set the appropriate
-        // values in m_shallowOpts and m_deepOpts
-        boost::python::object iter = dag_args.attr("__iter__")();
-        while (true) {
-            PyObject *pyobj = PyIter_Next(iter.ptr());
-            if (!pyobj) break;
-            if (PyErr_Occurred()) {
-                boost::python::throw_error_already_set();
-            }
-
-            // Wrestle the key-value pair out of the dict object and save them
-            // both as string objects. 
-            // We can assume the key is a string type but the the value can be 
-            // a string or an int (or other?)
-            std::string key, value;
-            boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
-            key = boost::python::extract<std::string>(key_obj);
-            boost::python::object value_obj = boost::python::extract<boost::python::object>(dag_args[key]);
-            std::string value_type = boost::python::extract<std::string>(value_obj.attr("__class__").attr("__name__"));
-            if(value_type == "str") {
-                value = boost::python::extract<std::string>(dag_args[key]);
-            }
-            else if(value_type == "int") {
-                int value_int = boost::python::extract<int>(dag_args[key]);
-                value = std::to_string(value_int);
-            }
-
-            // Set shallowOpts or deepOpts variables as appropriate
-            std::string key_lc = key;
-            std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
-            if (key_lc == "maxidle") 
-                m_shallowOpts.iMaxIdle = atoi(value.c_str());
-            else if (key_lc == "maxjobs") 
-                m_shallowOpts.iMaxJobs = atoi(value.c_str());
-            else if (key_lc == "maxpre")
-                m_shallowOpts.iMaxPre = atoi(value.c_str());
-            else if (key_lc == "maxpost")
-                m_shallowOpts.iMaxPre = atoi(value.c_str());
-            else
-                printf("WARNING: DAGMan attribute '%s' not recognized, skipping\n", key.c_str());
-        }
-    }
-
     std::string toString() const
     {
         return m_dag_filename;
     }
 
     boost::shared_ptr<Submit>
-    GetSubmit() {
-
+    DagSubmit(boost::python::dict opts = boost::python::dict()) 
+    {
         char* sub_data;
         FILE* sub_fp = NULL;
         size_t sub_size;
         std::string sub_args;
+
+        // Start by setting any submit options that may have been passed in
+        SetOptions(opts);
 
         // Write out the .condor.sub file we need to submit the DAG
         StringList dagFileAttrLines;
@@ -3172,12 +3126,58 @@ private:
     std::string m_sub_filename;
     SubmitDagDeepOptions m_deepOpts;
     SubmitDagShallowOptions m_shallowOpts;
+
+    void SetOptions(boost::python::dict opts)
+    {
+        // Iterate over the list of arguments passed in and set the appropriate
+        // values in m_shallowOpts and m_deepOpts
+        boost::python::object iter = opts.attr("__iter__")();
+        while (true) {
+            PyObject *pyobj = PyIter_Next(iter.ptr());
+            if (!pyobj) break;
+            if (PyErr_Occurred()) {
+                boost::python::throw_error_already_set();
+            }
+
+            // Wrestle the key-value pair out of the dict object and save them
+            // both as string objects. 
+            // We can assume the key is a string type, but the the value can be 
+            // a string or an int (or other?)
+            std::string key, value;
+            boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
+            key = boost::python::extract<std::string>(key_obj);
+            boost::python::object value_obj = boost::python::extract<boost::python::object>(opts[key]);
+            std::string value_type = boost::python::extract<std::string>(value_obj.attr("__class__").attr("__name__"));
+            if(value_type == "str") {
+                value = boost::python::extract<std::string>(opts[key]);
+            }
+            else if(value_type == "int") {
+                int value_int = boost::python::extract<int>(opts[key]);
+                value = std::to_string(value_int);
+            }
+
+            // Set shallowOpts or deepOpts variables as appropriate
+            std::string key_lc = key;
+            std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
+            if (key_lc == "maxidle") 
+                m_shallowOpts.iMaxIdle = atoi(value.c_str());
+            else if (key_lc == "maxjobs") 
+                m_shallowOpts.iMaxJobs = atoi(value.c_str());
+            else if (key_lc == "maxpre")
+                m_shallowOpts.iMaxPre = atoi(value.c_str());
+            else if (key_lc == "maxpost")
+                m_shallowOpts.iMaxPre = atoi(value.c_str());
+            else
+                printf("WARNING: DAGMan attribute '%s' not recognized, skipping\n", key.c_str());
+        }
+    }
 };
 
 
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(query_overloads, query, 0, 5);
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(submit_overloads, submit, 1, 4);
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(transaction_overloads, transaction, 0, 2);
+BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(dag_submit_overloads, Dag::DagSubmit, 0, 1);
 
 void export_schedd()
 {
@@ -3329,7 +3329,7 @@ void export_schedd()
     class_<ScheddNegotiate>("ScheddNegotiate", no_init)
         .def("__iter__", &ScheddNegotiate::getRequests, "Get resource requests from schedd.", boost::python::with_custodian_and_ward_postcall<1, 0>())
         .def("sendClaim", &ScheddNegotiate::sendClaim, "Send a claim to the schedd.\n"
-          ":param claim: A string containing the claim ID.\n"
+          ":param claim: A string containing thRobert M. Storebye claim ID.\n"
           ":param offer: A ClassAd object containing a description of the resource claimed (the machine's ClassAd).\n"
           ":param request: A ClassAd object corresponding to the schedd resource request (optional).",
 #if BOOST_VERSION < 103400
@@ -3457,9 +3457,10 @@ void export_schedd()
 
     class_<Dag>("Dag")
         .def(init<std::string>())
-        .def(init<std::string, boost::python::dict>())
+        .def("Submit", &Dag::DagSubmit, dag_submit_overloads("Returns a Submit object for this DAG.\n"
+            ":param args: DAG submission arguments.\n"
+            ))
         .def("__str__", &Dag::toString)
-        .def("GetSubmit", &Dag::GetSubmit, "Returns a Submit object for this DAG.")
         ;
 
     register_ptr_to_python< boost::shared_ptr<ScheddNegotiate> >();
