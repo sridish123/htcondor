@@ -238,6 +238,7 @@ if (BUILD_TESTING)
 		# Tests of the python bindings.
 		condor_pl_test (python_bindings_classad "Python bindings classad module" "core;quick;full;quicknolink")
 		condor_pl_test (python_bindings_htcondor "Python bindings htcondor module" "core;quick;full;quicknolink")
+		condor_pl_test (python_bindings_dagman "Python bindings for dagman" "core;quick;full;quicknolink")
 		condor_pl_test (python_collector_query "tests of the query method of the collector class" "core;quick;full;quicknolink")
 
 		# Tests of the pytest suite.

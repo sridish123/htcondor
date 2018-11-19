@@ -47,7 +47,6 @@
 #include "extArray.h"
 #include "HashTable.h"
 #include <set>
-#include "../condor_utils/dagman_utils.h"
 #include "dagman_metrics.h"
 
 using namespace std;

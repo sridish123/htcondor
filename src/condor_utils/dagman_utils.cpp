@@ -488,8 +488,6 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
             SubmitDagShallowOptions &shallowOpts,
             StringList &dagFileAttrLines )
 {
-    //printf("MRC [DagmanUtils::setUpOptions] called\n");
-    //printf("MRC [DagmanUtils::setUpOptions] shallowOpts.primaryDagFile = %s\n", shallowOpts.primaryDagFile.Value());
     shallowOpts.strLibOut = shallowOpts.primaryDagFile + ".lib.out";
     shallowOpts.strLibErr = shallowOpts.primaryDagFile + ".lib.err";
 
@@ -500,7 +498,6 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
         shallowOpts.strDebugLog = shallowOpts.primaryDagFile;
     }
     shallowOpts.strDebugLog += ".dagman.out";
-    //printf("MRC [DagmanUtils::setUpOptions] setting up more shallowOpts\n");
     shallowOpts.strSchedLog = shallowOpts.primaryDagFile + ".dagman.log";
     shallowOpts.strSubFile = shallowOpts.primaryDagFile + DAG_SUBMIT_FILE_SUFFIX;
 
@@ -509,7 +506,6 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
         // If we're running each DAG in its own directory, write any rescue
         // DAG to the current directory, to avoid confusion (since the
         // rescue DAG must be run from the current directory).
-    //printf("MRC [DagmanUtils::setUpOptions] dealing with rescue files\n");
     if ( deepOpts.useDagDir ) {
         if ( !condor_getcwd( rescueDagBase ) ) {
             fprintf( stderr, "ERROR: unable to get cwd: %d, %s\n",
@@ -528,7 +524,7 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
     if ( shallowOpts.dagFiles.number() > 1 ) {
         rescueDagBase += "_multi";
     }
-    //printf("MRC [DagmanUtils::setUpOptions] more things\n");
+
     shallowOpts.strRescueFile = rescueDagBase + ".rescue";
 
     shallowOpts.strLockFile = shallowOpts.primaryDagFile + ".lock";
@@ -543,7 +539,7 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
                  dagman_exe );
         return 1;
     }
-    //printf("MRC [DagmanUtils::setUpOptions] now calling GetConfigAndAttrs\n");
+
     MyString    msg;
     if ( !GetConfigAndAttrs( shallowOpts.dagFiles, deepOpts.useDagDir,
                 shallowOpts.strConfigFile,
@@ -575,20 +571,19 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
             MyString &configFile, StringList &attrLines, MyString &errMsg )
 {
     bool        result = true;
-    //printf("MRC [DagmanUtils::GetConfigAndAttrs] called\n");
+
         // Note: destructor will change back to original directory.
     TmpDir        dagDir;
 
     dagFiles.rewind();
     char *dagFile;
-    //printf("MRC [DagmanUtils::GetConfigAndAttrs] cycling through dagFiles\n");
+
     while ( (dagFile = dagFiles.next()) != NULL ) {
 
             //
             // Change to the DAG file's directory if necessary, and
             // get the filename we need to use for it from that directory.
             //
-            //printf("MRC [DagmanUtils::GetConfigAndAttrs] dagFile = %s\n", dagFile);
         const char *    newDagFile;
         if ( useDagDir ) {
             MyString    tmpErrMsg;
@@ -604,7 +599,6 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
         }
 
         StringList        configFiles;
-        //printf("MRC [DagmanUtils::GetConfigAndAttrs] now summoning a multilogfile reader\n");
             // Note: destructor will close file.
         MultiLogFiles::FileReader reader;
         errMsg = reader.Open( newDagFile );
@@ -614,9 +608,7 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
 
         MyString logicalLine;
         while ( reader.NextLogicalLine( logicalLine ) ) {
-            //printf("MRC [DagmanUtils::GetConfigAndAttrs] logicalLine = %s\n", logicalLine.Value());
             if ( logicalLine != "" ) {
-                //printf("MRC [DagmanUtils::GetConfigAndAttrs] logicalLine passed the not-empty test!\n");
                     // Note: StringList constructor removes leading
                     // whitespace from lines.
                 StringList tokens( logicalLine.Value(), " \t" );
@@ -671,7 +663,7 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
         }
     
         reader.Close();
-        //printf("MRC [DagmanUtils::GetConfigAndAttrs] check config files\n");
+
             //
             // Check the specified config file(s) against whatever we
             // currently have, setting the config file if it hasn't
