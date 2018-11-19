@@ -2281,7 +2281,7 @@ public:
         const char *val = const_cast<Submit*>(this)->m_hash.lookup(attr.c_str());
         if (val == NULL)
         {
-            THROW_EX(KeyError, attr.c_str())
+            THROW_EX(KeyError, attr.c_TEST_FAILUREstr())
         }
         return std::string(val);
     }
@@ -3067,14 +3067,14 @@ public:
 
     Dag(std::string dag_filename)
         : m_dagmanUtils(DagmanUtils()),
-          m_dag_filename(dag_filename)
+          m_dagFilename(dag_filename)
     {
-        m_sub_filename = m_dag_filename + ".condor.sub";
+        m_subFilename = m_dagFilename + ".condor.sub";
     }
 
     std::string toString() const
     {
-        return m_dag_filename;
+        return m_dagFilename;
     }
 
     boost::shared_ptr<Submit>
@@ -3090,15 +3090,15 @@ public:
 
         // Write out the .condor.sub file we need to submit the DAG
         StringList dagFileAttrLines;
-        m_shallowOpts.dagFiles.insert(m_dag_filename.c_str());
-        m_shallowOpts.primaryDagFile = m_dag_filename;
+        m_shallowOpts.dagFiles.insert(m_dagFilename.c_str());
+        m_shallowOpts.primaryDagFile = m_dagFilename;
         m_dagmanUtils.setUpOptions(m_deepOpts, m_shallowOpts, dagFileAttrLines);
         m_dagmanUtils.writeSubmitFile(m_deepOpts, m_shallowOpts, dagFileAttrLines);
 
         // Now open the file
-        sub_fp = safe_fopen_wrapper_follow(m_sub_filename.c_str(), "r");
+        sub_fp = safe_fopen_wrapper_follow(m_subFilename.c_str(), "r");
         if(sub_fp == NULL) {
-            printf("ERROR: Could not read generated DAG submit file %s\n", m_sub_filename.c_str());
+            printf("ERROR: Could not read generated DAG submit file %s\n", m_subFilename.c_str());
             return NULL;
         }
 
@@ -3108,7 +3108,7 @@ public:
         sub_data = new char[sub_size];
         rewind(sub_fp);
         if(fread(sub_data, sizeof(char), sub_size, sub_fp) != sub_size) {
-            printf("ERROR: DAG submit file %s returned wrong size\n", m_sub_filename.c_str());
+            printf("ERROR: DAG submit file %s returned wrong size\n", m_subFilename.c_str());
         }
         fclose(sub_fp);
 
@@ -3122,8 +3122,8 @@ public:
 
 private:
     DagmanUtils m_dagmanUtils;
-    std::string m_dag_filename;
-    std::string m_sub_filename;
+    std::string m_dagFilename;
+    std::string m_subFilename;
     SubmitDagDeepOptions m_deepOpts;
     SubmitDagShallowOptions m_shallowOpts;
 
@@ -3329,7 +3329,7 @@ void export_schedd()
     class_<ScheddNegotiate>("ScheddNegotiate", no_init)
         .def("__iter__", &ScheddNegotiate::getRequests, "Get resource requests from schedd.", boost::python::with_custodian_and_ward_postcall<1, 0>())
         .def("sendClaim", &ScheddNegotiate::sendClaim, "Send a claim to the schedd.\n"
-          ":param claim: A string containing thRobert M. Storebye claim ID.\n"
+          ":param claim: A string containing the claim ID.\n"
           ":param offer: A ClassAd object containing a description of the resource claimed (the machine's ClassAd).\n"
           ":param request: A ClassAd object corresponding to the schedd resource request (optional).",
 #if BOOST_VERSION < 103400
