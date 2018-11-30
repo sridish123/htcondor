@@ -2281,7 +2281,7 @@ public:
         const char *val = const_cast<Submit*>(this)->m_hash.lookup(attr.c_str());
         if (val == NULL)
         {
-            THROW_EX(KeyError, attr.c_TEST_FAILUREstr())
+            THROW_EX(KeyError, attr.c_str())
         }
         return std::string(val);
     }
