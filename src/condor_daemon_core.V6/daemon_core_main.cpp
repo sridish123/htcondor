@@ -2575,7 +2575,16 @@ int dc_main( int argc, char** argv )
 
 
 		// SETUP COMMAND SOCKET
-	daemonCore->SetDaemonSockName( daemon_sock_name );
+	if(! daemon_sock_name) {
+		MyString dsnBuffer = get_mySubSystem()->getLocalName();
+		if( dsnBuffer.empty() ) {
+			dsnBuffer = get_mySubSystem()->getName();
+		}
+		dsnBuffer.lower_case();
+		daemonCore->SetDaemonSockName( dsnBuffer.c_str() );
+	} else {
+		daemonCore->SetDaemonSockName( daemon_sock_name );
+	}
 	daemonCore->InitDCCommandSocket( command_port );
 
 		// Install DaemonCore signal handlers common to all daemons.
