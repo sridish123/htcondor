@@ -21,9 +21,6 @@
  //which python headers will include, and the condor definitions
  #define dprintf _hide_dprintf
  #define profil _hide_profil
- #if defined(__FreeBSD__)
-  #define getline _hide_getline
- #endif
 #endif
 
 #ifdef __GNUC__
@@ -54,9 +51,6 @@
 #else
  #undef dprintf
  #undef profil
- #if defined(__FreeBSD__)
-  #undef getline
- #endif
  // On Debian 7, pyconfig.h sets this macro. Globus assumes it refers
  // to the Windows-only <io.h>.
  #undef HAVE_IO_H

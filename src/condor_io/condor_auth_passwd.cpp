@@ -87,7 +87,6 @@ GCC_DIAG_ON(cast-qual)
 
 #include <sstream>
 #include <fstream>
-#include <stdio.h>
 
 namespace {
 
@@ -117,7 +116,7 @@ bool findToken(const std::string &tokenfilename,
 	for (std::string line; std::getline(tokenfile, line); ) {
 */
 	char * ptr = NULL; size_t len;
-	while( getdelim( &ptr, &len, '\n', f ) != -1 ) {
+	while( getline( &ptr, &len, f ) != -1 ) {
 		std::string line( ptr );
 		free( ptr );
 		line.erase(line.begin(),
