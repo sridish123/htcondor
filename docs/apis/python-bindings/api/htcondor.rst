@@ -370,7 +370,7 @@ Module Classes
       :return: A list of matching ads.
       :rtype: list[:class:`~classad.ClassAd`]
 
-   .. directQuery( daemon_type, name = '', projection = [], statistics = '' )
+   .. method:: directQuery( daemon_type, name = '', projection = [], statistics = '' )
 
       Query the specified daemon directly for a ClassAd, instead of using the ClassAd from the ``condor_collector`` daemon.
       Requires the client library to first locate the daemon in the collector, then querying the remote daemon.
@@ -409,8 +409,13 @@ Module Classes
 
       Create an instance of the Submit class.
 
-      :param input: ``Key = value`` pairs for initializing the submit description.
+      :param input: ``Key = value`` pairs for initializing the submit description,
+         or a string containing the text of a submit file.
          If omitted, the submit class is initially empty.
+         If a string is used, the text should consist of valid *condor_submit* statements
+         optionally followed by a single ``QUEUE`` statement.
+         The arguments to the ``QUEUE`` statement will be stored in the ``QArgs`` member
+         of this class and used when the ``queue`` methods are called.
       :type input: dict
 
    .. method:: expand( attr )
@@ -421,19 +426,121 @@ Module Classes
       :return: The value of the given attribute; all macros are expanded.
       :rtype: str
 
-   .. method:: queue( (object)txn, (int)count = 1, (object)ad_results = None )
+   .. method:: queue( (object)txn, (int)count = 0, (object)ad_results = None )
 
       Submit the current object to a remote queue.
 
       :param txn: An active transaction object (see :meth:`Schedd.transaction`).
       :type txn: :class:`Transaction`
-      :param int count: The number of jobs to create (defaults to ``1``).
+      :param int count: The number of jobs to create (defaults to ``0``).
+         If ``0``, then the ``QArgs`` member of this class is used to determine
+         the number of procs submitted. If no ``QArgs`` were specified,
+         one job is submitted.
       :param ad_results: A list to receive the ClassAd resulting from this submit.
          As with :meth:`Schedd.submit`, this is often used to later spool the input
          files.
       :return: The ClusterID of the submitted job(s).
       :rtype: int
       :raises RuntimeError: if the submission fails.
+
+   .. method:: queue_with_itemdata( (object)txn, (int)count = 0, (object)from = None )
+
+      Submit the current object to a remote queue.
+
+      :param txn: An active transaction object (see :meth:`Schedd.transaction`).
+      :type txn: :class:`Transaction`
+      :param int count: The number of jobs to create for each item from the itemdata (defaults to ``0``).
+      :return: A :class:`SubmitResult` containing the cluster ID, cluster ClassAd
+         and range of Job ids Cluster ID of the submitted job(s).
+      :param from: An iterator of strings or dictionaries containing the itemdata for each job
+         as in ``queue in`` or ``queue from``.
+      :rtype: SubmitResult
+      :raises RuntimeError: if the submission fails.
+
+   .. method:: jobs( (int)count = 0, (object)from = None, (int)clusterid = 1, (int) procid = 0, (time_t)qdate = 0, (str)owner = "" )
+
+      Return an iterator of simulated job ClassAds using the current settings of this class.
+
+      :param int count: the number of jobs for each item in the from iteration.
+        It is the total number of jobs to return if ``from`` is ``None``.
+        If not specified or the value 0 is given the value from the ``QArgs`` memeber will be used.
+      :param from: an iterator of strings or dictionaries that specify the itemdata
+        for the set of simulated jobs. Each item from this iterator will result
+        in ``count`` simulated jobs. If not specified or ``None`` is given the value from
+        the ``QArgs`` member will be used.
+      :param int clusterid: the value to use for the ClusterId attribute of the simulated jobs.
+        If not specified, ``1`` is used.
+      :param int procid: the value to use for the ProcId attribute of the first simulated job.
+        If not specified ``0`` is used.
+      :param time_t qdate: the unix timestamp value to use as the ``QDate`` attribute of the simulated jobs.
+        If not specified the current time is used.
+      :param str owner: the username to use as the ``Owner`` attribute of the simulated jobs.
+        If not specified, the name of the current user is used.
+
+   .. method:: procs( (int)count = 0, (object)from = None, (int)clusterid = 1, (int) procid = 0, (time_t)qdate = 0, (str)owner = None )
+
+      Returns an iterator of simulated partial job ClassAds using the current settings of this class.
+      The first job ClassAd returned will be complete, all other job ClassAds will contain only
+      attributes that differ from the first job. This list of proc ClassAds is what the ``queue`` or
+      ``queue_with_itemdata`` methods would submit to the *condor_schedd*, with the exception
+      of the ``ClusterId`` attribute, which cannot be known ahead of time.
+
+      :param int count: the number of jobs for each item in the from iteration.
+        It is the total number of jobs to return if ``from`` is ``None``.
+        If not specified or the value 0 is given the value from the ``QArgs`` memeber will be used.
+      :param from: an iterator of strings or dictionaries that specify the itemdata
+        for the set of simulated jobs. Each item from this iterator will result
+        in ``count`` simulated jobs. If not specified or ``None`` is given the value from
+        the ``QArgs`` member will be used.
+      :param int clusterid: the value to use for the ClusterId attribute of the simulated jobs.
+        If not specified, ``1`` is used.
+      :param int procid: the value to use for the ProcId attribute of the first simulated job.
+        If not specified ``0`` is used.
+      :param time_t qdate: the unix timestamp value to use as the ``QDate`` attribute of the simulated jobs.
+        If not specified the current time is used.
+      :param str owner: the username to use as the ``Owner`` attribute of the simulated jobs.
+        If not specified, the name of the current user is used.
+
+   .. method:: itemdata( (str)qargs = None )
+
+      Returns an iterator of itemdata for the given QUEUE arguments. If qargs is
+      not specified, the arguments to the QUEUE statement passed to the constructor
+      or to the setQArgs method is used.
+      For example ``itemdata("matching *.dat")`` would return an iterator of filenames
+      that match ``*.dat`` from the current directory. This is the same iterator used
+      by condor_submit when processing ``QUEUE`` statements.
+
+   .. method:: getQArgs()
+
+      Returns arguments specified in the ``QUEUE`` statement passed to the constructor.
+      These are the arguments that will be used by the ``queue`` or ``queue_from_itemdata``
+      methods if not overridden by arguments to those methods.
+
+   .. method:: setQArgs( (str)args )
+
+      Sets the arguments to be used by subsequent calls to the ``queue`` or ``queue_from_itemdata`` methods.
+
+.. class:: SubmitResult
+
+    .. method:: cluster()
+
+        :return: the ClusterID of the submitted jobs.
+        :rtype: int
+
+    .. method:: clusterad()
+
+        :return: the cluster Ad of the submitted jobs.
+        :rtype: :class:`classad.ClassAd`
+
+    .. method:: first_proc()
+
+        :return: the first ProcID of the submitted jobs.
+        :rtype: int
+
+    .. method:: num_procs()
+
+        :return: the number of submitted jobs.
+        :rtype: int
 
 
 .. class:: Negotiator
@@ -1038,6 +1145,12 @@ Useful Enumerations
       Ads describing the submitters with available jobs to run; produced by
       the ``condor_schedd`` and read by the ``condor_negotiator`` to determine
       which users need a new negotiation cycle.
+
+   .. :attribute:: Accounting
+
+   .. :attribute:: Defrag
+
+   .. :attribute:: Credd
 
 .. class:: JobAction
 
