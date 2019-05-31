@@ -675,10 +675,6 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
         }
     
         reader.Close();
-<<<<<<< HEAD
-
-=======
->>>>>>> master
             //
             // Check the specified config file(s) against whatever we
             // currently have, setting the config file if it hasn't

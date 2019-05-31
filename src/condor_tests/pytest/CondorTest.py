@@ -108,11 +108,7 @@ class CondorTest(object):
                 rv = TEST_FAILURE
 
         # Make sure the PCs are really gone.
-<<<<<<< HEAD
-        if len(CondorTest._personal_condors) > 0:
-=======
         if CondorTest._personal_condors:
->>>>>>> master
             Utils.TLog( "Waiting for personal condor(s) to finish stopping..." )
             time.sleep(5)
             for name, pc in CondorTest._personal_condors.items():
