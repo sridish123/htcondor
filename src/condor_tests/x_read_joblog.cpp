@@ -294,7 +294,7 @@ int main(int argc, char* argv[])
 						}
 
 						// print a attribute which is always there
-						classad::ClassAd * ad = reinterpret_cast<classad::ClassAd*>(info->toClassAd());
+						classad::ClassAd * ad = reinterpret_cast<classad::ClassAd*>(info->toClassAd(true));
 						if ( ! ad) { printf("toClassAd failed!\n"); break; }
 
 						int rmem = -1, memu = -1, mem = -1;
@@ -427,6 +427,9 @@ int main(int argc, char* argv[])
 					break;
 				  case ULOG_NONE:
 					printf("None (try again later).........\n");
+					break;
+				  case ULOG_FILE_TRANSFER:
+					printf("File transfer.........\n");
 					break;
 
 				  default:

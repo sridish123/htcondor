@@ -42,7 +42,6 @@
 #include "env.h"
 #include "condor_classad.h"
 #include "condor_ver_info.h"
-#include "condor_string.h" // for strnewp, etc.
 #include "forkwork.h"
 #include "condor_open.h"
 #include "ickpt_share.h"
@@ -208,6 +207,7 @@ prio_rec	PrioRecArray[INITIAL_MAX_PRIO_REC];
 prio_rec	* PrioRec = &PrioRecArray[0];
 int			N_PrioRecs = 0;
 HashTable<int,int> *PrioRecAutoClusterRejected = NULL;
+int BuildPrioRecArrayTid = -1;
 
 static int 	MAX_PRIO_REC=INITIAL_MAX_PRIO_REC ;	// INITIAL_MAX_* in prio_rec.h
 
@@ -501,7 +501,7 @@ bool CheckMaterializePolicyExpression(JobQueueCluster * cad, int & retry_delay)
 		classad::ExprTree * expr = NULL;
 		ParseClassAdRvalExpr("JobsIdle < 4", expr);
 		if (expr) {
-			bool rv = EvalBool(&iad, expr);
+			bool rv = EvalExprBool(&iad, expr);
 			delete expr;
 			if (rv) return true;
 		}
@@ -878,7 +878,7 @@ ConvertOldJobAdAttrs( ClassAd *job_ad, bool startup )
 		// CRUFT
 		// Starting in 6.7.11, ATTR_JOB_MANAGED changed from a boolean
 		// to a string.
-	int ntmp;
+	bool ntmp;
 	if( startup && job_ad->LookupBool(ATTR_JOB_MANAGED, ntmp) ) {
 		if(ntmp) {
 			job_ad->Assign(ATTR_JOB_MANAGED, MANAGED_EXTERNAL);
@@ -944,9 +944,9 @@ QmgmtPeer::set(const condor_sockaddr& raddr, const char *o)
 	ASSERT(owner == NULL);
 
 	if ( o ) {
-		fquser = strnewp(o);
+		fquser = strdup(o);
 			// owner is just fquser that stops at the first '@' 
-		owner = strnewp(o);
+		owner = strdup(o);
 		char *atsign = strchr(owner,'@');
 		if (atsign) {
 			*atsign = '\0';
@@ -954,7 +954,7 @@ QmgmtPeer::set(const condor_sockaddr& raddr, const char *o)
 	}
 
 	addr = raddr;
-	myendpoint = strnewp(addr.to_ip_string().Value());
+	myendpoint = strdup(addr.to_ip_string().Value());
 
 	return true;
 }
@@ -972,11 +972,11 @@ QmgmtPeer::setAllowProtectedAttrChanges(bool val)
 bool
 QmgmtPeer::setEffectiveOwner(char const *o)
 {
-	delete [] owner;
+	free(owner);
 	owner = NULL;
 
 	if ( o ) {
-		owner = strnewp(o);
+		owner = strdup(o);
 	}
 	return true;
 }
@@ -985,15 +985,15 @@ void
 QmgmtPeer::unset()
 {
 	if (owner) {
-		delete [] owner;
+		free(owner);
 		owner = NULL;
 	}
 	if (fquser) {
-		delete fquser;
+		free(fquser);
 		fquser = NULL;
 	}
 	if (myendpoint) {
-		delete [] myendpoint;
+		free(myendpoint);
 		myendpoint = NULL;
 	}
 	if (sock) sock=NULL;	// note: do NOT delete sock!!!!!
@@ -1216,7 +1216,7 @@ RenamePre_7_5_5_SpoolPathsInJob( ClassAd *job_ad, char const *spool, int cluster
 	int a;
 	for(a=0;a<ATTR_ARRAY_SIZE;a++) {
 		char const *attr = AttrsToModify[a];
-		MyString v;
+		std::string v;
 		char const *o = old_path.c_str();
 		char const *n = new_path.c_str();
 
@@ -1224,9 +1224,9 @@ RenamePre_7_5_5_SpoolPathsInJob( ClassAd *job_ad, char const *spool, int cluster
 			continue;
 		}
 		if( !AttrIsList[a] ) {
-			if( !strncmp(v.Value(),o,strlen(o)) ) {
+			if( !strncmp(v.c_str(),o,strlen(o)) ) {
 				std::string np = n;
-				np += v.Value() + strlen(o);
+				np += v.c_str() + strlen(o);
 				dprintf(D_ALWAYS,"Changing job %d.%d %s from %s to %s\n",
 						cluster, proc, attr, o, np.c_str());
 				job_ad->Assign(attr,np.c_str());
@@ -1235,7 +1235,7 @@ RenamePre_7_5_5_SpoolPathsInJob( ClassAd *job_ad, char const *spool, int cluster
 		}
 
 			// The value we are changing is a list of files
-		StringList old_paths(v.Value(),",");
+		StringList old_paths(v.c_str(),",");
 		StringList new_paths(NULL,",");
 		bool changed = false;
 
@@ -1257,7 +1257,7 @@ RenamePre_7_5_5_SpoolPathsInJob( ClassAd *job_ad, char const *spool, int cluster
 			char *nv = new_paths.print_to_string();
 			ASSERT( nv );
 			dprintf(D_ALWAYS,"Changing job %d.%d %s from %s to %s\n",
-					cluster, proc, attr, v.Value(), nv);
+					cluster, proc, attr, v.c_str(), nv);
 			job_ad->Assign(attr,nv);
 			free( nv );
 		}
@@ -1420,7 +1420,7 @@ JobQueueCluster::~JobQueueCluster()
 bool JobQueueJob::IsNoopJob()
 {
 	if ( ! has_noop_attr) return false;
-	int noop = 0;
+	bool noop = false;
 	if ( ! this->LookupBool(ATTR_JOB_NOOP, noop)) { has_noop_attr = false; }
 	else { has_noop_attr = true; }
 	return has_noop_attr && noop;
@@ -1487,13 +1487,13 @@ InitJobQueue(const char *job_queue_name,int max_historical_logs)
 	int		stored_cluster_num;
 	bool	CreatedAd = false;
 	JobQueueKey cluster_key;
-	MyString	owner;
-	MyString	user;
+	std::string	owner;
+	std::string	user;
 	MyString	correct_user;
 	MyString	buf;
-	MyString	attr_scheduler;
+	std::string	attr_scheduler;
 	MyString	correct_scheduler;
-	MyString buffer;
+	std::string buffer;
 
 	if (!JobQueue->Lookup(HeaderKey, ad)) {
 		// we failed to find header ad, so create one
@@ -1642,7 +1642,7 @@ InitJobQueue(const char *job_queue_name,int max_historical_logs)
 			int nice_user = 0;
 			ad->LookupInteger( ATTR_NICE_USER, nice_user );
 			correct_user.formatstr( "%s%s@%s",
-					 (nice_user) ? "nice-user." : "", owner.Value(),
+					 (nice_user) ? "nice-user." : "", owner.c_str(),
 					 scheduler.uidDomain() );
 
 			if (!ad->LookupString(ATTR_USER, user)) {
@@ -2327,24 +2327,6 @@ QmgmtSetEffectiveOwner(char const *o)
 	return 0;
 }
 
-bool
-OwnerCheck(int cluster_id,int proc_id)
-{
-	ClassAd				*ad = NULL;
-
-	if (!Q_SOCK) {
-		return 0;
-	}
-
-	JobQueueKeyBuf key;
-	IdToKey(cluster_id,proc_id,key);
-	if (!JobQueue->LookupClassAd(key, ad)) {
-		return 0;
-	}
-
-	return OwnerCheck(ad, Q_SOCK->getOwner());
-}
-
 // Test if this owner matches my owner, so they're allowed to update me.
 bool
 OwnerCheck(ClassAd *ad, const char *test_owner)
@@ -2366,7 +2348,7 @@ OwnerCheck(ClassAd *ad, const char *test_owner)
 bool
 OwnerCheck2(ClassAd *ad, const char *test_owner, const char *job_owner)
 {
-	MyString	owner_buf;
+	std::string	owner_buf;
 
 	// in the very rare event that the admin told us all users 
 	// can be trusted, let it pass
@@ -2419,7 +2401,7 @@ OwnerCheck2(ClassAd *ad, const char *test_owner, const char *job_owner)
 			dprintf(D_FULLDEBUG,"OwnerCheck retval 1 (success),no owner\n");
 			return true;
 		}
-		job_owner = owner_buf.Value();
+		job_owner = owner_buf.c_str();
 	}
 
 		// Finally, compare the owner of the ad with the entity trying
@@ -3018,8 +3000,9 @@ int NewProcFromAd (ClassAd * job, int ProcId, JobQueueJob * ClusterAd, SetAttrib
 	const char *attr;
 	std::string buffer;
 
-	job->ResetExpr();
-	while( job->NextExpr(attr, tree) ) {
+	for ( auto itr = job->begin(); itr != job->end(); itr++ ) {
+		attr = itr->first.c_str();
+		tree = itr->second;
 		if ( ! attr || ! tree) {
 			dprintf(D_ALWAYS, "ERROR: Null attribute name or value for job %d.%d\n", ClusterId, ProcId );
 			return -1;
@@ -3101,11 +3084,11 @@ int DestroyProc(int cluster_id, int proc_id)
 	}
 
 		// should we leave the job in the queue?
-	int leave_job_in_q = 0;
+	bool leave_job_in_q = false;
 	{
 		ClassAd completeAd(*ad);
 		JobQueue->AddAttrsFromTransaction(key,completeAd);
-		completeAd.EvalBool(ATTR_JOB_LEAVE_IN_QUEUE,NULL,leave_job_in_q);
+		completeAd.LookupBool(ATTR_JOB_LEAVE_IN_QUEUE,leave_job_in_q);
 		if ( leave_job_in_q ) {
 			return DESTROYPROC_SUCCESS_DELAY;
 		}
@@ -3120,6 +3103,9 @@ int DestroyProc(int cluster_id, int proc_id)
 	else {
 		cleanup_ckpt_files(cluster_id,proc_id,Q_SOCK->getOwner() );
 	}
+
+	// Remove the job from its autocluster
+	scheduler.autocluster.removeFromAutocluster(*ad);
 
 	// Append to history file
 	AppendHistory(ad);
@@ -3152,6 +3138,10 @@ int DestroyProc(int cluster_id, int proc_id)
 	JobQueue->DestroyClassAd(key);
 
 	DecrementClusterSize(cluster_id, clusterad);
+
+	// We'll need the JobPrio value later after the ad has been destroyed
+	int job_prio = 0;
+	ad->LookupInteger(ATTR_JOB_PRIO, job_prio);
 
 	int universe = CONDOR_UNIVERSE_STANDARD;
 	ad->LookupInteger(ATTR_JOB_UNIVERSE, universe);
@@ -3199,7 +3189,7 @@ int DestroyProc(int cluster_id, int proc_id)
 	}
 
 		// remove jobid from any indexes
-	scheduler.removeJobFromIndexes(key);
+	scheduler.removeJobFromIndexes(key, job_prio);
 
 		// remove any match (startd) ad stored w/ this job
 	RemoveMatchedAd(cluster_id,proc_id);
@@ -3277,8 +3267,8 @@ int DestroyCluster(int cluster_id, const char* reason)
 				}
 
 					// should we leave the job in the queue?
-				int leave_job_in_q = 0;
-				ad->EvalBool(ATTR_JOB_LEAVE_IN_QUEUE,NULL,leave_job_in_q);
+				bool leave_job_in_q = false;
+				ad->LookupBool(ATTR_JOB_LEAVE_IN_QUEUE,leave_job_in_q);
 				if ( leave_job_in_q ) {
 						// leave it in the queue.... move on to the next one
 					continue;
@@ -3399,7 +3389,7 @@ SetAttributeByConstraint(const char *constraint_str, const char *attr_name,
 		if (job->IsCluster() && ! (flags & SetAttribute_PostSubmitClusterChange))
 			continue;
 
-		if (EvalBool(ad, constraint.Expr())) {
+		if (EvalExprBool(ad, constraint.Expr())) {
 			match_count += 1;
 			if (SetAttribute(key.cluster, key.proc, attr_name, attr_value, flags) < 0) {
 				had_error = 1;
@@ -3636,7 +3626,7 @@ SetAttribute(int cluster_id, int proc_id, const char *attr_name,
 	{
 		// should we fail or silently succeed?  (old submits set secure attrs)
 		const CondorVersionInfo *vers = NULL;
-		if ( ! Ignore_Secure_SetAttr_Attempts) {
+		if ( Q_SOCK && ! Ignore_Secure_SetAttr_Attempts) {
 			vers = Q_SOCK->get_peer_version();
 		}
 		if (vers && vers->built_since_version( 8, 5, 8 ) ) {
@@ -4001,7 +3991,13 @@ SetAttribute(int cluster_id, int proc_id, const char *attr_name,
 
 		// give the autocluster code a chance to invalidate (or rebuild)
 		// based on the changed attribute.
-		scheduler.autocluster.preSetAttribute(*job, attr_name, attr_value, flags);
+		if (scheduler.autocluster.preSetAttribute(*job, attr_name, attr_value, flags)) {
+			DirtyPrioRecArray();
+			dprintf(D_FULLDEBUG,
+					"Prioritized runnable job list will be rebuilt, because "
+					"ClassAd attribute %s=%s changed\n",
+					attr_name,attr_value);
+		}
 	}
 
 	// This block handles rounding of attributes.
@@ -4202,6 +4198,27 @@ SetAttribute(int cluster_id, int proc_id, const char *attr_name,
 		keys.insert(key.c_str());
 		// TODO: convert the keys to PROC_IDs before calling DoSetAttributeCallbacks?
 		DoSetAttributeCallbacks(keys, attr_category);
+	}
+
+	// If we are changing the priority of a scheduler/local universe job, we need
+	// to update the LocalJobsPrioQueue data
+	if ( ( universe == CONDOR_UNIVERSE_SCHEDULER ||
+		universe == CONDOR_UNIVERSE_LOCAL ) && attr_id == idATTR_JOB_PRIO) {
+		if ( job ) {
+			// Walk the prio queue of local jobs
+			for ( std::set<LocalJobRec>::iterator it = scheduler.LocalJobsPrioQueue.begin(); it != scheduler.LocalJobsPrioQueue.end(); it++ ) {
+				// If this record matches the job_id passed in, erase it, then
+				// add a new record with the updated priority value. The
+				// LocalJobsPrioQueue std::set will automatically order it.
+				if ( it->job_id.cluster == cluster_id && it->job_id.proc == proc_id ) {
+					scheduler.LocalJobsPrioQueue.erase( it );
+					JOB_ID_KEY jid = JOB_ID_KEY( cluster_id, proc_id );
+					LocalJobRec rec = LocalJobRec( atoi ( attr_value ), jid );
+					scheduler.LocalJobsPrioQueue.insert( rec );
+					break;
+				}
+			}
+		}
 	}
 
 	return 0;
@@ -4446,7 +4463,7 @@ SetMyProxyPassword (int cluster_id, int proc_id, const char *pwd) {
 int
 DestroyMyProxyPassword( int cluster_id, int proc_id )
 {
-	int val = 0;
+	bool val = false;
 	if (GetAttributeBool(cluster_id, proc_id,
 						 ATTR_MYPROXY_PASSWORD_EXISTS, &val) < 0 ||
 		!val) {
@@ -4821,13 +4838,13 @@ ReadProxyFileIntoAd( const char *file, const char *owner, ClassAd &x509_attrs )
 static void
 AddSessionAttributes(const std::list<std::string> &new_ad_keys)
 {
-	if (!Q_SOCK || !Q_SOCK->getReliSock()) {return;}
 	if (new_ad_keys.empty()) {return;}
 
-	const std::string &sess_id = Q_SOCK->getReliSock()->getSessionID();
 	ClassAd policy_ad;
-	if (!daemonCore || !daemonCore->getSecMan()) {return;}
-	daemonCore->getSecMan()->getSessionPolicy(sess_id.c_str(), policy_ad);
+	if (Q_SOCK && Q_SOCK->getReliSock()) {
+		const std::string &sess_id = Q_SOCK->getReliSock()->getSessionID();
+		daemonCore->getSecMan()->getSessionPolicy(sess_id.c_str(), policy_ad);
+	}
 
 	classad::ClassAdUnParser unparse;
 	unparse.SetOldClassAd(true, true);
@@ -4837,42 +4854,89 @@ AddSessionAttributes(const std::list<std::string> &new_ad_keys)
 	string last_proxy_file;
 	ClassAd proxy_file_attrs;
 
+	// Put X509 credential information in cluster ads (from either the
+	// job's proxy or the GSI authentication on the CEDAR socket).
+	// Proc ads should get X509 credential information only if they
+	// have a proxy file different than in their cluster ad.
 	for (std::list<std::string>::const_iterator it = new_ad_keys.begin(); it != new_ad_keys.end(); ++it)
 	{
-		MyString x509up;
+		string x509up;
+		string iwd;
 		JobQueueKey job( it->c_str() );
-			// Set attribute for process ads: prevents jobs from overriding these.
-		if (job.proc == -1) {continue;}
-
-		// check if x509up was defined for this job
-		if ( GetAttributeString(job.cluster, job.proc, ATTR_X509_USER_PROXY, x509up) == -1 ) {
+		GetAttributeString(job.cluster, job.proc, ATTR_X509_USER_PROXY, x509up);
+		GetAttributeString(job.cluster, job.proc, ATTR_JOB_IWD, iwd);
+		if (job.proc != -1 && x509up.empty()) {
+			if (iwd.empty()) {
+				// A proc ad that will inherit its iwd and proxy filename
+				// from its cluster ad.
+				// Let any x509 attributes from the cluster ad show through.
+				continue;
+			}
+			// This proc ad has a different iwd than its cluster ad.
+			// If cluster ad has a relative proxy filename, then the proc
+			// ad's altered iwd could result in a different proxy file
+			// than in the cluster ad.
 			GetAttributeString(job.cluster, -1, ATTR_X509_USER_PROXY, x509up);
+			if (x509up.empty() || x509up[0] == DIR_DELIM_CHAR) {
+				// A proc ad with no proxy filename whose cluster ad
+				// has no proxy filename or a proxy filename with full path.
+				// Let any x509 attributes from the cluster ad show through.
+				continue;
+			}
 		}
-		if (x509up.IsEmpty()) {
+		if (job.proc == -1 && x509up.empty()) {
+			// A cluster ad with no proxy file. If the client authenticated
+			// with GSI, use the attributes from that credential.
 			x509_attrs = &policy_ad;
 		} else {
+			// We have a cluster ad with a proxy file or a proc ad with a
+			// proxy file that may be different than in its cluster's ad.
 			string full_path;
 			if ( x509up[0] == DIR_DELIM_CHAR ) {
 				full_path = x509up;
 			} else {
-				MyString iwd;
-				if ( GetAttributeString(job.cluster, job.proc, ATTR_JOB_IWD, iwd ) == -1 ) {
+				if ( iwd.empty() ) {
 					GetAttributeString(job.cluster, -1, ATTR_JOB_IWD, iwd );
 				}
-				formatstr( full_path, "%s%c%s", iwd.Value(), DIR_DELIM_CHAR, x509up.Value() );
+				formatstr( full_path, "%s%c%s", iwd.c_str(), DIR_DELIM_CHAR, x509up.c_str() );
+			}
+			if (job.proc != -1) {
+				string cluster_full_path;
+				string cluster_x509up;
+				GetAttributeString(job.cluster, -1, ATTR_X509_USER_PROXY, cluster_x509up);
+				if (cluster_x509up[0] == DIR_DELIM_CHAR) {
+					cluster_full_path = cluster_x509up;
+				} else {
+					string cluster_iwd;
+					GetAttributeString(job.cluster, -1, ATTR_JOB_IWD, cluster_iwd );
+					formatstr( cluster_full_path, "%s%c%s", cluster_iwd.c_str(), DIR_DELIM_CHAR, cluster_x509up.c_str() );
+				}
+				if (full_path == cluster_full_path) {
+					// A proc ad with identical full-path proxy
+					// filename as its cluster ad.
+					// Let any attributes from the cluster ad show through.
+					continue;
+				}
 			}
 			if ( full_path != last_proxy_file ) {
-				MyString owner;
+				string owner;
 				if ( GetAttributeString(job.cluster, job.proc, ATTR_OWNER, owner) == -1 ) {
 					GetAttributeString(job.cluster, -1, ATTR_OWNER, owner);
 				}
 				last_proxy_file = full_path;
 				proxy_file_attrs.Clear();
-				ReadProxyFileIntoAd( last_proxy_file.c_str(), owner.Value(), proxy_file_attrs );
+				ReadProxyFileIntoAd( last_proxy_file.c_str(), owner.c_str(), proxy_file_attrs );
 			}
 			if ( proxy_file_attrs.size() > 0 ) {
 				x509_attrs = &proxy_file_attrs;
+			} else if (job.proc != -1) {
+				// Failed to read proxy for a proc ad.
+				// Let any attributes from the cluster ad show through.
+				continue;
 			} else {
+				// Failed to read proxy for a cluster ad.
+				// If the client authenticated with GSI, use the attributes
+				// from that credential.
 				x509_attrs = &policy_ad;
 			}
 		}
@@ -5150,12 +5214,12 @@ int CommitTransactionInternal( bool durable, CondorError * errorStack ) {
 			int max_xfer_input_mb = -1;
 			param_integer("MAX_TRANSFER_INPUT_MB",max_xfer_input_mb,true,-1,false,INT_MIN,INT_MAX,procad);
 			filesize_t job_max_xfer_input_mb = 0;
-			if( procad && procad->EvalInteger(ATTR_MAX_TRANSFER_INPUT_MB,NULL,job_max_xfer_input_mb) ) {
+			if( procad && procad->LookupInteger(ATTR_MAX_TRANSFER_INPUT_MB,job_max_xfer_input_mb) ) {
 				max_xfer_input_mb = job_max_xfer_input_mb;
 			}
 			if( max_xfer_input_mb >= 0 ) {
 				filesize_t xfer_input_size_mb = 0;
-				if( procad && procad->EvalInteger(ATTR_TRANSFER_INPUT_SIZE_MB,NULL,xfer_input_size_mb) ) {
+				if( procad && procad->LookupInteger(ATTR_TRANSFER_INPUT_SIZE_MB,xfer_input_size_mb) ) {
 					if( xfer_input_size_mb > max_xfer_input_mb ) {
 						std::string hold_reason;
 						formatstr(hold_reason,"%s (%d) is greater than %s (%d) at submit time",
@@ -5308,9 +5372,8 @@ GetAttributeInt(int cluster_id, int proc_id, const char *attr_name, int *val)
 	return -1;
 }
 
-
 int
-GetAttributeBool(int cluster_id, int proc_id, const char *attr_name, int *val)
+GetAttributeBool(int cluster_id, int proc_id, const char *attr_name, bool *val)
 {
 	ClassAd	*ad;
 	JobQueueKeyBuf key;
@@ -5385,8 +5448,22 @@ int
 GetAttributeString( int cluster_id, int proc_id, const char *attr_name, 
 					MyString &val )
 {
+	std::string strVal;
+	int rc = GetAttributeString(cluster_id, proc_id, attr_name, strVal);
+	val = strVal;
+	return rc;
+}
+
+// returns -1 if the lookup fails or if the value is not a string, 0 if
+// the lookup succeeds in the job queue, 1 if it succeeds in the current
+// transaction; val is set to the empty string on failure
+int
+GetAttributeString( int cluster_id, int proc_id, const char *attr_name,
+                    std::string &val )
+{
 	ClassAd	*ad = NULL;
 	char	*attr_val;
+	std::string tmp;
 
 	JobQueueKeyBuf key;
 	IdToKey(cluster_id,proc_id,key);
@@ -5395,7 +5472,8 @@ GetAttributeString( int cluster_id, int proc_id, const char *attr_name,
 		ClassAd tmp_ad;
 		tmp_ad.AssignExpr(attr_name,attr_val);
 		free( attr_val );
-		if( tmp_ad.LookupString(attr_name, val) == 1) {
+		if( tmp_ad.LookupString(attr_name, tmp) == 1) {
+			val = tmp;
 			return 1;
 		}
 		val = "";
@@ -5409,7 +5487,8 @@ GetAttributeString( int cluster_id, int proc_id, const char *attr_name,
 		return -1;
 	}
 
-	if (ad->LookupString(attr_name, val) == 1) {
+	if (ad->LookupString(attr_name, tmp) == 1) {
+		val = tmp;
 		return 0;
 	}
 	val = "";
@@ -5467,10 +5546,11 @@ GetDirtyAttributes(int cluster_id, int proc_id, ClassAd *updated_attrs)
 		return -1;
 	}
 
-	ad->ResetExpr();
-	while( ad->NextDirtyExpr(name, expr) != false )
+	for ( auto itr = ad->dirtyBegin(); itr != ad->dirtyEnd(); itr++ )
 	{
-		if(!ClassAdAttributeIsPrivate(name))
+		name = itr->c_str();
+		expr = ad->LookupExpr(name);
+		if(expr && !ClassAdAttributeIsPrivate(name))
 		{
 			if(!JobQueue->LookupInTransaction(key, name, val) )
 			{
@@ -5594,25 +5674,23 @@ dollarDollarExpand(int cluster_id, int proc_id, ClassAd *ad, ClassAd *startd_ad,
 		// Copy attributes from chained parent ad into the expanded ad
 		// so if parent is deleted before caller is finished with this
 		// ad, things will still be ok.
-		expanded_ad->ChainCollapse();
+		ChainCollapse(*expanded_ad);
 
 			// Make a stringlist of all attribute names in job ad.
 			// Note: ATTR_JOB_CMD must be first in AttrsToExpand...
 		StringList AttrsToExpand;
 		const char * curr_attr_to_expand;
 		AttrsToExpand.append(ATTR_JOB_CMD);
-		ad->ResetName();
-		const char *attr_name = ad->NextNameOriginal();
-		for ( ; attr_name; attr_name = ad->NextNameOriginal() ) {
-			if ( strncasecmp(attr_name,"MATCH_",6) == 0 ) {
+		for ( auto itr = expanded_ad->begin(); itr != expanded_ad->end(); itr++ ) {
+			if ( strncasecmp(itr->first.c_str(),"MATCH_",6) == 0 ) {
 					// We do not want to expand MATCH_XXX attributes,
 					// because these are used to store the result of
 					// previous expansions, which could potentially
 					// contain literal $$(...) in the replacement text.
 				continue;
 			}
-			if ( strcasecmp(attr_name,ATTR_JOB_CMD) ) { 
-				AttrsToExpand.append(attr_name);
+			if ( strcasecmp(itr->first.c_str(),ATTR_JOB_CMD) ) {
+				AttrsToExpand.append(itr->first.c_str());
 			}
 		}
 
@@ -5749,7 +5827,7 @@ dollarDollarExpand(int cluster_id, int proc_id, ClassAd *ad, ClassAd *startd_ad,
 					}
 
 					MyString result;
-					isok = tmpJobAd.EvalString(INTERNAL_DD_EXPR, startd_ad, result);
+					isok = EvalString(INTERNAL_DD_EXPR, &tmpJobAd, startd_ad, result);
 					if( ! isok ) {
 						attribute_not_found = true;
 						break;
@@ -5929,22 +6007,20 @@ dollarDollarExpand(int cluster_id, int proc_id, ClassAd *ad, ClassAd *startd_ad,
 				// Copy NegotiatorMatchExprXXX attributes from startd ad
 				// to the job ad.  These attributes were inserted by the
 				// negotiator.
-			startd_ad->ResetName();
-			char const *c_name;
 			size_t len = strlen(ATTR_NEGOTIATOR_MATCH_EXPR);
-			while( (c_name=startd_ad->NextNameOriginal()) ) {
-				if( !strncmp(c_name,ATTR_NEGOTIATOR_MATCH_EXPR,len) ) {
-					ExprTree *expr = startd_ad->LookupExpr(c_name);
+			for ( auto itr = startd_ad->begin(); itr != startd_ad->end(); itr++ ) {
+				if( !strncmp(itr->first.c_str(),ATTR_NEGOTIATOR_MATCH_EXPR,len) ) {
+					ExprTree *expr = itr->second;
 					if( !expr ) {
 						continue;
 					}
 					const char *new_value = NULL;
 					new_value = ExprTreeToString(expr);
 					ASSERT(new_value);
-					expanded_ad->AssignExpr(c_name,new_value);
+					expanded_ad->AssignExpr(itr->first.c_str(),new_value);
 
 					MyString match_exp_name = MATCH_EXP;
-					match_exp_name += c_name;
+					match_exp_name += itr->first;
 					if ( SetAttribute(cluster_id,proc_id,match_exp_name.Value(),new_value) < 0 )
 					{
 						EXCEPT("Failed to store '%s=%s' into job ad %d.%d",
@@ -5976,7 +6052,7 @@ dollarDollarExpand(int cluster_id, int proc_id, ClassAd *ad, ClassAd *startd_ad,
 				// as DiskProvisionedDisk, MemoryProvisioned, etc.  note that we 
 				// evaluate rather than lookup the value so we collapse expressions
 				// into literal values at this point.
-				if (ad->EvalAttr(resname, startd_ad, val)) {
+				if (EvalAttr(resname, ad, startd_ad, val)) {
 					classad::Value::ValueType vt = val.GetType();
 					if (vt & value_type_ok) {
 						classad::ExprTree * plit = classad::Literal::MakeLiteral(val);
@@ -5990,7 +6066,7 @@ dollarDollarExpand(int cluster_id, int proc_id, ClassAd *ad, ClassAd *startd_ad,
 				// evaluate RequestDisk, RequestMemory and convert to literal 
 				// values in the expanded job ad.
 				attr = "Request"; attr += res;
-				if (ad->EvalAttr(attr.c_str(), startd_ad, val)) {
+				if (EvalAttr(attr.c_str(), ad, startd_ad, val)) {
 					classad::Value::ValueType vt = val.GetType();
 					if (vt & value_type_ok) {
 						classad::ExprTree * plit = classad::Literal::MakeLiteral(val);
@@ -6221,15 +6297,46 @@ rewriteSpooledJobAd(ClassAd *job_ad, int cluster, int proc, bool modify_ad)
 	}
 
 		// Backup the original TRANSFER_OUTPUT_REMAPS at submit time
+	std::string url_remap_commands;
 	expr = job_ad->LookupExpr(ATTR_TRANSFER_OUTPUT_REMAPS);
 	snprintf(new_attr_name,500,"SUBMIT_%s",ATTR_TRANSFER_OUTPUT_REMAPS);
 	if ( expr ) {
-		const char *remap_buf = ExprTreeToString(expr);
-		ASSERT(remap_buf);
-		if ( modify_ad ) {
-			job_ad->AssignExpr(new_attr_name,remap_buf);
+
+			// Try to parse out the URL remaps; those stay in the original
+			// attribute.
+		std::string remap_string;
+		if (job_ad->EvaluateAttrString(ATTR_TRANSFER_OUTPUT_REMAPS, remap_string)) {
+			StringList remap_commands_list(remap_string.c_str(), ";");
+			remap_commands_list.rewind();
+			char *command;
+			std::string remap_commands;
+			while( (command = remap_commands_list.next()) ) {
+				StringList command_parts(command, " =");
+				if (command_parts.number() != 2) {continue;}
+				command_parts.rewind();
+				command_parts.next();
+				auto dest = command_parts.next();
+				if (IsUrl(dest)) {
+					url_remap_commands += command;
+					url_remap_commands += ";";
+				} else {
+					remap_commands += command;
+					remap_commands += ";";
+				}
+			}
+			if (modify_ad) {
+				job_ad->InsertAttr(new_attr_name, remap_commands);
+			} else {
+				SetAttributeString(cluster, proc, new_attr_name, remap_commands.c_str());
+			}
 		} else {
-			SetAttribute(cluster,proc,new_attr_name,remap_buf);
+			const char *remap_buf = ExprTreeToString(expr);
+			ASSERT(remap_buf);
+			if ( modify_ad ) {
+				job_ad->AssignExpr(new_attr_name, remap_buf);
+			} else {
+				SetAttribute(cluster,proc,new_attr_name,remap_buf);
+			}
 		}
 	}
 	else if(job_ad->LookupExpr(new_attr_name)) {
@@ -6248,9 +6355,17 @@ rewriteSpooledJobAd(ClassAd *job_ad, int cluster, int proc, bool modify_ad)
 		// spool space. We only want to remap when the submitter
 		// retrieves the files.
 	if ( modify_ad ) {
-		job_ad->AssignExpr(ATTR_TRANSFER_OUTPUT_REMAPS,"Undefined");
+		if (url_remap_commands.empty()) {
+			job_ad->AssignExpr(ATTR_TRANSFER_OUTPUT_REMAPS, "Undefined");
+		} else {
+			job_ad->InsertAttr(ATTR_TRANSFER_OUTPUT_REMAPS, url_remap_commands);
+		}
 	} else {
-		SetAttribute(cluster,proc,ATTR_TRANSFER_OUTPUT_REMAPS,"Undefined");
+		if (url_remap_commands.empty()) {
+			SetAttribute(cluster,proc,ATTR_TRANSFER_OUTPUT_REMAPS,"Undefined");
+		} else {
+			SetAttributeString(cluster, proc, ATTR_TRANSFER_OUTPUT_REMAPS, url_remap_commands.c_str());
+		}
 	}
 
 		// Now, for all the attributes listed in 
@@ -6445,7 +6560,7 @@ GetJobByConstraint(const char *constraint)
 	JobQueue->StartIterateAllClassAds();
 	while(JobQueue->Iterate(key,ad)) {
 		if ( key.cluster > 0 && key.proc >= 0 && // avoid cluster and header ads
-			EvalBool(ad, constraint)) {
+			EvalExprBool(ad, constraint)) {
 				return ad;
 		}
 	}
@@ -6476,7 +6591,7 @@ GetNextJobByConstraint(const char *constraint, int initScan)
 
 	while(JobQueue->Iterate(key,ad)) {
 		if ( key.cluster > 0 && key.proc >= 0 && // avoid cluster and header ads
-			(!constraint || !constraint[0] || EvalBool(ad, constraint))) {
+			(!constraint || !constraint[0] || EvalExprBool(ad, constraint))) {
 			return ad;
 		}
 	}
@@ -6495,7 +6610,7 @@ GetNextJobOrClusterByConstraint(const char *constraint, int initScan)
 
 	while(JobQueue->Iterate(key,ad)) {
 		if ( key.cluster > 0 && // skip the header ad
-			(!constraint || !constraint[0] || EvalBool(ad, constraint))) {
+			(!constraint || !constraint[0] || EvalExprBool(ad, constraint))) {
 			return ad;
 		}
 	}
@@ -6524,7 +6639,7 @@ GetNextDirtyJobByConstraint(const char *constraint, int initScan)
 			continue;
 		}
 
-		if ( !constraint || !constraint[0] || EvalBool(ad, constraint)) {
+		if ( !constraint || !constraint[0] || EvalExprBool(ad, constraint)) {
 			return ad;
 		}
 	}
@@ -6648,7 +6763,7 @@ SendSpoolFileIfNeeded(ClassAd& ad)
 	// enabled, the hash variable will be set to a non-empty string that
 	// can be used to create a link that can be shared by future jobs
 	//
-	MyString owner;
+	std::string owner;
 	std::string hash;
 	if (param_boolean("SHARE_SPOOLED_EXECUTABLES", true)) {
 		if (!ad.LookupString(ATTR_OWNER, owner)) {
@@ -6700,19 +6815,19 @@ SendSpoolFileIfNeeded(ClassAd& ad)
 				rv = SetAttributeString(active_cluster_num,
 			                      -1,
 			                      ATTR_OWNER,
-			                      owner.Value());
+			                      owner.c_str());
 
 				if (rv < 0) {
 					dprintf(D_ALWAYS,
 					        "SendSpoolFileIfNeeded: unable to set %s to %s\n",
 					        ATTR_OWNER,
-					        owner.Value());
+					        owner.c_str());
 					hash = "";
 				}
 			}
 
 			if (!hash.empty() &&
-			    ickpt_share_try_sharing(owner.Value(), hash, path))
+			    ickpt_share_try_sharing(owner.c_str(), hash, path))
 			{
 				Q_SOCK->getReliSock()->put(1);
 				Q_SOCK->getReliSock()->end_of_message();
@@ -6732,7 +6847,7 @@ SendSpoolFileIfNeeded(ClassAd& ad)
 	}
 
 	if (!hash.empty()) {
-		ickpt_share_init_sharing(owner.Value(), hash, path);
+		ickpt_share_init_sharing(owner.c_str(), hash, path);
 	}
 
 	free(path); path = NULL;
@@ -6832,7 +6947,8 @@ int get_job_prio(JobQueueJob *job, const JOB_ID_KEY & jid, void *)
     if (cur_hosts>=max_hosts || job_status==HELD || 
 			job_status==REMOVED || job_status==COMPLETED ||
 			job->IsNoopJob() ||
-			!service_this_universe(universe,job))
+			!service_this_universe(universe,job) ||
+			scheduler.AlreadyMatched(job, job->Universe()))
 	{
         return cur_hosts;
 	}
@@ -7291,6 +7407,19 @@ static void DoBuildPrioRecArray() {
 }
 
 /*
+ * Force a rebuild of the PrioRec array if we're beyond the max interval
+ * for a rebuild.
+ * This is meant to be called periodically as a DaemonCore timer.
+ */
+void BuildPrioRecArrayPeriodic()
+{
+	if ( time(NULL) >= PrioRecArrayTimeslice.getStartTime().tv_sec + PrioRecRebuildMaxInterval ) {
+		PrioRecArrayIsDirty = true;
+		BuildPrioRecArray(false);
+	}
+}
+
+/*
  * Build an array of runnable jobs sorted by priority.  If there are
  * a lot of jobs in the queue, this can be expensive, so avoid building
  * the array too often.
@@ -7318,6 +7447,12 @@ bool BuildPrioRecArray(bool no_match_found /*default false*/) {
 				"Reusing prioritized runnable job list because nothing has "
 				"changed.\n");
 		return false;
+	}
+
+	if ( BuildPrioRecArrayTid < 0 ) {
+		BuildPrioRecArrayTid = daemonCore->Register_Timer(
+				PrioRecRebuildMaxInterval, PrioRecRebuildMaxInterval,
+				&BuildPrioRecArrayPeriodic, "BuildPrioRecArrayPeriodic");
 	}
 
 		// run without any delay the first time
@@ -7467,17 +7602,7 @@ void FindRunnableJob(PROC_ID & jobid, ClassAd* my_match_ad,
 				PrioRec[i].owner[0] = '\0';
 				dprintf(D_FULLDEBUG,
 						"record for job %d.%d skipped until PrioRec rebuild (%s)\n",
-						jobid.cluster, jobid.proc, isRunnable ? "already matched" : "no longer runnable");
-
-					// Ensure that PrioRecArray is rebuilt
-					// eventually, because changes in the status
-					// of AlreadyMatched() can happen without
-					// changes to the status of the job, (not the
-					// normal case, but still possible) so the
-					// dirty flag may not get set when the job
-					// is no longer AlreadyMatched() unless we
-					// set it here and keep rebuilding the array.
-				DirtyPrioRecArray();
+						PrioRec[i].id.cluster, PrioRec[i].id.proc, isRunnable ? "already matched" : "no longer runnable");
 
 					// Move along to the next job in the prio rec array
 				continue;
@@ -7526,7 +7651,7 @@ void FindRunnableJob(PROC_ID & jobid, ClassAd* my_match_ad,
 				my_match_ad->LookupFloat(ATTR_CURRENT_RANK, current_startd_rank) )
 			{
 				float new_startd_rank = 0;
-				if( my_match_ad->EvalFloat(ATTR_RANK, ad, new_startd_rank) )
+				if( EvalFloat(ATTR_RANK, my_match_ad, ad, new_startd_rank) )
 				{
 					if( new_startd_rank < current_startd_rank ) {
 						continue;
@@ -7545,13 +7670,13 @@ void FindRunnableJob(PROC_ID & jobid, ClassAd* my_match_ad,
 				// jobs with a subset of the limits given to
 				// the current match to reuse it.
 
-			MyString jobLimits, recordedLimits;
+			std::string jobLimits, recordedLimits;
 			if (param_boolean("CLAIM_RECYCLING_CONSIDER_LIMITS", true)) {
 				ad->LookupString(ATTR_CONCURRENCY_LIMITS, jobLimits);
 				my_match_ad->LookupString(ATTR_MATCHED_CONCURRENCY_LIMITS,
 										  recordedLimits);
-				jobLimits.lower_case();
-				recordedLimits.lower_case();
+				lower_case(jobLimits);
+				lower_case(recordedLimits);
 
 				if (jobLimits == recordedLimits) {
 					dprintf(D_FULLDEBUG,

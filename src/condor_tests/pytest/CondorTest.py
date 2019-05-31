@@ -1,10 +1,12 @@
+from __future__ import absolute_import
+
 import atexit
 import sys
 import time
 
-from Globals import *
-from Utils import Utils
-from PersonalCondor import PersonalCondor
+from .Globals import *
+from .Utils import Utils
+from .PersonalCondor import PersonalCondor
 
 class CondorTest(object):
 
@@ -89,7 +91,7 @@ class CondorTest(object):
     # Exit handling.
     #
 
-    _exit_code = None
+    _exit_code = 0
 
     @staticmethod
     def ExitHandler():
@@ -106,7 +108,11 @@ class CondorTest(object):
                 rv = TEST_FAILURE
 
         # Make sure the PCs are really gone.
+<<<<<<< HEAD
         if len(CondorTest._personal_condors) > 0:
+=======
+        if CondorTest._personal_condors:
+>>>>>>> master
             Utils.TLog( "Waiting for personal condor(s) to finish stopping..." )
             time.sleep(5)
             for name, pc in CondorTest._personal_condors.items():

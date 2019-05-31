@@ -217,7 +217,8 @@ check_recovery_file( const char *execute_dir )
 	int eof = 0;
 	int error = 0;
 	int empty = 0;
-	recovery_ad = new ClassAd( recovery_fp, "***", eof, error, empty );
+	recovery_ad = new ClassAd;
+	InsertFromFile( recovery_fp, *recovery_ad, "***", eof, error, empty );
 	if ( error || empty ) {
 		fclose( recovery_fp );
 		if (unlink(recovery_file.c_str()) < 0) {
@@ -258,7 +259,6 @@ check_recovery_file( const char *execute_dir )
 		dprintf( D_FULLDEBUG, "check_recovery_file: Failed to remove file '%s'\n", recovery_file.c_str() );
 	}
 }
-
 void
 cleanup_execute_dirs( StringList &list )
 {
@@ -314,6 +314,8 @@ cleanup_execute_dirs( StringList &list )
 		}
 #endif
 	}
+
+	DockerAPI::pruneContainers();
 }
 
 bool retry_cleanup_user_account(const std::string & name, int /*options*/, int & err)

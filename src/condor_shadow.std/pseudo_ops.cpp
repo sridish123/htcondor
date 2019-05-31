@@ -1162,9 +1162,9 @@ pseudo_startup_info_request( STARTUP_INFO *s )
 	s->env_v1or2 = Strdup( p->env_v1or2 );
 	s->iwd = Strdup( p->iwd );
 
-	if (JobAd->LookupBool(ATTR_WANT_CHECKPOINT, s->ckpt_wanted) == 0) {
-		s->ckpt_wanted = TRUE;
-	}
+	bool val = true;
+	JobAd->LookupBool(ATTR_WANT_CHECKPOINT, val);
+	s->ckpt_wanted = val ? TRUE : FALSE;
 
 	CkptWanted = s->ckpt_wanted;
 
@@ -1275,7 +1275,7 @@ pseudo_get_file_info( const char *logical_name, char *&actual_url )
 int
 do_get_file_info( char const *logical_name, char *&actual_url, int allow_complex )
 {
-	MyString	remap_list;
+	std::string	remap_list;
 	MyString	split_dir;
 	MyString	split_file;
 	MyString	full_path;
@@ -1318,9 +1318,9 @@ do_get_file_info( char const *logical_name, char *&actual_url, int allow_complex
 	/* Any name comparisons must check the logical name, the simple name, and the full path */
 
 	if(JobAd->LookupString(ATTR_FILE_REMAPS,remap_list) &&
-	  (filename_remap_find( remap_list.Value(), logical_name, remap ) ||
-	   filename_remap_find( remap_list.Value(), split_file.Value(), remap ) ||
-	   filename_remap_find( remap_list.Value(), full_path.Value(), remap ))) {
+	  (filename_remap_find( remap_list.c_str(), logical_name, remap ) ||
+	   filename_remap_find( remap_list.c_str(), split_file.Value(), remap ) ||
+	   filename_remap_find( remap_list.c_str(), full_path.Value(), remap ))) {
 
 		dprintf(D_SYSCALLS,"\tremapped to: %s\n",remap.Value());
 
@@ -1404,7 +1404,7 @@ do_get_file_info( char const *logical_name, char *&actual_url, int allow_complex
 
 void append_buffer_info( MyString &url, const char *method, char const *path )
 {
-	MyString buffer_list;
+	std::string buffer_list;
 	MyString buffer_string;
 	MyString dir;
 	MyString file;
@@ -1420,8 +1420,8 @@ void append_buffer_info( MyString &url, const char *method, char const *path )
 	/* These lines have the same syntax as a remap list */
 
 	if(JobAd->LookupString(ATTR_BUFFER_FILES,buffer_list)) {
-		if( filename_remap_find(buffer_list.Value(),path,buffer_string) ||
-		    filename_remap_find(buffer_list.Value(),file.Value(),buffer_string) ) {
+		if( filename_remap_find(buffer_list.c_str(),path,buffer_string) ||
+		    filename_remap_find(buffer_list.c_str(),file.Value(),buffer_string) ) {
 
 			/* If the file is merely mentioned, turn on the default buffer */
 			url += "buffer:";
@@ -1447,12 +1447,12 @@ void append_buffer_info( MyString &url, const char *method, char const *path )
 static int attr_list_has_file( const char *attr, const char *path )
 {
 	char const *file;
-	MyString str;
+	std::string str;
 
 	file = condor_basename(path);
 
 	JobAd->LookupString(attr,str);
-	StringList list(str.Value());
+	StringList list(str.c_str());
 
 	if( list.contains_withwildcard(path) || list.contains_withwildcard(file) ) {
 		return 1;
@@ -1802,7 +1802,7 @@ access_via_nfs( const char * /*file*/ )
 	}
 
 	if( !Executing_UID_Domain[0] ) {
-		dprintf( D_SYSCALLS, "\tdon't know UID domain of executing machine" );
+		dprintf( D_SYSCALLS, "\tdon't know UID domain of executing machine\n" );
 		dprintf( D_SYSCALLS, "\taccess_via_NFS() returning FALSE\n" );
 		return FALSE;
 	}

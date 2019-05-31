@@ -51,10 +51,10 @@ void doCommand( Daemon* d );
 int doCommands(int argc,char *argv[],char *MyName, StringList & unresolved_names);
 void version();
 void handleAll();
-void doSquawk( char *addr );
+void doSquawk( const char *addr );
 int handleSquawk( char *line, char *addr );
 int doSquawkReconnect( char *addr );
-void squawkHelp( char *token );
+void squawkHelp( const char *token );
 int  printAdToFile(ClassAd *ad, char* filename);
 int strncmp_auto(const char *s1, const char *s2);
 void PREFAST_NORETURN usage( const char *str, int iExitCode=1 );
@@ -343,6 +343,7 @@ main( int argc, char *argv[] )
 #endif
 
 	myDistro->Init( argc, argv );
+	set_priv_initialize(); // allow uid switching if root
 	config();
 
 	MyName = strrchr( argv[0], DIR_DELIM_CHAR );
@@ -1061,7 +1062,7 @@ doCommands(int /*argc*/,char * argv[],char *MyName,StringList & unresolved_names
 			} else {
 				names.append( *argv );
 			}
-			delete [] daemonname;
+			free( daemonname );
 			daemonname = NULL;
 			break;
 		}
@@ -1271,7 +1272,7 @@ resolveNames( DaemonList* daemon_list, StringList* name_list, StringList* unreso
 		usage( NULL );
 	}
 
-	char* pool_addr = pool ? pool->addr() : NULL;
+	const char* pool_addr = pool ? pool->addr() : NULL;
 	CondorQuery query(adtype);
 	ClassAd* ad;
 	ClassAdList ads;
@@ -1457,7 +1458,7 @@ doCommand( Daemon* d )
 	int	my_cmd = real_cmd;
 	CondorError errstack;
 	bool error = true;
-	char* name;
+	const char* name;
 	bool is_local;
 	daemon_t d_type;
 
@@ -1529,7 +1530,7 @@ doCommand( Daemon* d )
 				if (!d->startCommand(my_cmd, &sock, 0, &errstack)) {
 					fprintf(stderr, "ERROR\n%s\n", errstack.getFullText(true).c_str());
 				}
-				if( !sock.code(name) || !sock.end_of_message() ) {
+				if( !sock.put(name) || !sock.end_of_message() ) {
 					fprintf( stderr, "Can't send %s command to %s\n", 
 								 cmdToStr(my_cmd), d->idStr() );
 					all_good = false;
@@ -1553,7 +1554,7 @@ doCommand( Daemon* d )
 				if( !d->startCommand(my_cmd, &sock, 0, &errstack) ) {
 					fprintf( stderr, "ERROR\n%s\n", errstack.getFullText(true).c_str());
 				}
-				if( !sock.code(name) || !sock.end_of_message() ) {
+				if( !sock.put(name) || !sock.end_of_message() ) {
 					fprintf( stderr, "Can't send %s command to %s\n",
 								 cmdToStr(my_cmd), d->idStr() );
 					all_good = false;
@@ -1749,7 +1750,7 @@ handleAll()
 
 
 void
-doSquawk( char *address ) {
+doSquawk( const char *address ) {
 
 		/* making own addr here; memory management in tool confusing. */
 	char line[256], addr[256];
@@ -1979,16 +1980,16 @@ doSquawkReconnect( char *addr ) {
 	}
 	if( ! d.locate(Daemon::LOCATE_FOR_LOOKUP) ) {
 		printf ( "Failed to contact daemon.\n" );
-		delete [] hostname;
+		free( hostname );
 		return FALSE;
 	}
 	strcpy ( addr, d.addr() );
-	delete [] hostname;
+	free( hostname );
 	
 	return TRUE;	
 }
 
-void squawkHelp( char *token ) {
+void squawkHelp( const char *token ) {
 	switch( token[0] ) {
 	case 's': 
 		printf ( "Send a daemoncore signal.\n" ); 

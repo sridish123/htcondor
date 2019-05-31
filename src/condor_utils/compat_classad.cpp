@@ -17,6 +17,7 @@
  *
  ***************************************************************/
 #include "condor_common.h"
+#include <algorithm>
 #include "compat_classad.h"
 
 #include "condor_classad.h"
@@ -1202,9 +1203,6 @@ ClassAd::ClassAd()
 		m_initConfig = true;
 	}
 
-	ResetName();
-    ResetExpr();
-
 	DisableDirtyTracking();
 }
 
@@ -1214,101 +1212,18 @@ ClassAd::ClassAd( const ClassAd &ad ) : classad::ClassAd(ad)
 		this->Reconfig();
 		m_initConfig = true;
 	}
-
-	CopyFrom( ad );
-
-	ResetName();
-    ResetExpr();
-
 }
 
-ClassAd::ClassAd( const classad::ClassAd &ad )
+ClassAd::ClassAd( const classad::ClassAd &ad ) : classad::ClassAd(ad)
 {
 	if ( !m_initConfig ) {
 		this->Reconfig();
 		m_initConfig = true;
 	}
-
-	CopyFrom( ad );
-
-	ResetName();
-    ResetExpr();
-
 }
 
 ClassAd::~ClassAd()
 {
-}
-
-ClassAd::
-ClassAd( FILE *file, const char *delimitor, int &isEOF, int&error, int &empty )
-{
-	if ( !m_initConfig ) {
-		this->Reconfig();
-		m_initConfig = true;
-	}
-
-	DisableDirtyTracking();
-
-	ResetName();
-    ResetExpr();
-
-
-	int index;
-	MyString buffer;
-	MyStringFpSource myfs(file, false);
-	size_t delimLen = strlen( delimitor );
-
-	empty = TRUE;
-
-	while( 1 ) {
-
-			// get a line from the file
-		if ( buffer.readLine( myfs, false ) == false ) {
-			error = ( isEOF = feof( file ) ) ? 0 : errno;
-			return;
-		}
-
-			// did we hit the delimitor?
-		if ( strncmp( buffer.Value(), delimitor, delimLen ) == 0 ) {
-				// yes ... stop
-			isEOF = feof( file );
-			error = 0;
-			return;
-		}
-
-			// Skip any leading white-space
-		index = 0;
-		while ( index < buffer.Length() &&
-				( buffer[index] == ' ' || buffer[index] == '\t' ) ) {
-			index++;
-		}
-
-			// if the rest of the string is empty, try reading again
-			// if it starts with a pound character ("#"), treat as a comment
-		if( index == buffer.Length() || buffer[index] == '\n' ||
-			buffer[index] == '#' ) {
-			continue;
-		}
-
-			// Insert the string into the classad
-		if( Insert( buffer.Value() ) == FALSE ) { 	
-				// print out where we barfed to the log file
-			dprintf(D_ALWAYS,"failed to create classad; bad expr = '%s'\n",
-					buffer.Value());
-				// read until delimitor or EOF; whichever comes first
-			buffer = "";
-			while ( strncmp( buffer.Value(), delimitor, delimLen ) &&
-					!feof( file ) ) {
-				buffer.readLine( myfs, false );
-			}
-			isEOF = feof( file );
-			error = -1;
-			return;
-		} else {
-			empty = FALSE;
-		}
-	}
 }
 
 CondorClassAdFileParseHelper::~CondorClassAdFileParseHelper()
@@ -1347,7 +1262,7 @@ bool CondorClassAdFileParseHelper::line_is_ad_delimitor(const std::string & line
 
 // this method is called before each line is parsed.
 // return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
-int CondorClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/, FILE* /*file*/)
+int CondorClassAdFileParseHelper::PreParse(std::string & line, classad::ClassAd & /*ad*/, FILE* /*file*/)
 {
 	// if this line matches the ad delimitor, tell the parser to stop parsing
 	if (line_is_ad_delimitor(line))
@@ -1367,7 +1282,7 @@ int CondorClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/,
 
 // this method is called when the parser encounters an error
 // return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
-int CondorClassAdFileParseHelper::OnParseError(std::string & line, ClassAd & /*ad*/, FILE* file)
+int CondorClassAdFileParseHelper::OnParseError(std::string & line, classad::ClassAd & /*ad*/, FILE* file)
 {
 	if (parse_type >= Parse_xml && parse_type < Parse_auto) {
 		// here line is actually errmsg.
@@ -1391,7 +1306,7 @@ int CondorClassAdFileParseHelper::OnParseError(std::string & line, ClassAd & /*a
 }
 
 
-int CondorClassAdFileParseHelper::NewParser(ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg)
+int CondorClassAdFileParseHelper::NewParser(classad::ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg)
 {
 	detected_long = false;
 	if (parse_type < Parse_xml || parse_type > Parse_auto) {
@@ -1531,8 +1446,8 @@ int CondorClassAdFileParseHelper::NewParser(ClassAd & ad, FILE* file, bool & det
 
 
 // returns number of attributes added to the ad
-int ClassAd::
-InsertFromFile(FILE* file, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFileParseHelper* phelp /*=NULL*/)
+int
+InsertFromFile(FILE* file, classad::ClassAd &ad, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFileParseHelper* phelp /*=NULL*/)
 {
 	int ee = 1;
 	int cAttrs = 0;
@@ -1542,7 +1457,7 @@ InsertFromFile(FILE* file, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFile
 		// new classad style parsers do all of the work in the NewParser callback
 		// they will return non-zero to indicate that they are new classad style parsers.
 		bool detected_long = false;
-		cAttrs = phelp->NewParser(*this, file, detected_long, buffer);
+		cAttrs = phelp->NewParser(ad, file, detected_long, buffer);
 		if (cAttrs > 0) {
 			error = 0;
 			is_eof = false;
@@ -1555,7 +1470,7 @@ InsertFromFile(FILE* file, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFile
 			}
 			is_eof = feof(file);
 			error = cAttrs;
-			return phelp->OnParseError(buffer, *this, file);
+			return phelp->OnParseError(buffer, ad, file);
 		}
 		// got a 0 from NewParser, fall down into the old (-long) style parser
 		if (detected_long && ! buffer.empty()) {
@@ -1578,7 +1493,7 @@ InsertFromFile(FILE* file, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFile
 		// otherwise set ee to decide what to do with this line.
 		ee = 1;
 		if (phelp) {
-			ee = phelp->PreParse(buffer, *this, file);
+			ee = phelp->PreParse(buffer, ad, file);
 		} else {
 			// default is to skip blank lines and comment lines
 			for (size_t ix = 0; ix < buffer.size(); ++ix) {
@@ -1604,19 +1519,19 @@ InsertFromFile(FILE* file, /*out*/ bool& is_eof, /*out*/ int& error, ClassAdFile
 
 parse_line:
 		// Insert the string into the classad
-		if (Insert(buffer.c_str()) !=  0) {
+		if (InsertLongFormAttrValue(ad, buffer.c_str(), true) !=  0) {
 			++cAttrs;
 		} else {
 			ee = -1;
 			if (phelp) {
-				ee = phelp->OnParseError(buffer, *this, file);
+				ee = phelp->OnParseError(buffer, ad, file);
 				if (1 == ee) {
 					// buffer has (presumably) been modified, re-try parsing.
 					// but only retry once.
-					if (Insert(buffer.c_str()) != 0) {
+					if (InsertLongFormAttrValue(ad, buffer.c_str(), true) != 0) {
 						++cAttrs;
 					} else {
-						ee = phelp->OnParseError(buffer, *this, file);
+						ee = phelp->OnParseError(buffer, ad, file);
 						if (1 == ee) ee = -1;  // treat another attempt to reparse as a failure.
 					}
 				}
@@ -1636,6 +1551,16 @@ parse_line:
 	}
 }
 
+int
+InsertFromFile(FILE *file, classad::ClassAd &ad, const std::string &delim, int& is_eof, int& error, int &empty)
+{
+	CondorClassAdFileParseHelper helper(delim);
+	bool eof_bool = false;
+	int c_attrs = InsertFromFile(file, ad, eof_bool, error, &helper);
+	is_eof = eof_bool;
+	empty = c_attrs <= 0;
+	return c_attrs;
+}
 
 bool CondorClassAdFileIterator::begin(
 	FILE* fh,
@@ -1671,7 +1596,7 @@ int CondorClassAdFileIterator::next(ClassAd & classad, bool merge /*=false*/)
 	if (at_eof) return 0;
 	if ( ! file) { error = -1; return -1; }
 
-	int cAttrs = classad.InsertFromFile(file, at_eof, error, parse_help);
+	int cAttrs = InsertFromFile(file, classad, at_eof, error, parse_help);
 	if (cAttrs > 0) return cAttrs;
 	if (at_eof) {
 		if (file && close_file_at_eof) { fclose(file); file = NULL; }
@@ -1957,36 +1882,6 @@ Assign(char const *name,char const *value)
 	}
 }
 
-//  void ClassAd::
-//  ResetExpr() { this->ptrExpr = exprList; }
-
-//  ExprTree* ClassAd::
-//  NextExpr(){}
-
-//  void ClassAd::
-//  ResetName() { this->ptrName = exprList; }
-
-//  const char* ClassAd::
-//  NextNameOriginal(){}
-
-
-//  ExprTree* ClassAd::
-//  Lookup(char *) const{}
-
-//  ExprTree* ClassAd::
-//  Lookup(const char*) const{}
-
-//int ClassAd::
-//LookupString( const char *name, char *value ) const 
-//{
-//	string strVal;
-//	if( !EvaluateAttrString( string( name ), strVal ) ) {
-//		return 0;
-//	}
-//	strcpy( value, strVal.c_str( ) );
-//	return 1;
-//} 
-
 int ClassAd::
 LookupString(const char *name, char *value, int max_len) const
 {
@@ -2039,160 +1934,59 @@ LookupString( const char *name, std::string &value ) const
 int ClassAd::
 LookupInteger( const char *name, int &value ) const 
 {
-	bool    boolVal;
-	int     haveInteger;
-	string  sName(name);
-	int		tmp_val;
-
-	if( EvaluateAttrInt(sName, tmp_val ) ) {
-		value = tmp_val;
-		haveInteger = TRUE;
-	} else if( EvaluateAttrBool(sName, boolVal ) ) {
-		value = boolVal ? 1 : 0;
-		haveInteger = TRUE;
-	} else {
-		haveInteger = FALSE;
-	}
-	return haveInteger;
+	return EvaluateAttrNumber(name, value);
 }
 
 int ClassAd::
 LookupInteger( const char *name, long &value ) const 
 {
-	bool    boolVal;
-	int     haveInteger;
-	string  sName(name);
-	long	tmp_val;
-
-	if( EvaluateAttrInt(sName, tmp_val ) ) {
-		value = tmp_val;
-		haveInteger = TRUE;
-	} else if( EvaluateAttrBool(sName, boolVal ) ) {
-		value = boolVal ? 1 : 0;
-		haveInteger = TRUE;
-	} else {
-		haveInteger = FALSE;
-	}
-	return haveInteger;
+	return EvaluateAttrNumber(name, value);
 }
 
 int ClassAd::
 LookupInteger( const char *name, long long &value ) const 
 {
-	bool    boolVal;
-	int     haveInteger;
-	string  sName(name);
-	long long	tmp_val;
-
-	if( EvaluateAttrInt(sName, tmp_val ) ) {
-		value = tmp_val;
-		haveInteger = TRUE;
-	} else if( EvaluateAttrBool(sName, boolVal ) ) {
-		value = boolVal ? 1 : 0;
-		haveInteger = TRUE;
-	} else {
-		haveInteger = FALSE;
-	}
-	return haveInteger;
+	return EvaluateAttrNumber(name, value);
 }
 
 int ClassAd::
 LookupFloat( const char *name, float &value ) const
 {
-	double  doubleVal;
-	long long intVal;
-	int     haveFloat;
-
-	if(EvaluateAttrReal( string( name ), doubleVal ) ) {
-		haveFloat = TRUE;
-		value = (float) doubleVal;
-	} else if(EvaluateAttrInt( string( name ), intVal ) ) {
-		haveFloat = TRUE;
-		value = (float)intVal;
-	} else {
-		haveFloat = FALSE;
+	double dval;
+	bool rc = EvaluateAttrNumber(name, dval);
+	if ( rc ) {
+		value = dval;
 	}
-	return haveFloat;
+	return rc;
 }
 
 int ClassAd::
 LookupFloat( const char *name, double &value ) const
 {
-	double  doubleVal;
-	long long intVal;
-	int     haveFloat;
-
-	if(EvaluateAttrReal( string( name ), doubleVal ) ) {
-		haveFloat = TRUE;
-		value = doubleVal;
-	} else if(EvaluateAttrInt( string( name ), intVal ) ) {
-		haveFloat = TRUE;
-		value = (double)intVal;
-	} else {
-		haveFloat = FALSE;
-	}
-	return haveFloat;
-}
-
-int ClassAd::
-LookupBool( const char *name, int &value ) const
-{
-	long long intVal;
-	bool  boolVal;
-	int haveBool;
-	string sName;
-
-	sName = string(name);
-
-	if (EvaluateAttrBool(name, boolVal)) {
-		haveBool = true;
-		value = boolVal ? 1 : 0;
-	} else if (EvaluateAttrInt(name, intVal)) {
-		haveBool = true;
-		value = (intVal != 0) ? 1 : 0;
-	} else {
-		haveBool = false;
-	}
-	return haveBool;
+	return EvaluateAttrNumber(name, value);
 }
 
 int ClassAd::
 LookupBool( const char *name, bool &value ) const
 {
-	long long intVal;
-	bool  boolVal;
-	int haveBool;
-	string sName;
-
-	sName = string(name);
-
-	if (EvaluateAttrBool(name, boolVal)) {
-		haveBool = true;
-		value = boolVal ? true : false;
-	} else if (EvaluateAttrInt(name, intVal)) {
-		haveBool = true;
-		value = (intVal != 0) ? true : false;
-	} else {
-		haveBool = false;
-	}
-	return haveBool;
+	return EvaluateAttrBoolEquiv(name, value);
 }
 
-int ClassAd::
-EvalAttr( const char *name, classad::ClassAd *target, classad::Value & value)
+int
+EvalAttr( const char *name, classad::ClassAd *my, classad::ClassAd *target, classad::Value & value)
 {
 	int rc = 0;
 
-	if( target == this || target == NULL ) {
-		if( EvaluateAttr( name, value ) ) {
+	if( target == my || target == NULL ) {
+		if( my->EvaluateAttr( name, value ) ) {
 			rc = 1;
 		}
 		return rc;
 	}
 
-	getTheMatchAd( this, target );
-	if( this->Lookup( name ) ) {
-		if( this->EvaluateAttr( name, value ) ) {
+	getTheMatchAd( my, target );
+	if( my->Lookup( name ) ) {
+		if( my->EvaluateAttr( name, value ) ) {
 			rc = 1;
 		}
 	} else if( target->Lookup( name ) ) {
@@ -2207,252 +2001,160 @@ EvalAttr( const char *name, classad::ClassAd *target, classad::Value & value)
 /*
  * Ensure that we allocate the value, so we have sufficient space
  */
-int ClassAd::
-EvalString (const char *name, classad::ClassAd *target, char **value)
+int
+EvalString (const char *name, classad::ClassAd *my, classad::ClassAd *target, char **value)
 {
-    
-	string strVal;
-    bool foundAttr = false;
-	int rc = 0;
-
-	if( target == this || target == NULL ) {
-		if( EvaluateAttrString( name, strVal ) ) {
-
-            *value = (char *)malloc(strlen(strVal.c_str()) + 1);
-            if(*value != NULL) {
-                strcpy( *value, strVal.c_str( ) );
-                rc = 1;
-            } else {
-                rc = 0;
-            }
+	std::string str_val;
+	int rc = EvalString(name, my, target, str_val);
+	if( rc != 0 ) {
+		*value = strdup(str_val.c_str());
+		if(*value == NULL) {
+			rc = 0;
 		}
-		return rc;
 	}
-
-	getTheMatchAd( this, target );
-
-    if( this->Lookup(name) ) {
-
-        if( this->EvaluateAttrString( name, strVal ) ) {
-            foundAttr = true;
-        }		
-    } else if( target->Lookup(name) ) {
-        if( this->EvaluateAttrString( name, strVal ) ) {
-            foundAttr = true;
-        }		
-    }
-
-    if(foundAttr)
-    {
-        *value = (char *)malloc(strlen(strVal.c_str()) + 1);
-        if(*value != NULL) {
-            strcpy( *value, strVal.c_str( ) );
-            rc = 1;
-        }
-    }
-
-	releaseTheMatchAd();
 	return rc;
 }
 
-int ClassAd::
-EvalString(const char *name, classad::ClassAd *target, MyString & value)
+int
+EvalString(const char *name, classad::ClassAd *my, classad::ClassAd *target, MyString & value)
 {
-    char * pvalue = NULL;
-    //this one makes sure length is good
-    int ret = EvalString(name, target, &pvalue); 
-    if(ret == 0) { return ret; }
-    value = pvalue;
-    free(pvalue);
-    return ret;
+	std::string str_val;
+	int rc = EvalString(name, my, target, str_val);
+	if( rc != 0 ) {
+		value = str_val;
+	}
+	return rc;
 }
 
-int ClassAd::
-EvalString(const char *name, classad::ClassAd *target, std::string & value)
-{
-    char * pvalue = NULL;
-    //this one makes sure length is good
-    int ret = EvalString(name, target, &pvalue); 
-    if(ret == 0) { return ret; }
-    value = pvalue;
-    free(pvalue);
-    return ret;
-}
-
-int ClassAd::
-EvalInteger (const char *name, classad::ClassAd *target, long long &value)
+int
+EvalString(const char *name, classad::ClassAd *my, classad::ClassAd *target, std::string & value)
 {
 	int rc = 0;
-	classad::Value val;
 
-	if( target == this || target == NULL ) {
-		if( EvaluateAttr( name, val ) ) { 
+	if( target == my || target == NULL ) {
+		if( my->EvaluateAttrString( name, value ) ) {
 			rc = 1;
 		}
 	}
-	else 
+	else
 	{
-	  getTheMatchAd( this, target );
-	  if( this->Lookup( name ) ) {
-		  if( this->EvaluateAttr( name, val ) ) {
+	  getTheMatchAd( my, target );
+	  if( my->Lookup( name ) ) {
+		  if( my->EvaluateAttrString( name, value ) ) {
 			  rc = 1;
 		  }
 	  } else if( target->Lookup( name ) ) {
-		  if( target->EvaluateAttr( name, val ) ) {
+		  if( target->EvaluateAttrString( name, value ) ) {
 			  rc = 1;
 		  }
 	  }
 	  releaseTheMatchAd();
 	}
-	
-	
-	// we have a "val" now cast if needed.
-	if ( 1 == rc ) 
+
+	return rc;
+}
+
+int
+EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, long long &value)
+{
+	int rc = 0;
+
+	if( target == my || target == NULL ) {
+		if( my->EvaluateAttrNumber( name, value ) ) {
+			rc = 1;
+		}
+	}
+	else 
 	{
-	  double doubleVal;
-	  long long intVal;
-	  bool boolVal;
-
-	  if( val.IsRealValue( doubleVal ) ) {
-	    value = ( long long )doubleVal;
+	  getTheMatchAd( my, target );
+	  if( my->Lookup( name ) ) {
+		  if( my->EvaluateAttrNumber( name, value ) ) {
+			  rc = 1;
+		  }
+	  } else if( target->Lookup( name ) ) {
+		  if( target->EvaluateAttrNumber( name, value ) ) {
+			  rc = 1;
+		  }
 	  }
-	  else if( val.IsIntegerValue( intVal ) ) {
-	    value = intVal;
-	  }
-	  else if( val.IsBooleanValue( boolVal ) ) {
-	    value = ( long long )boolVal;
-	  }
-	  else 
-	  { 
-	    // if we got here there is an issue with evaluation.
-	    rc = 0;
-	  }
-			
+	  releaseTheMatchAd();
 	}
-	
+
 	return rc;
 }
 
-int ClassAd::
-EvalFloat (const char *name, classad::ClassAd *target, double &value)
+int EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, int& value) {
+	long long ival = 0;
+	int result = EvalInteger(name, my, target, ival);
+	if ( result ) {
+		value = (int)ival;
+	}
+	return result;
+}
+
+int EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, long & value) {
+	long long ival = 0;
+	int result = EvalInteger(name, my, target, ival);
+	if ( result ) {
+		value = (long)ival;
+	}
+	return result;
+}
+
+int
+EvalFloat (const char *name, classad::ClassAd *my, classad::ClassAd *target, double &value)
 {
 	int rc = 0;
-	classad::Value val;
-	double doubleVal;
-	long long intVal;
-	bool boolVal;
 
-	if( target == this || target == NULL ) {
-		if( EvaluateAttr( name, val ) ) {
-			if( val.IsRealValue( doubleVal ) ) {
-				value = doubleVal;
-				rc = 1;
-			}
-			if( val.IsIntegerValue( intVal ) ) {
-				value = intVal;
-				rc = 1;
-			}
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal;
-				rc = 1;
-			}
+	if( target == my || target == NULL ) {
+		if( my->EvaluateAttrNumber( name, value ) ) {
+			rc = 1;
 		}
 		return rc;
 	}
 
-	getTheMatchAd( this, target );
-	if( this->Lookup( name ) ) {
-		if( this->EvaluateAttr( name, val ) ) {
-			if( val.IsRealValue( doubleVal ) ) {
-				value = doubleVal;
-				rc = 1;
-			}
-			if( val.IsIntegerValue( intVal ) ) {
-				value = intVal;
-				rc = 1;
-			}
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal;
-				rc = 1;
-			}
+	getTheMatchAd( my, target );
+	if( my->Lookup( name ) ) {
+		if( my->EvaluateAttrNumber( name, value ) ) {
+			rc = 1;
 		}
 	} else if( target->Lookup( name ) ) {
-		if( target->EvaluateAttr( name, val ) ) {
-			if( val.IsRealValue( doubleVal ) ) {
-				value = doubleVal;
-				rc = 1;
-			}
-			if( val.IsIntegerValue( intVal ) ) {
-				value = intVal;
-				rc = 1;
-			}
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal;
-				rc = 1;
-			}
+		if( target->EvaluateAttrNumber( name, value ) ) {
+			rc = 1;
 		}
 	}
 	releaseTheMatchAd();
 	return rc;
 }
 
-#define IS_DOUBLE_TRUE(val) (bool)(int)((val)*100000)
+int EvalFloat (const char *name, classad::ClassAd *my, classad::ClassAd *target, float &value) {
+	double dval = 0.0;
+	int result = EvalFloat(name, my, target, dval);
+	if ( result ) {
+		value = dval;
+	}
+	return result;
+}
 
-int ClassAd::
-EvalBool  (const char *name, classad::ClassAd *target, int &value)
+int
+EvalBool (const char *name, classad::ClassAd *my, classad::ClassAd *target, bool &value)
 {
 	int rc = 0;
-	classad::Value val;
-	double doubleVal;
-	long long intVal;
-	bool boolVal;
 
-	if( target == this || target == NULL ) {
-		if( EvaluateAttr( name, val ) ) {
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal ? 1 : 0;
-				rc = 1;
-			} else if( val.IsIntegerValue( intVal ) ) {
-				value = intVal ? 1 : 0;
-				rc = 1;
-			} else if( val.IsRealValue( doubleVal ) ) {
-				value = IS_DOUBLE_TRUE(doubleVal) ? 1 : 0;
-				rc = 1;
-			}
+	if( target == my || target == NULL ) {
+		if( my->EvaluateAttrBoolEquiv( name, value ) ) {
+			rc = 1;
 		}
 		return rc;
 	}
 
-	getTheMatchAd( this, target );
-	if( this->Lookup( name ) ) {
-		if( this->EvaluateAttr( name, val ) ) {
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal ? 1 : 0;
-				rc = 1;
-			}
-			if( val.IsIntegerValue( intVal ) ) {
-				value = intVal ? 1 : 0;
-				rc = 1;
-			}
-			if( val.IsRealValue( doubleVal ) ) {
-				value = IS_DOUBLE_TRUE(doubleVal) ? 1 : 0;
-				rc = 1;
-			}
+	getTheMatchAd( my, target );
+	if( my->Lookup( name ) ) {
+		if( my->EvaluateAttrBoolEquiv( name, value ) ) {
+			rc = 1;
 		}
 	} else if( target->Lookup( name ) ) {
-		if( target->EvaluateAttr( name, val ) ) {
-			if( val.IsBooleanValue( boolVal ) ) {
-				value = boolVal ? 1 : 0;
-				rc = 1;
-			}
-			if( val.IsIntegerValue( intVal ) ) {
-				value = intVal ? 1 : 0;
-				rc = 1;
-			}
-			if( val.IsRealValue( doubleVal ) ) {
-				value = IS_DOUBLE_TRUE(doubleVal) ? 1 : 0;
-				rc = 1;
-			}
+		if( target->EvaluateAttrBoolEquiv( name, value ) ) {
+			rc = 1;
 		}
 	}
 
@@ -2460,13 +2162,13 @@ EvalBool  (const char *name, classad::ClassAd *target, int &value)
 	return rc;
 }
 
-bool ClassAd::
-initFromString( char const *str,MyString *err_msg )
+bool
+initAdFromString( char const *str, classad::ClassAd &ad )
 {
 	bool succeeded = true;
 
 	// First, clear our ad so we start with a fresh ClassAd
-	Clear();
+	ad.Clear();
 
 	char *exprbuf = new char[strlen(str)+1];
 	ASSERT( exprbuf );
@@ -2485,14 +2187,9 @@ initFromString( char const *str,MyString *err_msg )
 		}
 		str += len;
 
-		if (!Insert(exprbuf)) {
-			if( err_msg ) {
-				err_msg->formatstr("Failed to parse ClassAd expression: '%s'",
+		if (!InsertLongFormAttrValue(ad, exprbuf, true)) {
+			dprintf(D_ALWAYS,"Failed to parse ClassAd expression: '%s'\n",
 					exprbuf);
-			} else {
-				dprintf(D_ALWAYS,"Failed to parse ClassAd expression: '%s'\n",
-					exprbuf);
-			}
 			succeeded = false;
 			break;
 		}
@@ -2540,6 +2237,7 @@ sPrintAd( MyString &output, const classad::ClassAd &ad, bool exclude_private, St
 
 	const classad::ClassAd *parent = ad.GetChainedParentAd();
 
+	std::map< std::string, std::string > attributes;
 	if ( parent ) {
 		for ( itr = parent->begin(); itr != parent->end(); itr++ ) {
 			if ( attr_white_list && !attr_white_list->contains_anycase(itr->first.c_str()) ) {
@@ -2552,8 +2250,8 @@ sPrintAd( MyString &output, const classad::ClassAd &ad, bool exclude_private, St
 				 !ClassAdAttributeIsPrivate( itr->first ) ) {
 				value = "";
 				unp.Unparse( value, itr->second );
-				output.formatstr_cat( "%s = %s\n", itr->first.c_str(),
-									value.c_str() );
+				// output.formatstr_cat( "%s = %s\n", itr->first.c_str(), value.c_str() );
+				attributes[ itr->first ] = value;
 			}
 		}
 	}
@@ -2566,9 +2264,18 @@ sPrintAd( MyString &output, const classad::ClassAd &ad, bool exclude_private, St
 			 !ClassAdAttributeIsPrivate( itr->first ) ) {
 			value = "";
 			unp.Unparse( value, itr->second );
-			output.formatstr_cat( "%s = %s\n", itr->first.c_str(),
-								value.c_str() );
+			// output.formatstr_cat( "%s = %s\n", itr->first.c_str(), value.c_str() );
+			attributes[ itr->first ] = value;
 		}
+	}
+
+	std::vector< std::string> keys;
+	for( auto i = attributes.begin(); i != attributes.end(); ++i ) {
+		keys.push_back( i->first );
+	}
+	std::sort( keys.begin(), keys.end() );
+	for( auto i = keys.begin(); i != keys.end(); ++i ) {
+		output.formatstr_cat( "%s = %s\n", i->c_str(), attributes[ *i ].c_str() );
 	}
 
 	return TRUE;
@@ -2773,47 +2480,6 @@ GetTargetTypeName( const classad::ClassAd &ad )
 	return targetTypeStr.c_str( );
 }
 
-void ClassAd::
-ResetExpr()
-{
-	m_exprItrState = ItrUninitialized;
-    m_dirtyItrInit = false;
-}
-
-void ClassAd::
-ResetName()
-{
-	m_nameItrState = ItrUninitialized;
-}
-
-const char *ClassAd::
-NextNameOriginal()
-{
-	const char *name = NULL;
-	classad::ClassAd *chained_ad = GetChainedParentAd();
-
-	if( m_nameItrState == ItrUninitialized ) {
-		m_nameItr = begin();
-		m_nameItrState = ItrInThisAd;
-	}
-
-	// After iterating through all the names in this ad,
-	// get all the names in our chained ad as well.
-	if ( chained_ad && m_nameItrState != ItrInChain && m_nameItr == end() ) {
-		m_nameItr = chained_ad->begin();
-		m_nameItrState = ItrInChain;
-	}
-	if ( ( m_nameItrState!=ItrInChain && m_nameItr == end() ) ||
-		 ( m_nameItrState==ItrInChain && chained_ad == NULL ) ||
-		 ( m_nameItrState==ItrInChain && m_nameItr == chained_ad->end() ) ) {
-		return NULL;
-	}
-	name = m_nameItr->first.c_str();
-	m_nameItr++;
-	return name;
-}
-
-
 // Determine if a value is valid to be written to the log. The value
 // is a RHS of an expression. According to LogSetAttribute::WriteBody,
 // the only invalid character is a '\n'.
@@ -2871,111 +2537,8 @@ IsValidAttrName(const char *name) {
 	return true;
 }
 
-bool ClassAd::NextExpr( const char *&name, ExprTree *&value )
-{
-	classad::ClassAd *chained_ad = GetChainedParentAd();
-
-	if( m_exprItrState == ItrUninitialized ) {
-		m_exprItr = begin();
-		m_exprItrState = ItrInThisAd;
-	}
-
-	// After iterating through all the attributes in this ad,
-	// get all the attributes in our chained ad as well.
-	if ( chained_ad && m_exprItrState != ItrInChain && m_exprItr == end() ) {
-		m_exprItr = chained_ad->begin();
-		m_exprItrState = ItrInChain;
-	}
-	if ( ( m_exprItrState!=ItrInChain && m_exprItr == end() ) ||
-		 ( m_exprItrState==ItrInChain && chained_ad == NULL ) ||
-		 ( m_exprItrState==ItrInChain && m_exprItr == chained_ad->end() ) ) {
-		return false;
-	}
-	name = m_exprItr->first.c_str();
-	value = m_exprItr->second;
-	m_exprItr++;
-	return true;
-}
-
-//provides a way to get the next dirty expression in the set of 
-//  dirty attributes.
-bool ClassAd::
-NextDirtyExpr(const char *&name, classad::ExprTree *&expr)
-{
-    //this'll reset whenever ResetDirtyItr is called
-    if(!m_dirtyItrInit)
-    {
-        m_dirtyItr = dirtyBegin();
-        m_dirtyItrInit = true;
-    }
-
-	name = NULL;
-    expr = NULL;
-
-	// get the next dirty attribute if we aren't past the end.
-	// Removed attributes appear in the list, but we don't want
-	// to return them in the old ClassAd API, so skip them.
-	while ( m_dirtyItr != dirtyEnd() ) {
-		name = m_dirtyItr->c_str();
-		expr = classad::ClassAd::Lookup(*m_dirtyItr);
-		m_dirtyItr++;
-		if ( expr ) {
-			break;
-		} else {
-			name = NULL;
-		}
-	}
-
-    return expr != NULL;
-}
-
-void ClassAd::
-SetDirtyFlag(const char *name, bool dirty)
-{
-	if ( dirty ) {
-		MarkAttributeDirty( name );
-	} else {
-		MarkAttributeClean( name );
-	}
-}
-
-void ClassAd::
-GetDirtyFlag(const char *name, bool *exists, bool *dirty) const
-{
-	if ( Lookup( name ) == NULL ) {
-		if ( exists ) {
-			*exists = false;
-		}
-		return;
-	}
-	if ( exists ) {
-		*exists = true;
-	}
-	if ( dirty ) {
-		*dirty = IsAttributeDirty( name );
-	}
-}
-
-void ClassAd::
-CopyAttribute( char const *target_attr, classad::ClassAd *source_ad )
-{
-	CopyAttribute( target_attr, target_attr, source_ad );
-}
-
-
-void ClassAd::
-CopyAttribute( char const *target_attr, char const *source_attr,
-			   classad::ClassAd *source_ad )
-{
-	ASSERT( target_attr );
-	ASSERT( source_attr );
-        if (!source_ad) {source_ad = this;}
-        
-	CopyAttribute(target_attr, *this, source_attr, *source_ad);
-}
-
-void ClassAd::
-CopyAttribute(const char *target_attr, classad::ClassAd &target_ad, const char *source_attr, const classad::ClassAd &source_ad)
+void
+CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const std::string &source_attr, const classad::ClassAd &source_ad)
 {
 	classad::ExprTree *e = source_ad.Lookup( source_attr );
 	if ( e ) {
@@ -2984,6 +2547,18 @@ CopyAttribute(const char *target_attr, classad::ClassAd &target_ad, const char *
 	} else {
 		target_ad.Delete( target_attr );
 	}
+}
+
+void
+CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const classad::ClassAd &source_ad)
+{
+	CopyAttribute(target_attr, target_ad, target_attr, source_ad);
+}
+
+void
+CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const std::string &source_attr)
+{
+	CopyAttribute(target_attr, target_ad, source_attr, target_ad);
 }
 
 //////////////XML functions///////////
@@ -3104,11 +2679,12 @@ QuoteAdStringValue(char const *val, std::string &buf)
     return buf.c_str();
 }
 
-void ClassAd::ChainCollapse()
+void
+ChainCollapse(classad::ClassAd &ad)
 {
     classad::ExprTree *tmpExprTree;
 
-	classad::ClassAd *parent = GetChainedParentAd();
+	classad::ClassAd *parent = ad.GetChainedParentAd();
 
     if(!parent)
     {   
@@ -3116,7 +2692,7 @@ void ClassAd::ChainCollapse()
         return;
     }
 
-    Unchain();
+    ad.Unchain();
 
     classad::AttrList::iterator itr; 
 
@@ -3127,7 +2703,7 @@ void ClassAd::ChainCollapse()
         // This means that the attributes in our classad takes precedence
         // over the ones in the chained class ad.
 
-        if( !Lookup((*itr).first) )
+        if( !ad.Lookup((*itr).first) )
         {
             tmpExprTree = (*itr).second;     
 
@@ -3136,19 +2712,9 @@ void ClassAd::ChainCollapse()
             ASSERT(tmpExprTree); 
 
             //K, it's clear. Insert it, but don't try to 
-            Insert((*itr).first, tmpExprTree);
+            ad.Insert((*itr).first, tmpExprTree);
         }
     }
-}
-
-
-int ClassAd::AttrChainDepth(const std::string & attr)
-{
-	int result = 0;
-	if (LookupIgnoreChain(attr)) { result |= 1; }
-	classad::ClassAd *parent = GetChainedParentAd();
-	if (parent && parent->Lookup(attr)) { result |= 2; }
-	return result;
 }
 
 

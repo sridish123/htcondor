@@ -458,7 +458,7 @@ VMGahpServer::startUp(Env *job_env, const char *workingdir, int nice_inc, Family
 	if( m_include_gahp_log ) {
 		result = daemonCore->Register_Pipe(m_vmgahp_errorfd,
 				"m_vmgahp_errorfd",
-				static_cast<PipeHandlercpp>(&VMGahpServer::err_pipe_ready),
+				(PipeHandlercpp)&VMGahpServer::err_pipe_ready_from_pipe,
 				"VMGahpServer::err_pipe_ready",this);
 
 		if( result == -1 ) { 
@@ -468,7 +468,7 @@ VMGahpServer::startUp(Env *job_env, const char *workingdir, int nice_inc, Family
 				m_stderr_tid = -1;
 			}
 			m_stderr_tid = daemonCore->Register_Timer(2, 
-					2, (TimerHandlercpp)&VMGahpServer::err_pipe_ready, 
+					2, (TimerHandlercpp)&VMGahpServer::err_pipe_ready_from_timer, 
 					"VMGahpServer::err_pipe_ready",this);
 			if( m_stderr_tid == -1 ) {
 				start_err_msg = "Internal vmgahp server error";
@@ -709,7 +709,7 @@ VMGahpServer::setPollInterval(unsigned int interval)
 	if( m_pollInterval > 0 ) {
 		m_poll_tid = daemonCore->Register_Timer(m_pollInterval, 
 				m_pollInterval, 
-				(TimerHandlercpp)&VMGahpServer::poll, 
+				(TimerHandlercpp)&VMGahpServer::poll_from_timer, 
 				"VMGahpServer::poll",this); 
 	}
 }
@@ -737,13 +737,13 @@ VMGahpServer::pipe_ready(int)
 }
 
 int
-VMGahpServer::err_pipe_ready(int /*pipe_end*/)
+VMGahpServer::err_pipe_ready(void)
 {
 	int count = 0;
 
-	if( ( m_is_initialized == false) || 
+	if( ( m_is_initialized == false) ||
 			( m_vmgahp_errorfd == -1 ) || !daemonCore ) {
-		return false;
+		return FALSE;
 	}
 
 	char buff[2049];
@@ -1029,11 +1029,11 @@ VMGahpServer::poll_real_soon()
 	}
 }
 
-int
+void
 VMGahpServer::poll_now()
 {
 	m_poll_real_soon_tid = -1;
-	return poll();
+	(void)poll();
 }
 
 int
@@ -1325,8 +1325,7 @@ VMGahpServer::isSupportedVMType(const char *vmtype)
 void 
 VMGahpServer::printSystemErrorMsg(void) 
 {
-	int dummy_pipe = -1;
-	err_pipe_ready(dummy_pipe);
+	err_pipe_ready();
 }
 
 bool
@@ -1380,8 +1379,9 @@ VMGahpServer::publishVMClassAd(const char *workingdir)
 
 	const char *name;
 	ExprTree *expr = NULL;
-	m_job_ad->ResetExpr();
-	while( m_job_ad->NextExpr(name, expr) ) {
+	for( auto itr = m_job_ad->begin(); itr != m_job_ad->end(); itr++ ) {
+		name = itr->first.c_str();
+		expr = itr->second;
 		can_send_it = false;
 
 		if( !m_send_all_classad ) {

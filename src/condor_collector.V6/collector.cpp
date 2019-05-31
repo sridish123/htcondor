@@ -712,14 +712,14 @@ int CollectorDaemon::receive_query_cedar_worker_thread(void *in_query_entry, Str
 		if ((whichAds == COLLECTOR_AD) && collector.isSelfAd(curr_ad)) {
 			dprintf(D_ALWAYS,"Query includes collector's self ad\n");
 			// update stats in the collector ad before we return it.
-			MyString stats_config;
+			std::string stats_config;
 			cad->LookupString("STATISTICS_TO_PUBLISH",stats_config);
 			if (stats_config != "stored") {
-				dprintf(D_ALWAYS,"Updating collector stats using a chained ad and config=%s\n", stats_config.Value());
+				dprintf(D_ALWAYS,"Updating collector stats using a chained ad and config=%s\n", stats_config.c_str());
 				stats_ad = new ClassAd();
-				daemonCore->dc_stats.Publish(*stats_ad, stats_config.Value());
+				daemonCore->dc_stats.Publish(*stats_ad, stats_config.c_str());
 				daemonCore->monitor_data.ExportData(stats_ad, true);
-				collectorStats.publishGlobal(stats_ad, stats_config.Value());
+				collectorStats.publishGlobal(stats_ad, stats_config.c_str());
 				stats_ad->ChainToAd(curr_ad);
 				curr_ad = stats_ad; // send the stats ad instead of the self ad.
 			}
@@ -728,7 +728,7 @@ int CollectorDaemon::receive_query_cedar_worker_thread(void *in_query_entry, Str
 		if (evaluate_projection) {
 			proj.clear();
 			projection.clear();
-			if (cad->EvalString(ATTR_PROJECTION, curr_ad, projection) && ! projection.empty()) {
+			if (EvalString(ATTR_PROJECTION, cad, curr_ad, projection) && ! projection.empty()) {
 				StringTokenIterator list(projection);
 				const std::string * attr;
 				while ((attr = list.next_string())) { proj.insert(*attr); }
@@ -1648,7 +1648,7 @@ void CollectorDaemon::Config()
 		} else if (YourStringNoCase("small_table_and_query") == policy) {
 			HandleQueryInProcPolicy = HandleQueryInProcSmallTableAndQuery;
 		} else {
-			dprintf(D_ALWAYS, "Unknown value for HANDLE_QUERY_IN_PROC_POLICY, using default of SMALL_TABLE_OR_QUERY");
+			dprintf(D_ALWAYS, "Unknown value for HANDLE_QUERY_IN_PROC_POLICY, using default of SMALL_TABLE_OR_QUERY\n");
 		}
 	}
 
@@ -2020,7 +2020,7 @@ void CollectorDaemon::sendCollectorAd()
 	// see people run a collector on each macnine in their pool. Duh.
 	if ( worldCollector && machinesTotal > 0) {
 		char update_addr_default [] = "(null)";
-		char *update_addr = worldCollector->addr();
+		const char *update_addr = worldCollector->addr();
 		if (!update_addr) update_addr = update_addr_default;
 		if( ! worldCollector->sendUpdate(UPDATE_COLLECTOR_AD, ad, collectorsToUpdate->getAdSeq(), NULL, false) ) {
 			dprintf( D_ALWAYS, "Can't send UPDATE_COLLECTOR_AD to collector "

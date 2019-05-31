@@ -36,6 +36,7 @@
 #include "classadHistory.h"
 #include "classad_helpers.h"
 #include "ipv6_hostname.h"
+#include "shared_port_endpoint.h"
 
 #if defined(LINUX)
 #include "glexec_starter.linux.h"
@@ -87,7 +88,7 @@ Starter::Starter( const Starter& s )
 	}
 
 	if( s.s_path ) {
-		s_path = strnewp( s.s_path );
+		s_path = strdup( s.s_path );
 	} else {
 		s_path = NULL;
 	}
@@ -156,7 +157,7 @@ Starter::~Starter()
 	}
 
 	if (s_path) {
-		delete [] s_path;
+		free(s_path);
 	}
 	if( s_ad ) {
 		delete( s_ad );
@@ -176,7 +177,7 @@ Starter::~Starter()
 bool
 Starter::satisfies( ClassAd* job_ad, ClassAd* mach_ad )
 {
-	int requirements = 0;
+	bool requirements = false;
 	ClassAd* merged_ad;
 	if( mach_ad ) {
 		merged_ad = new ClassAd( *mach_ad );
@@ -184,8 +185,8 @@ Starter::satisfies( ClassAd* job_ad, ClassAd* mach_ad )
 	} else {
 		merged_ad = new ClassAd( *s_ad );
 	}
-	if( ! job_ad->EvalBool(ATTR_REQUIREMENTS, merged_ad, requirements) ) { 
-		requirements = 0;
+	if( ! EvalBool(ATTR_REQUIREMENTS, job_ad, merged_ad, requirements) ) {
+		requirements = false;
 		dprintf( D_ALWAYS, "Failed to find requirements in merged ad?\n" );
 		classad::PrettyPrint pp;
 		std::string szbuff;
@@ -196,21 +197,21 @@ Starter::satisfies( ClassAd* job_ad, ClassAd* mach_ad )
 		
 	}
 	delete( merged_ad );
-	return (bool)requirements;
+	return requirements;
 }
 
 
 bool
 Starter::provides( const char* ability )
 {
-	int has_it = 0;
+	bool has_it = false;
 	if( ! s_ad ) {
 		return false;
 	}
-	if( ! s_ad->EvalBool(ability, NULL, has_it) ) { 
-		has_it = 0;
+	if( ! s_ad->LookupBool(ability, has_it) ) {
+		has_it = false;
 	}
-	return (bool)has_it;
+	return has_it;
 }
 
 
@@ -228,9 +229,9 @@ void
 Starter::setPath( const char* updated_path )
 {
 	if( s_path ) {
-		delete [] s_path;
+		free(s_path);
 	}
-	s_path = strnewp( updated_path );
+	s_path = strdup( updated_path );
 }
 
 void
@@ -263,8 +264,9 @@ Starter::publish( ClassAd* ad, amask_t mask, StringList* list )
 
 	ExprTree *tree, *pCopy;
 	const char *lhstr = NULL;
-	s_ad->ResetExpr();
-	while( s_ad->NextExpr(lhstr, tree) ) {
+	for (auto itr = s_ad->begin(); itr != s_ad->end(); itr++) {
+		lhstr = itr->first.c_str();
+		tree = itr->second;
 		pCopy=0;
 	
 		if (ignored_attr_list) {
@@ -1166,10 +1168,11 @@ int Starter::execDCStarter(
 	FamilyInfo fi;
 	fi.max_snapshot_interval = pid_snapshot_interval;
 
+	MyString daemon_sock = SharedPortEndpoint::GenerateEndpointName( "starter" );
 	s_pid = daemonCore->
 		Create_Process( final_path, *final_args, PRIV_ROOT, reaper_id,
 		                TRUE, TRUE, env, NULL, &fi, inherit_list, std_fds,
-						NULL, 0, NULL, 0, NULL, NULL, NULL, NULL, fs_remap);
+						NULL, 0, NULL, 0, NULL, NULL, daemon_sock.c_str(), NULL, fs_remap);
 	if( s_pid == FALSE ) {
 		dprintf( D_ALWAYS, "ERROR: exec_starter failed!\n");
 		s_pid = 0;
@@ -1413,8 +1416,8 @@ Starter::getIpAddr( void )
 	if( ! s_pid ) {
 		return NULL;
 	}
-	if( !m_starter_addr.IsEmpty() ) {
-		return m_starter_addr.Value();
+	if( !m_starter_addr.empty() ) {
+		return m_starter_addr.c_str();
 	}
 
 	// Fall back on the raw contact string known to daemonCore.

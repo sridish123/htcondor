@@ -49,7 +49,6 @@
 #include "daemon.h"
 #include "match_prefix.h"
 
-#include "extArray.h"
 #include "HashTable.h"
 #include "MyString.h"
 #include "string_list.h"
@@ -85,7 +84,7 @@
 #include "vm_univ_utils.h"
 #include "condor_md.h"
 #include "my_popen.h"
-#include "condor_base64.h"
+#include "zkm_base64.h"
 
 #include <algorithm>
 #include <string>
@@ -150,7 +149,9 @@ bool	NewExecutable = false;
 int		dash_remote=0;
 int		dash_factory=0;
 int		default_to_factory=0;
-int		create_local_factory_file=0; // create a copy of the submit digest in the current directory
+const char *create_local_factory_file=NULL; // create a copy of the submit digest in the current directory
+bool	sim_current_condor_version=false; // don't bother to locate the schedd before creating a SimSchedd
+int		sim_starting_cluster=0;			// initial clusterId value for a SimSchedd
 #if defined(WIN32)
 char* RunAsOwnerCredD = NULL;
 #endif
@@ -277,24 +278,22 @@ struct SubmitRec {
 	int lastjob;
 };
 
-ExtArray <SubmitRec> SubmitInfo(10);
-int CurrentSubmitInfo = -1;
+std::vector <SubmitRec> SubmitInfo;
 
-ExtArray <ClassAd*> JobAdsArray(100);
-int JobAdsArrayLen = 0;
-int JobAdsArrayLastClusterIndex = 0;
+std::vector <ClassAd*> JobAdsArray;
+size_t JobAdsArrayLastClusterIndex = 0;
 
 // called by the factory submit to fill out the data structures that
 // we use to print out the standard messages on complection.
 void set_factory_submit_info(int cluster, int num_procs)
 {
-	CurrentSubmitInfo++;
-	SubmitInfo[CurrentSubmitInfo].cluster = cluster;
-	SubmitInfo[CurrentSubmitInfo].firstjob = 0;
-	SubmitInfo[CurrentSubmitInfo].lastjob = num_procs-1;
+	SubmitInfo.push_back(SubmitRec());
+	SubmitInfo.back().cluster = cluster;
+	SubmitInfo.back().firstjob = 0;
+	SubmitInfo.back().lastjob = num_procs-1;
 }
 
-void TestFilePermissions( char *scheddAddr = NULL )
+void TestFilePermissions( const char *scheddAddr = NULL )
 {
 #ifdef WIN32
 	// this isn't going to happen on Windows since:
@@ -541,7 +540,6 @@ main( int argc, const char *argv[] )
 	const char **ptr;
 	const char *pcolon = NULL;
 	const char *cmd_file = NULL;
-	int i;
 	MyString method;
 
 	setbuf( stdout, NULL );
@@ -559,6 +557,7 @@ main( int argc, const char *argv[] )
 
 	MyName = condor_basename(argv[0]);
 	myDistro->Init( argc, argv );
+	set_priv_initialize(); // allow uid switching if root
 	config();
 
 	//TODO:this should go away, and the owner name be placed in ad by schedd!
@@ -603,18 +602,18 @@ main( int argc, const char *argv[] )
 				DashDryRun = 1;
 				bool needs_file_arg = true;
 				if (pcolon) { 
-					needs_file_arg = false;
 					StringList opts(++pcolon);
 					for (const char * opt = opts.first(); opt; opt = opts.next()) {
 						if (YourString(opt) == "hash") {
 							DumpSubmitHash |= 0x100 | HASHITER_NO_DEFAULTS;
-							needs_file_arg = true;
 						} else if (YourString(opt) == "def") {
 							DumpSubmitHash &= ~HASHITER_NO_DEFAULTS;
-							needs_file_arg = true;
 						} else if (YourString(opt) == "digest") {
 							DumpSubmitDigest = 1;
-							needs_file_arg = true;
+						} else if (starts_with(opt, "cluster=")) {
+							sim_current_condor_version = true;
+							sim_starting_cluster = atoi(strchr(opt, '=') + 1);
+							sim_starting_cluster = MAX(sim_starting_cluster - 1, 0);
 						} else {
 							int optval = atoi(opt);
 							// if the argument is -dry:<number> and number is > 0x10,
@@ -650,6 +649,12 @@ main( int argc, const char *argv[] )
 					exit(1);
 				}
 				cmd_file = *ptr;
+			} else if (is_dash_arg_prefix(ptr[0], "digest", 6)) {
+				if (!(--argc) || !(*(++ptr)) || ((*ptr)[0] == '-')) {
+					fprintf(stderr, "%s: -digest requires a filename argument that is not -\n", MyName);
+					exit(1);
+				}
+				create_local_factory_file = *ptr;
 			} else if (is_dash_arg_prefix(ptr[0], "factory", 2)) {
 				dash_factory++;
 				DisableFileChecks = 1;
@@ -677,7 +682,7 @@ main( int argc, const char *argv[] )
 					exit(1);
 				}
 				if( ScheddName ) {
-					delete [] ScheddName;
+					free(ScheddName);
 				}
 				if( !(ScheddName = get_daemon_name(*ptr)) ) {
 					fprintf( stderr, "%s: unknown host %s\n",
@@ -692,7 +697,7 @@ main( int argc, const char *argv[] )
 					exit(1);
 				}
 				if( ScheddName ) {
-					delete [] ScheddName;
+					free(ScheddName);
 				}
 				if( !(ScheddName = get_daemon_name(*ptr)) ) {
 					fprintf( stderr, "%s: unknown host %s\n",
@@ -912,7 +917,7 @@ main( int argc, const char *argv[] )
 	if (DashDryRun > 0x10) { exit(DoUnitTests(DashDryRun)); }
 
 	// we don't want a schedd instance if we are dumping to a file
-	if ( !DumpClassAdToFile ) {
+	if ( !DumpClassAdToFile && !sim_current_condor_version) {
 		// Instantiate our DCSchedd so we can locate and communicate
 		// with our schedd.  
         if (!ScheddAddr.empty()) {
@@ -921,13 +926,16 @@ main( int argc, const char *argv[] )
             MySchedd = new DCSchedd(ScheddName, PoolName);
         }
 		if( ! MySchedd->locate() ) {
-			if( ScheddName ) {
-				fprintf( stderr, "\nERROR: Can't find address of schedd %s\n",
-						 ScheddName );
+			if (ScheddName) {
+				fprintf(stderr, "\nERROR: Can't find address of schedd %s\n", ScheddName);
+				exit(1);
+			} else if ( ! DashDryRun) {
+				fprintf(stderr, "\nERROR: Can't find address of local schedd\n");
+				exit(1);
 			} else {
-				fprintf( stderr, "\nERROR: Can't find address of local schedd\n" );
+				// delete the MySchedd so that -dry-run will assume the version of submit
+				delete MySchedd; MySchedd = NULL;
 			}
-			exit(1);
 		}
 	}
 
@@ -1119,10 +1127,10 @@ main( int argc, const char *argv[] )
 
 	if ( ! verbose && ! DumpFileIsStdout) {
 		if (terse) {
-			int ixFirst = 0;
-			for (int ix = 0; ix <= CurrentSubmitInfo; ++ix) {
+			size_t ixFirst = 0;
+			for (size_t ix = 0; ix < SubmitInfo.size(); ++ix) {
 				// fprintf(stderr, "\t%d.%d - %d\n", SubmitInfo[ix].cluster, SubmitInfo[ix].firstjob, SubmitInfo[ix].lastjob);
-				if ((ix == CurrentSubmitInfo) || SubmitInfo[ix].cluster != SubmitInfo[ix+1].cluster) {
+				if ((ix == (SubmitInfo.size()-1)) || SubmitInfo[ix].cluster != SubmitInfo[ix+1].cluster) {
 					if (SubmitInfo[ixFirst].cluster >= 0) {
 						fprintf(stdout, "%d.%d - %d.%d\n", 
 							SubmitInfo[ixFirst].cluster, SubmitInfo[ixFirst].firstjob,
@@ -1133,15 +1141,15 @@ main( int argc, const char *argv[] )
 			}
 		} else {
 			int this_cluster = -1, job_count=0;
-			for (i=0; i <= CurrentSubmitInfo; i++) {
-				if (SubmitInfo[i].cluster != this_cluster) {
+			for (size_t ix=0; ix < SubmitInfo.size(); ix++) {
+				if (SubmitInfo[ix].cluster != this_cluster) {
 					if (this_cluster != -1) {
 						fprintf(stdout, "%d job(s) %s to cluster %d.\n", job_count, DashDryRun ? "dry-run" : "submitted", this_cluster);
 						job_count = 0;
 					}
-					this_cluster = SubmitInfo[i].cluster;
+					this_cluster = SubmitInfo[ix].cluster;
 				}
-				job_count += SubmitInfo[i].lastjob - SubmitInfo[i].firstjob + 1;
+				job_count += SubmitInfo[ix].lastjob - SubmitInfo[ix].firstjob + 1;
 			}
 			if (this_cluster != -1) {
 				fprintf(stdout, "%d job(s) %s to cluster %d.\n", job_count, DashDryRun ? "dry-run" : "submitted", this_cluster);
@@ -1161,15 +1169,15 @@ main( int argc, const char *argv[] )
 	// we don't want to spool jobs if we are simply writing the ClassAds to 
 	// a file, so we just skip this block entirely if we are doing this...
 	if ( !DumpClassAdToFile ) {
-		if ( dash_remote && JobAdsArrayLen > 0 ) {
+		if ( dash_remote && JobAdsArray.size() > 0 ) {
 			bool result;
 			CondorError errstack;
 
 			switch(STMethod) {
 				case STM_USE_SCHEDD_ONLY:
 					// perhaps check for proper schedd version here?
-					result = MySchedd->spoolJobFiles( JobAdsArrayLen,
-											  JobAdsArray.getarray(),
+					result = MySchedd->spoolJobFiles( (int)JobAdsArray.size(),
+											  JobAdsArray.data(),
 											  &errstack );
 					if ( !result ) {
 						fprintf( stderr, "\n%s\n", errstack.getFullText(true).c_str() );
@@ -1182,16 +1190,16 @@ main( int argc, const char *argv[] )
 					{ // start block
 
 					fprintf(stdout,
-						"Locating a Sandbox for %d jobs.\n",JobAdsArrayLen);
-					MyString td_sinful;
-					MyString td_capability;
+							"Locating a Sandbox for %lu jobs.\n", (unsigned long)JobAdsArray.size());
+					std::string td_sinful;
+					std::string td_capability;
 					ClassAd respad;
 					int invalid;
-					MyString reason;
+					std::string reason;
 
 					result = MySchedd->requestSandboxLocation( FTPD_UPLOAD, 
-												JobAdsArrayLen,
-												JobAdsArray.getarray(), FTP_CFTP,
+												(int)JobAdsArray.size(),
+												JobAdsArray.data(), FTP_CFTP,
 												&respad, &errstack );
 					if ( !result ) {
 						fprintf( stderr, "\n%s\n", errstack.getFullText(true).c_str() );
@@ -1205,23 +1213,23 @@ main( int argc, const char *argv[] )
 						fprintf( stderr, 
 							"Schedd rejected sand box location request:\n");
 						respad.LookupString(ATTR_TREQ_INVALID_REASON, reason);
-						fprintf( stderr, "\t%s\n", reason.Value());
+						fprintf( stderr, "\t%s\n", reason.c_str());
 						return 0;
 					}
 
 					respad.LookupString(ATTR_TREQ_TD_SINFUL, td_sinful);
 					respad.LookupString(ATTR_TREQ_CAPABILITY, td_capability);
 
-					dprintf(D_ALWAYS, "Got td: %s, cap: %s\n", td_sinful.Value(),
-						td_capability.Value());
+					dprintf(D_ALWAYS, "Got td: %s, cap: %s\n", td_sinful.c_str(),
+						td_capability.c_str());
 
-					fprintf(stdout,"Spooling data files for %d jobs.\n",
-						JobAdsArrayLen);
+					fprintf(stdout,"Spooling data files for %lu jobs.\n",
+						(unsigned long)JobAdsArray.size());
 
-					DCTransferD dctd(td_sinful.Value());
+					DCTransferD dctd(td_sinful.c_str());
 
-					result = dctd.upload_job_files( JobAdsArrayLen,
-											  JobAdsArray.getarray(),
+					result = dctd.upload_job_files( (int)JobAdsArray.size(),
+											  JobAdsArray.data(),
 											  &respad, &errstack );
 					if ( !result ) {
 						fprintf( stderr, "\n%s\n", errstack.getFullText(true).c_str() );
@@ -1242,15 +1250,15 @@ main( int argc, const char *argv[] )
 
 	// don't try to reschedule jobs if we are dumping to a file, because, again
 	// there will be not schedd present to reschedule thru.
-	if ( !DumpClassAdToFile ) {
+	if ( !DumpClassAdToFile) {
 		if( ProcId != -1 ) {
 			reschedule();
 		}
 	}
 
 	// Deallocate some memory just to keep Purify happy
-	for (i=0;i<JobAdsArrayLen;i++) {
-		delete JobAdsArray[i];
+	for (size_t idx=0;idx<JobAdsArray.size();idx++) {
+		delete JobAdsArray[idx];
 	}
 	submit_hash.delete_job_ad();
 	delete MySchedd;
@@ -1470,8 +1478,18 @@ int check_sub_file(void* /*pv*/, SubmitHash * sub, _submit_file_role role, const
 void
 reschedule()
 {
+	if ( ! MySchedd)
+		return;
+
 	if ( param_boolean("SUBMIT_SEND_RESCHEDULE",true) ) {
 		Stream::stream_type st = MySchedd->hasUDPCommandPort() ? Stream::safe_sock : Stream::reli_sock;
+		if (DashDryRun) {
+			if (DashDryRun & 2) {
+				fprintf(stdout, "::sendCommand(RESCHEDULE, %s, 0)\n", 
+					(st == Stream::safe_sock) ? "UDP" : "TCP");
+			}
+			return;
+		}
 		if ( ! MySchedd->sendCommand(RESCHEDULE, st, 0) ) {
 			fprintf( stderr,
 					 "Can't send RESCHEDULE command to condor scheduler\n" );
@@ -1916,17 +1934,20 @@ int submit_jobs (
 			// turn the submit hash into a submit digest
 			std::string submit_digest;
 			submit_hash.make_digest(submit_digest, ClusterId, o.vars, 0);
+			if (submit_digest.empty()) {
+				rval = -1;
+				break;
+			}
 
-		#if 1
+			// if generating a dry-run digest file with a generic name, also generate a dry-run itemdata file
+			if (create_local_factory_file && (MyQ->get_type() == AbstractQ_TYPE_SIM)) {
+				MyString items_fn = create_local_factory_file;
+				items_fn += ".items";
+				dynamic_cast<SimScheddQ*>(MyQ)->echo_Itemdata(submit_hash.full_path(items_fn.c_str(), false));
+			}
 			rval = MyQ->send_Itemdata(ClusterId, o);
 			if (rval < 0)
 				break;
-		#else
-			// convert foreach data into canonical form, writing a new .items file if needed
-			rval = convert_to_foreach_file(submit_hash, o, ClusterId, true);
-			if (rval < 0)
-				break;
-		#endif
 
 			// append the revised queue statement to the submit digest
 			rval = append_queue_statement(submit_digest, o);
@@ -1935,11 +1956,8 @@ int submit_jobs (
 
 			// write the submit digest to the current working directory.
 			//PRAGMA_REMIND("todo: force creation of local factory file if schedd is version < 8.7.3?")
-			MyString factory_path;
 			if (create_local_factory_file) {
-				MyString factory_fn;
-				factory_fn.formatstr("condor_submit.%d.digest", ClusterId);
-				factory_path = submit_hash.full_path(factory_fn.c_str(), false);
+				MyString factory_path = submit_hash.full_path(create_local_factory_file, false);
 				rval = write_factory_file(factory_path.c_str(), submit_digest.data(), (int)submit_digest.size(), 0644);
 				if (rval < 0)
 					break;
@@ -1959,7 +1977,7 @@ int submit_jobs (
 
 			// send the submit digest to the schedd. the schedd will parse the digest at this point
 			// and return success or failure.
-			rval = MyQ->set_Factory(ClusterId, (int)max_materialize, factory_path.c_str(), submit_digest.c_str());
+			rval = MyQ->set_Factory(ClusterId, (int)max_materialize, "", submit_digest.c_str());
 			if (rval < 0)
 				break;
 
@@ -2108,7 +2126,7 @@ int queue_connect()
 	if ( ! ActiveQueueConnection)
 	{
 		if (DumpClassAdToFile || DashDryRun) {
-			SimScheddQ* SimQ = new SimScheddQ();
+			SimScheddQ* SimQ = new SimScheddQ(sim_starting_cluster);
 			if (DumpFileIsStdout) {
 				SimQ->Connect(stdout, false, false);
 			} else if (DashDryRun) {
@@ -2401,12 +2419,12 @@ int queue_item(int num, StringList & vars, char * item, int item_index, int opti
 			fprintf(stdout, ".");
 		}
 
-		if (CurrentSubmitInfo == -1 || SubmitInfo[CurrentSubmitInfo].cluster != ClusterId) {
-			CurrentSubmitInfo++;
-			SubmitInfo[CurrentSubmitInfo].cluster = ClusterId;
-			SubmitInfo[CurrentSubmitInfo].firstjob = ProcId;
+		if (SubmitInfo.size() == 0 || SubmitInfo.back().cluster != ClusterId) {
+			SubmitInfo.push_back(SubmitRec());
+			SubmitInfo.back().cluster = ClusterId;
+			SubmitInfo.back().firstjob = ProcId;
 		}
-		SubmitInfo[CurrentSubmitInfo].lastjob = ProcId;
+		SubmitInfo.back().lastjob = ProcId;
 
 		// SubmitInfo[x].lastjob controls how many submit events we
 		// see in the user log.  For parallel jobs, we only want
@@ -2414,7 +2432,7 @@ int queue_item(int num, StringList & vars, char * item, int item_index, int opti
 		// Procs are in that it.  Setting lastjob to zero makes this so.
 
 		if (JobUniverse == CONDOR_UNIVERSE_PARALLEL) {
-			SubmitInfo[CurrentSubmitInfo].lastjob = 0;
+			SubmitInfo.back().lastjob = 0;
 		}
 
 		// If spooling entire job "sandbox" to the schedd, then we need to keep
@@ -2424,12 +2442,12 @@ int queue_item(int num, StringList & vars, char * item, int item_index, int opti
 			tmp->Assign(ATTR_CLUSTER_ID, ClusterId);
 			tmp->Assign(ATTR_PROC_ID, ProcId);
 			if (0 == ProcId) {
-				JobAdsArrayLastClusterIndex = JobAdsArrayLen;
+				JobAdsArrayLastClusterIndex = JobAdsArray.size();
 			} else {
 				// proc ad to cluster ad (if there is one)
 				tmp->ChainToAd(JobAdsArray[JobAdsArrayLastClusterIndex]);
 			}
-			JobAdsArray[ JobAdsArrayLen++ ] = tmp;
+			JobAdsArray.push_back(tmp);
 			return true;
 		}
 
@@ -2578,11 +2596,14 @@ int SetSyscalls( int foo ) { return foo; }
 }
 
 // The code below needs work before it can build on Windows or older Macs
-#ifdef LINUX
 
 MyString credd_has_tokens(MyString m) {
 
-	dprintf(D_SECURITY, "CRED: querying CredD %s tokens for %s\n", m.c_str(), my_username());
+	if (IsDebugLevel(D_SECURITY)) {
+			char *myname = my_username();
+			dprintf(D_SECURITY, "CRED: querying CredD %s tokens for %s\n", m.c_str(), myname);
+			free(myname);
+	}
 
 	// PHASE 1
 	//
@@ -2659,6 +2680,15 @@ MyString credd_has_tokens(MyString m) {
 	unique_names.create_union(token_names, true);
 	unique_names.qsort();
 
+	// stick the list of unique names into the job ad.  we will need it later when
+	// the starter asks for its list of creds from the shadow.
+	char* commalist = unique_names.print_to_string();  // up to us to free()
+	MyString quotedlist;
+	quotedlist.formatstr("\"%s\"", commalist);
+	free(commalist);
+	submit_hash.set_arg_variable("+OAuthServicesNeeded", quotedlist.Value());
+	dprintf(D_SECURITY, "OAUTH: recording OAuthServicesNeeded as %s.\n", quotedlist.Value());
+
 
 	// PHASE 2
 	//
@@ -2670,14 +2700,14 @@ MyString credd_has_tokens(MyString m) {
 
 
 	// we'll have one classad per token.  create an array while we build them up
-	ClassAd requests[unique_names.number()];
+	ClassAdList requests;
 
 	char* token;
 	unique_names.rewind();
 
 	for(int index = 0; index < unique_names.number(); index++) {
 		token = unique_names.next();
-		ClassAd request_ad;
+		ClassAd *request_ad = new ClassAd();
 		MyString token_MyS = token;
 
 		MyString service_name;
@@ -2691,8 +2721,8 @@ MyString credd_has_tokens(MyString m) {
 			service_name = token_MyS.substr(0,starpos);
 			handle = token_MyS.substr(starpos+1,token_MyS.Length());
 		}
-		request_ad.Assign("Service", service_name);
-		request_ad.Assign("Handle", handle);
+		request_ad->Assign("Service", service_name);
+		request_ad->Assign("Handle", handle);
 
 		MyString param_name;
 		MyString config_param_name;
@@ -2716,7 +2746,7 @@ MyString credd_has_tokens(MyString m) {
 			config_param_name.formatstr("%s_DEFAULT_SCOPES", service_name.c_str());
 			param_val = param(config_param_name.c_str());
 		}
-		request_ad.Assign("Scopes", param_val);
+		request_ad->Assign("Scopes", param_val);
 
 		// get resource (audience) from submit file or config file if needed
 		param_name.formatstr("%s_OAUTH_RESOURCE", service_name.c_str());
@@ -2736,17 +2766,17 @@ MyString credd_has_tokens(MyString m) {
 			config_param_name.formatstr("%s_DEFAULT_AUDIENCE", service_name.c_str());
 			param_val = param(config_param_name.c_str());
 		}
-		request_ad.Assign("Audience", param_val);
-		request_ad.Assign("Username", my_username());
+		request_ad->Assign("Audience", param_val);
+		request_ad->Assign("Username", my_username());
 
 		if (IsDebugLevel (D_SECURITY)) {
 			std::string dbgout;
 			classad::ClassAdUnParser unp;
-			unp.Unparse(dbgout, &request_ad);
+			unp.Unparse(dbgout, request_ad);
 			dprintf(D_SECURITY, "OAUTH REQUEST: %s\n", dbgout.c_str());
 		}
 
-		requests[index] = request_ad;
+		requests.Insert(request_ad);
 	}
 
 	// PHASE 3
@@ -2767,8 +2797,9 @@ MyString credd_has_tokens(MyString m) {
 		r->encode();
 		int numads = unique_names.number();
 		r->code(numads);
+		requests.Rewind();
 		for (int i=0; i<numads; i++) {
-			putClassAd(r, requests[i]);
+			putClassAd(r, *(requests.Next()));
 		}
 		r->end_of_message();
 		r->decode();
@@ -2784,11 +2815,6 @@ MyString credd_has_tokens(MyString m) {
 	}
 }
 
-#else
-
-MyString credd_has_tokens(MyString m) { return NULL; }
-
-#endif
 
 int process_job_credentials()
 {
@@ -2809,16 +2835,26 @@ int process_job_credentials()
 		// it.  we forward this URL to the user so they can obtain the
 		// tokens needed.
 
-		MyString tokens_needed = submit_hash.submit_param_mystring("UseOathServies", "use_oauth_services");
+		MyString tokens_needed = submit_hash.submit_param_mystring("UseOAuthServices", "use_oauth_services");
 
 		if (!tokens_needed.empty()) {
 			MyString URL = credd_has_tokens(tokens_needed);
 			if (!URL.empty()) {
-				// report to user a URL
-				fprintf(stdout, "\nHello, %s.\nPlease visit: %s\n\n", my_username(), URL.Value());
+				if (IsUrl(URL.c_str())) {
+					// report to user a URL
+					char *my_un = my_username();
+					fprintf(stdout, "\nHello, %s.\nPlease visit: %s\n\n", my_un, URL.Value());
+					free(my_un);
+				} else {
+					fprintf(stderr, "\nOAuth error: %s\n\n", URL.Value());
+				}
 				exit(1);
 			}
 			dprintf(D_ALWAYS, "CRED: CredD says we have everything: %s\n", tokens_needed.c_str());
+
+			// force this to be written into the job, by using set_arg_variable
+			// it is also available to the submit file parser itself (i.e. can be used in If statements)
+			submit_hash.set_arg_variable("MY." ATTR_JOB_SEND_CREDENTIAL, "true");
 		} else {
 			dprintf(D_SECURITY, "CRED: NO MODULES REQUESTED\n");
 		}
@@ -2865,13 +2901,13 @@ int process_job_credentials()
 			}
 
 			// immediately convert to base64
-			char* ut64 = condor_base64_encode(uber_ticket, bytes_read);
+			char* ut64 = zkm_base64_encode(uber_ticket, (int)bytes_read);
 
 			// sanity check:  convert it back.
 			//unsigned char *zkmbuf = 0;
 			int zkmlen = -1;
 			unsigned char* zkmbuf = NULL;
-			condor_base64_decode(ut64, &zkmbuf, &zkmlen);
+			zkm_base64_decode(ut64, &zkmbuf, &zkmlen);
 
 			// zkmbuf IS LEAKING
 			dprintf(D_FULLDEBUG, "CREDMON: b64: %i %i\n", (int)bytes_read, zkmlen);

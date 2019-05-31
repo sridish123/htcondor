@@ -32,7 +32,6 @@
 #include "condor_uid.h"
 #include "match_prefix.h"
 #include "string_list.h"
-#include "get_daemon_name.h"
 #include "daemon.h"
 #include "dc_collector.h"
 #include "daemon_types.h"
@@ -112,6 +111,7 @@ main( int argc, char* argv[] )
 		get_mySubSystem()->setName( "DAEMON-TOOL" );
 	}
 
+	set_priv_initialize(); // allow uid switching if root
 	config_ex( CONFIG_OPT_WANT_META | CONFIG_OPT_NO_EXIT );
 
 	int failures = 0;
@@ -178,8 +178,7 @@ main( int argc, char* argv[] )
 
 	if (failures) {
 		printf("Aborting because of %d failures\n", failures);
-		exit(1);
 	}
 
-	exit(0);
+	exit(failures);
 }

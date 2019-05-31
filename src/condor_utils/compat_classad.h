@@ -94,6 +94,114 @@ int sGetAdAttrs( classad::References &attrs, const classad::ClassAd &ad, bool ex
 int sPrintAdAttrs( std::string &output, const classad::ClassAd &ad, const classad::References & attrs, const char * indent=NULL );
 int sPrintAdAttrs( MyString &output, const classad::ClassAd &ad, const classad::References & attrs);
 
+bool initAdFromString(char const *str, classad::ClassAd &ad);
+
+/* Fill in a ClassAd by reading from file
+ * returns number of attributes added, 0 if none, -1 if parse error
+ * The second form emulates the behavior of an old ClassAd constructor.
+ */
+int InsertFromFile(FILE*, classad::ClassAd &ad, bool& is_eof, int& error, ClassAdFileParseHelper* phelp=NULL);
+int InsertFromFile(FILE*, classad::ClassAd &ad, const std::string &delim, int& is_eof, int& error, int &empty);
+
+// Copy value of source_attr in source_ad to target_attr in target_ad.
+// If source_attr isn't in source_ad, target_attr is deleted, if
+// it exists.
+void CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const std::string &source_attr, const classad::ClassAd &source_ad);
+
+// Copy value of target_attr in source_ad to target_attr in target_ad.
+// Shortcut for CopyAttribute(target_attr, target_ad, target_attr, source_ad)
+void CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const classad::ClassAd &source_ad);
+
+// Copy value of source_attr in target_ad to target_attr in target_ad.
+// Shortcut for CopyAttribute(target_attr, target_ad, source_attr, target_ad)
+void CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const std::string &source_attr);
+
+/** Takes the ad this ad is chained to, copies over all the
+ *  attributes from the parent ad that aren't in this classad
+ *  (so attributes in both the parent ad and this ad retain the
+ *  values from this ad), and then makes this ad not chained to
+ *  the parent.
+ */
+void ChainCollapse(classad::ClassAd &ad);
+
+/** Lookup and evaluate an attribute in the ClassAd whose type is not known
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value Where we the copy value
+ *  @return 1 on success, 0 if the attribute doesn't exist
+ */
+int EvalAttr (const char *name, classad::ClassAd *my, classad::ClassAd *target, classad::Value & value);
+
+/** Lookup and evaluate an attribute in the ClassAd that is a string
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value Where we copy the string. We allocate space ala strdup().
+ *    The caller is responsible for freeing.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not a string.
+ */
+int EvalString (const char *name, classad::ClassAd *my, classad::ClassAd *target, char **value);
+/** MyString version of EvalString()
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value A MyString where we the copy the string. We ensure there is enough space.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not a string.
+ */
+int EvalString (const char *name, classad::ClassAd *my, classad::ClassAd *target, MyString & value);
+
+/** std::string version of EvalString()
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value A std::string where we the copy the string.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not a string.
+ */
+int EvalString (const char *name, classad::ClassAd *my, classad::ClassAd *target, std::string & value);
+
+/** Lookup and evaluate an attribute in the ClassAd that is an integer
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value Where we the copy the value.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not an integer
+ */
+int EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, long long &value);
+int EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, int& value);
+int EvalInteger (const char *name, classad::ClassAd *my, classad::ClassAd *target, long & value);
+
+/** Lookup and evaluate an attribute in the ClassAd that is a float
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value Where we the copy the value. Danger: we just use strcpy.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not a float.
+ */
+int EvalFloat (const char *name, classad::ClassAd *my, classad::ClassAd *target, double &value);
+int EvalFloat (const char *name, classad::ClassAd *my, classad::ClassAd *target, float &value);
+
+/** Lookup and evaluate an attribute in the ClassAd that is a boolean
+ *  @param name The name of the attribute
+ *  @param my The ClassAd containing the named attribute
+ *  @param target A ClassAd to resolve TARGET or other references
+ *  @param value Where we a 1 (if the value is non-zero) or a 1.
+ *    This parameter is only modified on success.
+ *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist
+ *  but is not a number.
+ */
+int EvalBool  (const char *name, classad::ClassAd *my, classad::ClassAd *target, bool &value);
+
 class ClassAd : public classad::ClassAd
 {
  public:
@@ -107,14 +215,6 @@ class ClassAd : public classad::ClassAd
 
 		/**@name Deprecated functions (only for use within Condor) */
 		//@{
-
-		/** A constructor that reads old ClassAds from a FILE */
-	ClassAd(FILE*,const char*delim,int&isEOF,int&error,int&empty);	// Constructor, read from file.
-
-		/* helper for constructor that reads from file 
-		 * returns number of attributes added, 0 if none, -1 if parse error
-		 */
-	int InsertFromFile(FILE*, bool& is_eof, int& error, ClassAdFileParseHelper* phelp=NULL);
 
 		/* This is a pass-through to ClassAd::Insert(). Because we define
 		 * our own Insert() below, our parent's Insert() won't be found
@@ -159,10 +259,9 @@ class ClassAd : public classad::ClassAd
 
 	int Assign(char const *name,unsigned long value)
 	{ return InsertAttr( name, (long long)value) ? TRUE : FALSE; }
-#ifdef WIN32
-    int Assign(char const *name,unsigned long long value)
+
+	int Assign(char const *name,unsigned long long value)
 	{ return InsertAttr( name, (long long)value) ? TRUE : FALSE; }
-#endif
 
 	int Assign(char const *name,float value)
 	{ return InsertAttr( name, (double)value) ? TRUE : FALSE; }
@@ -173,20 +272,9 @@ class ClassAd : public classad::ClassAd
 	int Assign(char const *name,bool value)
 	{ return InsertAttr( name, value) ? TRUE : FALSE; }
 
-		// for iteration through expressions
-//		void		ResetExpr();
-//		classad::ExprTree*	NextExpr();
-
 		// lookup values in classads  (for simple assignments)
       classad::ExprTree* LookupExpr(const char* name) const
 	  { return Lookup( name ); }
-
-		/** Lookup (don't evaluate) an attribute that is a string.
-		 *  @param name The attribute
-		 *  @param value The string, copied with strcpy (DANGER)
-		 *  @return true if the attribute exists and is a string, false otherwise
-		 */
-//	int LookupString(const char *name, char *value) const; 
 
 		/** Lookup (don't evaluate) an attribute that is a string.
 		 *  @param name The attribute
@@ -236,178 +324,17 @@ class ClassAd : public classad::ClassAd
 
 		/** Lookup (don't evaluate) an attribute that can be considered a boolean
 		 *  @param name The attribute
-		 *  @param value 0 if the attribute is 0, 1 otherwise
-		 *  @return true if the attribute exists and is a boolean/integer, false otherwise
-		 */
-
-	int LookupBool(const char *name, int &value) const;
-
-		/** Lookup (don't evaluate) an attribute that can be considered a boolean
-		 *  @param name The attribute
 		 *  @param value false if the attribute is 0, true otherwise
 		 *  @return true if the attribute exists and is a boolean/integer, false otherwise
 		 */
 
 	int LookupBool(const char *name, bool &value) const;
 
-		/** Lookup and evaluate an attribute in the ClassAd whose type is not known
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value Where we the copy value
-		 *  @return 1 on success, 0 if the attribute doesn't exist
-		 */
-	int EvalAttr (const char *name, classad::ClassAd *target, classad::Value & value);
-
-        /** Same as EvalString, but ensures we have enough space for value first.
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value Where we the copy the string. We ensure there is enough space. 
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not a string.
-         */
-    int EvalString (const char *name, classad::ClassAd *target, char **value);
-        /** MyString version of EvalString()
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value A MyString where we the copy the string. We ensure there is enough space. 
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not a string.
-         */
-    int EvalString (const char *name, classad::ClassAd *target, MyString & value);
-
-        /** std::string version of EvalString()
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value A std::string where we the copy the string.
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not a string.
-         */
-    int EvalString (const char *name, classad::ClassAd *target, std::string & value);
-
-		/** Lookup and evaluate an attribute in the ClassAd that is an integer
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value Where we the copy the value.
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not an integer
-		 */
-	int EvalInteger (const char *name, classad::ClassAd *target, long long &value);
-	int EvalInteger (const char *name, classad::ClassAd *target, int& value) {
-		long long ival = 0;
-		int result = EvalInteger(name, target, ival);
-		if ( result ) {
-			value = (int)ival;
-		}
-		return result;
-	}
-	int EvalInteger (const char *name, classad::ClassAd *target, long & value) {
-		long long ival = 0;
-		int result = EvalInteger(name, target, ival);
-		if ( result ) {
-			value = (long)ival;
-		}
-		return result;
-	}
-
-		/** Lookup and evaluate an attribute in the ClassAd that is a float
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value Where we the copy the value. Danger: we just use strcpy.
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not a float.
-		 */
-
-	int EvalFloat (const char *name, classad::ClassAd *target, double &value);
-	int EvalFloat (const char *name, classad::ClassAd *target, float &value) {
-		double dval = 0.0;
-		int result = EvalFloat(name, target, dval);
-		if ( result ) {
-			value = dval;
-		}
-		return result;
-	}
-
-		/** Lookup and evaluate an attribute in the ClassAd that is a boolean
-		 *  @param name The name of the attribute
-		 *  @param target A ClassAd to resolve MY or other references
-		 *  @param value Where we a 1 (if the value is non-zero) or a 1. 
-		 *    This parameter is only modified on success.
-		 *  @return 1 on success, 0 if the attribute doesn't exist, or if it does exist 
-		 *  but is not a number.
-		 */
-	int EvalBool  (const char *name, classad::ClassAd *target, int &value);
-
-	bool initFromString(char const *str,MyString *err_msg=NULL);
-
-    void ResetExpr();
-
-	void ResetName();
-	const char *NextNameOriginal();
-
-	bool NextExpr( const char *&name, ExprTree *&value );
-
-    /** Gets the next dirty expression tree
-     * @return The ExprTree associated with the next dirty attribute, or null if one does not exist.
-     */
-    bool NextDirtyExpr(const char *&name, classad::ExprTree *&expr);
-
-	// Set or clear the dirty flag for each expression.
-	void SetDirtyFlag(const char *name, bool dirty);
-	void GetDirtyFlag(const char *name, bool *exists, bool *dirty) const;
-
-	// Copy value of source_attr in source_ad to target_attr
-	// in this ad.  If source_ad is NULL, it defaults to this ad.
-	// If source_attr is undefined, target_attr is deleted, if
-	// it exists.
-	void CopyAttribute(char const *target_attr, char const *source_attr, classad::ClassAd *source_ad=NULL );
-
-	// Copy value of source_attr in source_ad to an attribute
-	// of the same name in this ad.  Shortcut for
-	// CopyAttribute(target_attr,target_attr,source_ad).
-	void CopyAttribute(char const *target_attr, classad::ClassAd *source_ad );
-
-        static void CopyAttribute(const char *target_attr, classad::ClassAd &target_ad, const char *source_attr, const classad::ClassAd &source_ad);
-        static void CopyAttribute(const std::string &target_attr, classad::ClassAd &target_ad, const std::string &source_attr, const classad::ClassAd &source_ad)
-        {CopyAttribute(target_attr.c_str(), target_ad, source_attr.c_str(), source_ad);}
-
-
-    /** Takes the ad this is chained to, copies over all the 
-     *  attributes from the parent ad that aren't in this classad
-     *  (so attributes in both the parent ad and this ad retain the 
-     *  values from this ad), and then makes this ad not chained to
-     *  the parent.
-     */
-    void ChainCollapse();
-
-	// returns 0 if not attr found, 1 if attr is in ad, 2 if in parent ad, 3 if in both ad and parent ad
-	int AttrChainDepth(const std::string & attr);
-
 	static void Reconfig();
 	static bool m_initConfig;
 	static bool m_strictEvaluation;
 
  private:
-	void evalFromEnvironment( const char *name, classad::Value val );
-
-	enum ItrStateEnum {
-		ItrUninitialized,
-		ItrInThisAd,
-		ItrInChain
-	};
-
-	classad::ClassAd::iterator m_nameItr;
-	ItrStateEnum m_nameItrState;
-
-	classad::ClassAd::iterator m_exprItr;
-	ItrStateEnum m_exprItrState;
-
-    classad::DirtyAttrList::iterator m_dirtyItr;
-    bool m_dirtyItrInit;
 
 	// poison Assign of ExprTree* type for public users
 	// otherwise the compiler will resolve against the bool overload 
@@ -424,13 +351,13 @@ class ClassAdFileParseHelper
 	// explicit virtual destructor
 	virtual ~ClassAdFileParseHelper() {}
 	// return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
-	virtual int PreParse(std::string & line, ClassAd & ad, FILE* file)=0;
+	virtual int PreParse(std::string & line, classad::ClassAd & ad, FILE* file)=0;
 	// return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
-	virtual int OnParseError(std::string & line, ClassAd & ad, FILE* FILE)=0;
+	virtual int OnParseError(std::string & line, classad::ClassAd & ad, FILE* FILE)=0;
 	// return non-zero if new parser, 0 if old (line oriented) parser, if parse type is auto
 	// it may return 0 and also set detected_long to indicate that errmsg should be parsed
 	// as a line from the file. we do this to avoid having to backtrack the FILE*
-	virtual int NewParser(ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg)=0;
+	virtual int NewParser(classad::ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg)=0;
 };
 
 // this implements a classad file parse helper that
@@ -443,13 +370,13 @@ class CondorClassAdFileParseHelper : public ClassAdFileParseHelper
 	// explicit virtual destructor
 	virtual ~CondorClassAdFileParseHelper();
 	// return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
-	virtual int PreParse(std::string & line, ClassAd & ad, FILE* file);
+	virtual int PreParse(std::string & line, classad::ClassAd & ad, FILE* file);
 	// return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
-	virtual int OnParseError(std::string & line, ClassAd & ad, FILE* FILE);
+	virtual int OnParseError(std::string & line, classad::ClassAd & ad, FILE* FILE);
 	// return non-zero if new parser, 0 if old (line oriented) parser, if parse type is auto
 	// it may return 0 and also set detected_long to indicate that errmsg should be parsed
 	// as a line from the file. we do this to avoid having to backtrack the FILE*
-	virtual int NewParser(ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg);
+	virtual int NewParser(classad::ClassAd & ad, FILE* file, bool & detected_long, std::string & errmsg);
 
 	enum ParseType {
 		Parse_long=0, // file is in the traditional -long form, possibly with a delimiter line between ads

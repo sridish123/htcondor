@@ -97,7 +97,7 @@ extern "C" void
 initializeUserLog ()
 {
 	std::string logfilename,dagmanLogName;
-	int use_xml;
+	int use_classad = 0;
 	std::vector<const char*> logfiles;
 	if ( getPathToUserLog(JobAd, logfilename) ) {
 		logfiles.push_back(logfilename.c_str());
@@ -113,7 +113,8 @@ initializeUserLog ()
 				Proc->id.cluster, Proc->id.proc, 0)) {
 			EXCEPT("Failed to initialize user log!");
 		} else {
-			ULog.setUseXML(JobAd->LookupBool(ATTR_ULOG_USE_XML, use_xml) && use_xml);
+			if ( ! JobAd->LookupInteger(ATTR_ULOG_USE_XML, use_classad)) { use_classad = 0; }
+			ULog.setUseCLASSAD(use_classad & ULogEvent::formatOpt::CLASSAD);
 		}
 	} else {
 		dprintf(D_FULLDEBUG, "no %s found and no %s found\n", ATTR_ULOG_FILE,
@@ -233,7 +234,7 @@ log_termination (struct rusage *localr, struct rusage *remoter)
 		// abnormal termination
 		{
 			MyString coredir;
-			MyString coreFile;
+			std::string coreFile;
 			JobTerminatedEvent event;
 			event.normal = false;
 			event.signalNumber = WTERMSIG(JobStatus);
@@ -249,17 +250,17 @@ log_termination (struct rusage *localr, struct rusage *remoter)
 
 					if (strcmp (Proc->rootdir, "/") == 0)
 					{
-						coreFile.formatstr( "%s/core.%d.%d", coredir.Value(),
+						formatstr( coreFile, "%s/core.%d.%d", coredir.Value(),
 							 	Proc->id.cluster, Proc->id.proc );
 					}
 					else
 					{
-						coreFile.formatstr( "%s%s/core.%d.%d", Proc->rootdir,
+						formatstr( coreFile, "%s%s/core.%d.%d", Proc->rootdir,
 							 	coredir.Value(), Proc->id.cluster, Proc->id.proc );
 					}
 				} 
 				
-				event.setCoreFile( coreFile.Value() );
+				event.setCoreFile( coreFile.c_str() );
 			}
 			event.run_local_rusage = *localr;
 			event.run_remote_rusage = *remoter;

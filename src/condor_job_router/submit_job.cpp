@@ -488,8 +488,9 @@ static bool submit_job_with_current_priv( ClassAd & src, const char * schedd_nam
 	ExprTree * tree;
 	const char *lhstr = 0;
 	const char *rhstr = 0;
-	src.ResetExpr();
-	while( src.NextExpr(lhstr, tree) ) {
+	for( auto itr = src.begin(); itr != src.end(); itr++ ) {
+		lhstr = itr->first.c_str();
+		tree = itr->second;
 		if ( filter_attrs.find( lhstr ) != filter_attrs.end() ) {
 			continue;
 		}
@@ -880,7 +881,7 @@ bool InitializeUserLog( classad::ClassAd const &job_ad, WriteUserLog *ulog, bool
 	std::string userLogFile;
 	std::string domain;
 	std::string dagmanLogFile;
-	bool use_xml = false;
+	int use_classad = 0;
 
 	ASSERT(ulog);
 	ASSERT(no_ulog);
@@ -903,12 +904,12 @@ bool InitializeUserLog( classad::ClassAd const &job_ad, WriteUserLog *ulog, bool
 	job_ad.EvaluateAttrInt( ATTR_CLUSTER_ID, cluster );
 	job_ad.EvaluateAttrInt( ATTR_PROC_ID, proc );
 	job_ad.EvaluateAttrString( ATTR_NT_DOMAIN, domain );
-	job_ad.EvaluateAttrBool( ATTR_ULOG_USE_XML, use_xml );
+	job_ad.EvaluateAttrInt( ATTR_ULOG_USE_XML, use_classad);
 
 	if(!ulog->initialize(owner.c_str(), domain.c_str(), logfiles, cluster, proc, 0)) {
 		return false;
 	}
-	ulog->setUseXML( use_xml );
+	ulog->setUseCLASSAD(use_classad);
 	return true;
 }
 

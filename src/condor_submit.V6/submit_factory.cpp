@@ -42,7 +42,6 @@
 #include "internet.h"
 #include "my_hostname.h"
 #include "domain_tools.h"
-#include "get_daemon_name.h"
 //#include "condor_qmgr.h"  // only submit_protocol.cpp is allowed to access the schedd's Qmgt functions
 #include "sig_install.h"
 #include "access.h"
@@ -83,6 +82,7 @@
 #include "condor_md.h"
 #include "my_popen.h"
 #include "condor_base64.h"
+#include "zkm_base64.h"
 
 #include <algorithm>
 #include <string>
@@ -123,6 +123,7 @@ int write_factory_file(const char * filename, const void* data, int cb, mode_t a
 	int cbwrote = write(fd, data, cb);
 	if (cbwrote != cb) {
 		dprintf(D_ALWAYS, "ERROR: write_factory_file(%s): write() failed: %s (%d)\n", filename, strerror(errno), errno);
+		close(fd);
 		return -1;
 	}
 
@@ -273,8 +274,9 @@ int SendClusterAd (ClassAd * ad)
 	classad::ClassAdUnParser unparser;
 	unparser.SetOldClassAd( true, true );
 
-	ad->ResetExpr();
-	while (ad->NextExpr(lhstr, tree)) {
+	for ( auto itr = ad->begin(); itr != ad->end(); itr++ ) {
+		lhstr = itr->first.c_str();
+		tree = itr->second;
 		if ( ! lhstr || ! tree) {
 			fprintf( stderr, "\nERROR: Null attribute name or value for cluster %d\n", ClusterId );
 			return -1;

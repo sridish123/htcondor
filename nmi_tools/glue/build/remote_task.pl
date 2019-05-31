@@ -154,7 +154,7 @@ elsif ($taskname eq $NATIVE_TASK || $taskname eq $NATIVE_DEBUG_TASK) {
         print "Detected OS is Debian or Ubuntu.  Creating Deb package.\n";
         $execstr = create_deb($is_debug);
     }
-    elsif ($ENV{NMI_PLATFORM} =~ /(rha|redhat|fedora|centos)/i) {
+    elsif ($ENV{NMI_PLATFORM} =~ /(rha|redhat|fedora|centos|sl)/i) {
         print "Detected OS is Red Hat.  Creating RPM package.\n";
         $execstr = create_rpm($is_debug);
     }
@@ -173,7 +173,7 @@ elsif ($taskname eq $CHECK_NATIVE_TASK) {
         print "Detected OS is Debian.  Validating Deb package.\n";
         $execstr = check_deb();
     }
-    elsif ($ENV{NMI_PLATFORM} =~ /(rha|redhat|fedora|centos)/i) {
+    elsif ($ENV{NMI_PLATFORM} =~ /(rha|redhat|fedora|centos|sl)/i) {
         print "Detected OS is Red Hat.  Validating RPM package.\n";
         $execstr = check_rpm();
     }
@@ -184,12 +184,14 @@ elsif ($taskname eq $CHECK_NATIVE_TASK) {
 } elsif ($taskname eq $RUN_UNIT_TESTS) {
     if ($ENV{NMI_PLATFORM} =~ /_win/i) {
     } else {
-        $execstr = "ctest -v --output-on-failure";
+        $execstr = "ctest -v --output-on-failure -L batlab";
     }
 } elsif ($taskname eq $COVERITY_ANALYSIS) {
 	print "Running Coverity analysis\n";
-	$ENV{PATH} = "$ENV{PATH}:/home/condorauto/cov-analysis-linux64-8.6.0/bin";
-	$execstr = "cd src && make clean && mkdir -p ../public/cov-data && cov-build --dir ../public/cov-data make -k ; cov-analyze --enable-constraint-fpp --enable-virtual --security --dir ../public/cov-data && cov-commit-defects --dir ../public/cov-data --stream htcondor --host submit-3.batlab.org --user admin --password `cat /home/condorauto/coverity/.p`";
+	$ENV{PATH} = "/bin:$ENV{PATH}:/home/condorauto/cov-analysis-linux64-8.6.0/bin";
+	$execstr = get_cmake_args();
+	$execstr .= " -DBUILD_TESTING:bool=false ";
+	$execstr .= " && cd src && make clean && mkdir -p ../public/cov-data && cov-build --dir ../public/cov-data make -k ; cov-analyze --dir ../public/cov-data && cov-commit-defects --dir ../public/cov-data --stream htcondor --host submit-3.batlab.org --user admin --password `cat /home/condorauto/coverity/.p`";
 }
 
 

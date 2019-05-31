@@ -18,7 +18,7 @@
 
 
 install ( FILES condor_top DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
-install ( FILES Condor.pm CondorUtils.pm CondorTest.pm CondorPersonal.pm DESTINATION ${C_LIB} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
+#install ( FILES Condor.pm CondorUtils.pm CondorTest.pm CondorPersonal.pm DESTINATION ${C_LIB} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
 
 if (NOT WINDOWS)
 
@@ -39,6 +39,7 @@ if (NOT WINDOWS)
     endif(WANT_FULL_DEPLOYMENT)
 
 	install ( FILES condor_ssh sshd.sh get_orted_cmd.sh orted_launcher.sh DESTINATION ${C_LIBEXEC} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
+	install ( FILES box_plugin.py DESTINATION ${C_LIBEXEC} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
 
     if (LINUX)
         install ( FILES linux_kernel_tuning DESTINATION ${C_LIBEXEC} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )

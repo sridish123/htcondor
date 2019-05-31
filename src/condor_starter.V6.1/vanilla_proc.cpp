@@ -358,7 +358,7 @@ VanillaProc::StartJob()
 		std::string starter_name, execute_str;
 		param(execute_str, "EXECUTE", "EXECUTE_UNKNOWN");
 			// Note: Starter is a global variable from os_proc.cpp
-		Starter->jic->machClassAd()->EvalString(ATTR_NAME, NULL, starter_name);
+		Starter->jic->machClassAd()->LookupString(ATTR_NAME, starter_name);
 		if (starter_name.size() == 0) {
 			char buf[16];
 			sprintf(buf, "%d", getpid());
@@ -385,7 +385,7 @@ VanillaProc::StartJob()
 	{
         // Have Condor manage a chroot
        std::string requested_chroot_name;
-       JobAd->EvalString("RequestedChroot", NULL, requested_chroot_name);
+       JobAd->LookupString("RequestedChroot", requested_chroot_name);
        const char * allowed_root_dirs = param("NAMED_CHROOT");
        if (requested_chroot_name.size()) {
                dprintf(D_FULLDEBUG, "Checking for chroot: %s\n", requested_chroot_name.c_str());
@@ -466,8 +466,6 @@ VanillaProc::StartJob()
        }
 	}
 // End of chroot 
-#endif
-
 
 	// On Linux kernel 2.4.19 and later, we can give each job its
 	// own FS mounts.
@@ -504,7 +502,7 @@ VanillaProc::StartJob()
 	}
 
 	// mount_under_scratch only works with rootly powers
-	if (mount_under_scratch && can_switch_ids() && has_sysadmin_cap()) {
+	if (mount_under_scratch && can_switch_ids() && has_sysadmin_cap() && (job_universe != CONDOR_UNIVERSE_LOCAL)) {
 		const char* working_dir = Starter->GetWorkingDir();
 
 		if (IsDirectory(working_dir)) {
@@ -553,11 +551,16 @@ VanillaProc::StartJob()
 		}
 		mount_under_scratch.clear();
 	}
+#endif
 
 #if defined(LINUX)
 	// On Linux kernel 2.6.24 and later, we can give each
-	// job its own PID namespace
-	if (param_boolean("USE_PID_NAMESPACES", false) && !htcondor::Singularity::job_enabled(*Starter->jic->machClassAd(), *JobAd)) {
+	// job its own PID namespace.
+	static bool previously_setup_for_pid_namespace = false;
+
+	if ( (previously_setup_for_pid_namespace || param_boolean("USE_PID_NAMESPACES", false))
+			&& !htcondor::Singularity::job_enabled(*Starter->jic->machClassAd(), *JobAd) ) 
+	{
 		if (!can_switch_ids()) {
 			EXCEPT("USE_PID_NAMESPACES enabled, but can't perform this "
 				"call in Linux unless running as root.");
@@ -573,10 +576,13 @@ VanillaProc::StartJob()
 		// When PID Namespaces are enabled, need to run the job
 		// under the condor_pid_ns_init program, so that signals
 		// propagate through to the child.  
+		// Be aware that StartJob() can be called repeatedly in the
+		// case of a self-checkpointing job, so be careful to only make
+		// modifications to the job classad once.
 
 		// First tell the program where to log output status
 		// via an environment variable
-		if (param_boolean("USE_PID_NAMESPACE_INIT", true)) {
+		if (!previously_setup_for_pid_namespace && param_boolean("USE_PID_NAMESPACE_INIT", true)) {
 			Env env;
 			MyString env_errors;
 			MyString arg_errors;
@@ -610,6 +616,7 @@ VanillaProc::StartJob()
 			}
 			std::string c_p_n_i = libexec + "/condor_pid_ns_init";
 			JobAd->Assign(ATTR_JOB_CMD, c_p_n_i);
+			previously_setup_for_pid_namespace = true;
 		}
 	}
 	dprintf(D_FULLDEBUG, "PID namespace option: %s\n", fi.want_pid_namespace ? "true" : "false");
@@ -772,7 +779,6 @@ VanillaProc::PublishUpdateAd( ClassAd* ad )
 		ad->Assign(ATTR_BLOCK_WRITES, usage->block_writes);
 	}
 
-dprintf(D_ALWAYS, "GGT GGT GGT about to set io wait to %g\n", usage->io_wait);
 	if (usage->io_wait >= 0.0) {
 		ad->Assign(ATTR_IO_WAIT, usage->io_wait);
 	}
@@ -1134,7 +1140,7 @@ VanillaProc::outOfMemoryEvent(int /* fd */)
 		// will be killed, and when it does, this job will get unfrozen
 		// and continue running.
 
-		if (usage < (0.9 * m_memory_limit)) {
+		if (usage < m_memory_limit) {
 			long long oomData = 0xdeadbeef;
 			int efd = -1;
 			ASSERT( daemonCore->Get_Pipe_FD(m_oom_efd, &efd) );
@@ -1387,7 +1393,7 @@ bool VanillaProc::Ckpt() {
 
 	if( isSoftKilling ) { return false; }
 
-	int wantCheckpointSignal = 0;
+	bool wantCheckpointSignal = false;
 	JobAd->LookupBool( ATTR_WANT_CHECKPOINT_SIGNAL, wantCheckpointSignal );
 	if( wantCheckpointSignal && ! isCheckpointing ) {
 		int periodicCheckpointSignal = findCheckpointSig( JobAd );
@@ -1406,7 +1412,7 @@ bool VanillaProc::Ckpt() {
 }
 
 int VanillaProc::outputOpenFlags() {
-	int wantCheckpoint = 0;
+	bool wantCheckpoint = false;
 	JobAd->LookupBool( ATTR_WANT_CHECKPOINT_SIGNAL, wantCheckpoint );
 	bool wantsFileTransferOnCheckpointExit = false;
 	JobAd->LookupBool( ATTR_WANT_FT_ON_CHECKPOINT, wantsFileTransferOnCheckpointExit );
@@ -1418,7 +1424,7 @@ int VanillaProc::outputOpenFlags() {
 }
 
 int VanillaProc::streamingOpenFlags( bool isOutput ) {
-	int wantCheckpoint = 0;
+	bool wantCheckpoint = false;
 	JobAd->LookupBool( ATTR_WANT_CHECKPOINT_SIGNAL, wantCheckpoint );
 	bool wantsFileTransferOnCheckpointExit = false;
 	JobAd->LookupBool( ATTR_WANT_FT_ON_CHECKPOINT, wantsFileTransferOnCheckpointExit );

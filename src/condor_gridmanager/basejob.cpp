@@ -25,6 +25,7 @@
 #include "condor_daemon_core.h"
 #include "spooled_job_files.h"
 #include "write_user_log.h"
+#include "condor_string.h"
 
 #include "gridmanager.h"
 #include "basejob.h"
@@ -109,10 +110,10 @@ BaseJob::BaseJob( ClassAd *classad )
 								(TimerHandlercpp)&BaseJob::doEvaluateState,
 								"doEvaluateState", (Service*) this );;
 
-	wantRematch = 0;
+	wantRematch = false;
 	doResubmit = 0;		// set if gridmanager wants to resubmit job
-	wantResubmit = 0;	// set if user wants to resubmit job via RESUBMIT_CHECK
-	jobAd->EvalBool(ATTR_GLOBUS_RESUBMIT_CHECK,NULL,wantResubmit);
+	wantResubmit = false;	// set if user wants to resubmit job via RESUBMIT_CHECK
+	jobAd->LookupBool(ATTR_GLOBUS_RESUBMIT_CHECK,wantResubmit);
 
 	jobAd->EnableDirtyTracking();
 	jobAd->ClearAllDirtyFlags();
@@ -409,6 +410,7 @@ void BaseJob::UpdateRuntimeStats()
 		jobAd->LookupInteger( ATTR_NUM_JOB_STARTS, num_job_starts );
 		num_job_starts++;
 		jobAd->Assign( ATTR_NUM_JOB_STARTS, num_job_starts );
+		jobAd->Assign( ATTR_JOB_RUN_COUNT, num_job_starts );
 
 		requestScheddUpdate( this, false );
 
@@ -609,7 +611,7 @@ dprintf(D_FULLDEBUG,"(%d.%d) UpdateJobLeaseReceived(%d)\n",procID.cluster,procID
 		}
 
 		jobAd->Assign( ATTR_TIMER_REMOVE_CHECK, new_expiration_time );
-		jobAd->SetDirtyFlag( ATTR_TIMER_REMOVE_CHECK, false );
+		jobAd->MarkAttributeClean( ATTR_TIMER_REMOVE_CHECK );
 
 		SetJobLeaseTimers();
 	}
@@ -695,7 +697,7 @@ void BaseJob::JobAdUpdateFromSchedd( const ClassAd *new_ad, bool full_ad )
 			} else {
 				jobAd->Delete( held_removed_update_attrs[i] );
 			}
-			jobAd->SetDirtyFlag( held_removed_update_attrs[i], false );
+			jobAd->MarkAttributeClean( held_removed_update_attrs[i] );
 		}
 
 		if ( new_condor_state == HELD && writeUserLog && !holdLogged ) {
@@ -711,9 +713,7 @@ void BaseJob::JobAdUpdateFromSchedd( const ClassAd *new_ad, bool full_ad )
 			// possible to learn of the removal just as we're about to
 			// update the schedd with the hold.
 		if ( new_condor_state == REMOVED && condorState == HELD ) {
-			bool dirty;
-			jobAd->GetDirtyFlag( ATTR_JOB_STATUS, NULL, &dirty );
-			if ( dirty ) {
+			if ( jobAd->IsAttributeDirty( ATTR_JOB_STATUS ) ) {
 				jobAd->Assign( ATTR_JOB_STATUS_ON_RELEASE, REMOVED );
 			}
 		}
@@ -921,7 +921,7 @@ BaseJob::UpdateJobTime( float *old_run_time, bool *old_run_time_dirty )
 
   jobAd->LookupInteger(ATTR_SHADOW_BIRTHDATE,shadow_bday);
   jobAd->LookupFloat(ATTR_JOB_REMOTE_WALL_CLOCK,previous_run_time);
-  jobAd->GetDirtyFlag(ATTR_JOB_REMOTE_WALL_CLOCK,NULL,old_run_time_dirty);
+  *old_run_time_dirty = jobAd->IsAttributeDirty(ATTR_JOB_REMOTE_WALL_CLOCK);
 
   if (old_run_time) {
 	  *old_run_time = previous_run_time;
@@ -940,8 +940,12 @@ BaseJob::UpdateJobTime( float *old_run_time, bool *old_run_time_dirty )
 void
 BaseJob::RestoreJobTime( float old_run_time, bool old_run_time_dirty )
 {
-  jobAd->Assign( ATTR_JOB_REMOTE_WALL_CLOCK, old_run_time );
-  jobAd->SetDirtyFlag( ATTR_JOB_REMOTE_WALL_CLOCK, old_run_time_dirty );
+	jobAd->Assign( ATTR_JOB_REMOTE_WALL_CLOCK, old_run_time );
+	if ( old_run_time_dirty ) {
+		jobAd->MarkAttributeDirty( ATTR_JOB_REMOTE_WALL_CLOCK );
+	} else {
+		jobAd->MarkAttributeClean( ATTR_JOB_REMOTE_WALL_CLOCK );
+	}
 }
 
 void BaseJob::RequestPing()
@@ -1004,7 +1008,7 @@ InitializeUserLog( ClassAd *job_ad )
 {
 	int cluster, proc;
 	std::string userLogFile, dagmanNodeLog;
-	bool use_xml = false;
+	int use_classad = 0;
 	std::vector<const char*> logfiles;
 
 	if( getPathToUserLog(job_ad, userLogFile) ) {
@@ -1019,11 +1023,11 @@ InitializeUserLog( ClassAd *job_ad )
 
 	job_ad->LookupInteger( ATTR_CLUSTER_ID, cluster );
 	job_ad->LookupInteger( ATTR_PROC_ID, proc );
-	job_ad->LookupBool( ATTR_ULOG_USE_XML, use_xml );
+	job_ad->LookupInteger( ATTR_ULOG_USE_XML, use_classad);
 
 	WriteUserLog *ULog = new WriteUserLog();
 	ULog->initialize(logfiles, cluster, proc, 0);
-	ULog->setUseXML( use_xml );
+	ULog->setUseCLASSAD(use_classad);
 	return ULog;
 }
 
@@ -1144,8 +1148,9 @@ WriteTerminateEventToUserLog( ClassAd *job_ad )
 	event.total_recvd_bytes = 0;
 
 	int int_val;
-	if( job_ad->LookupBool(ATTR_ON_EXIT_BY_SIGNAL, int_val) ) {
-		if( int_val ) {
+	bool bool_val;
+	if( job_ad->LookupBool(ATTR_ON_EXIT_BY_SIGNAL, bool_val) ) {
+		if( bool_val ) {
 			if( job_ad->LookupInteger(ATTR_ON_EXIT_SIGNAL, int_val) ) {
 				event.signalNumber = int_val;
 				event.normal = false;

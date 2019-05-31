@@ -213,7 +213,7 @@ class BaseShadow : public Service
 	void retryJobCleanup( void );
 
 		/// DaemonCore timer handler to actually do the retry.
-	int retryJobCleanupHandler( void );
+	void retryJobCleanupHandler( void );
 
 		/** The job exited but it's not ready to leave the queue.  
 			We still want to log an evict event, possibly email the
@@ -307,9 +307,9 @@ class BaseShadow : public Service
 		/// Returns the schedd address
 	char *getScheddAddr() { return scheddAddr; }
         /// Returns the current working dir for the job
-    char const *getIwd() { return iwd.Value(); }
+    char const *getIwd() { return iwd.c_str(); }
         /// Returns the owner of the job - found in the job ad
-    char const *getOwner() { return owner.Value(); }
+    char const *getOwner() { return owner.c_str(); }
 		/// Returns true if job requests graceful removal
 	bool jobWantsGracefulRemoval();
 
@@ -353,6 +353,9 @@ class BaseShadow : public Service
 		*/
 	bool updateJobInQueue( update_t type );
 
+	// Called by updateJobInQueue() to generate file transfer events.
+	virtual void recordFileTransferStateChanges( ClassAd * jobAd, ClassAd * ftAd ) = 0;
+
 		/** Connect to the job queue and update one attribute */
 	virtual bool updateJobAttr( const char *name, const char *expr, bool log=false );
 
@@ -384,14 +387,15 @@ class BaseShadow : public Service
 			method to supply this information. */
 	virtual int exitCode( void ) = 0;
 
-		// make UserLog static so it can be accessed by EXCEPTION handler
-	static WriteUserLog uLog;
+	WriteUserLog uLog;
 
 	void evalPeriodicUserPolicy( void );
 
 	const char* getCoreName( void );
 
 	virtual void resourceBeganExecution( RemoteResource* rr ) = 0;
+
+	virtual void resourceDisconnected( RemoteResource* rr ) = 0;
 
 	virtual void resourceReconnected( RemoteResource* rr ) = 0;
 
@@ -473,9 +477,9 @@ class BaseShadow : public Service
 	int cluster;
 	int proc;
 	char* gjid;
-	MyString owner;
-	MyString domain;
-	MyString iwd;
+	std::string owner;
+	std::string domain;
+	std::string iwd;
 	char *scheddAddr;
 	char *core_file_name;
 	MyString m_xfer_queue_contact_info;
@@ -494,6 +498,10 @@ class BaseShadow : public Service
 
 		// Insist on a fast shutdown of the starter?
 	bool m_force_fast_starter_shutdown;
+
+		// Has CommittedTime in the job ad been updated to reflect
+		// job termination?
+	bool m_committed_time_finalized;
 
 		// This makes this class un-copy-able:
 	BaseShadow( const BaseShadow& );

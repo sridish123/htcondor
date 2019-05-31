@@ -234,10 +234,10 @@ Dag::~Dag()
     delete _submitQ;
     delete _readyQ;
 
-	delete[] _dot_file_name;
-	delete[] _dot_include_file_name;
+	free(_dot_file_name);
+	free(_dot_include_file_name);
 
-	delete[] _statusFileName;
+	free(_statusFileName);
 
 	delete _metrics;
 
@@ -267,8 +267,11 @@ Dag::CreateMetrics( const char *primaryDagFile, int rescueDagNum )
 void
 Dag::ReportMetrics( int exitCode )
 {
-	if(_dagStatus != dag_status::DAG_STATUS_CYCLE) {
-		_metrics->GatherGraphMetrics( this );
+	bool report_graph_metrics = param_boolean( "DAGMAN_REPORT_GRAPH_METRICS", false );
+	if ( report_graph_metrics == true ) {
+		if (_dagStatus != dag_status::DAG_STATUS_CYCLE ) {
+			_metrics->GatherGraphMetrics( this );
+		}
 	}
 	(void)_metrics->Report( exitCode, _dagStatus );
 }
@@ -1879,7 +1882,7 @@ Dag::PostScriptReaper( Job *job, int status )
 		// write to the user log also fails, and DAGMan hangs
 		// waiting for the event that wasn't written).
 	ulog.setEnableGlobalLog( false );
-	ulog.setUseXML( false );
+	ulog.setUseCLASSAD( 0 );
 
 	debug_printf( DEBUG_QUIET,
 				"Initializing user log writer for %s, (%d.%d.%d)\n",
@@ -2498,7 +2501,7 @@ PrintEvent( debug_level_t level, const ULogEvent* event, Job* node,
 		// Be sure to pass GetEventTime() here, because we want the
 		// event time to always be output has a human-readable string,
 		// even if dprintf() is configured to print timestamps.
-	time_to_str( &event->GetEventTime(), timestr );
+	time_to_str( event->GetEventclock(), timestr );
 		// String from time_to_str has trailing blank (needed for other
 		// places in the code).
 	timestr.trim();
@@ -2716,8 +2719,8 @@ Dag::ParentListString( Job *node, const char delim ) const
 void 
 Dag::SetDotFileName(const char *dot_file_name)
 {
-	delete[] _dot_file_name;
-	_dot_file_name = strnewp(dot_file_name);
+	free(_dot_file_name);
+	_dot_file_name = strdup(dot_file_name);
 	return;
 }
 
@@ -2735,8 +2738,8 @@ Dag::SetDotFileName(const char *dot_file_name)
 void
 Dag::SetDotIncludeFileName(const char *include_file_name)
 {
-	delete[] _dot_include_file_name;
-	_dot_include_file_name = strnewp(include_file_name);
+	free(_dot_include_file_name);
+	_dot_include_file_name = strdup(include_file_name);
 	return;
 }
 
@@ -2834,7 +2837,7 @@ Dag::SetNodeStatusFileName( const char *statusFileName,
 		check_warning_strictness( DAG_STRICT_3 );
 		return;
 	}
-	_statusFileName = strnewp( statusFileName );
+	_statusFileName = strdup( statusFileName );
 	_minStatusUpdateTime = minUpdateTime;
 	_alwaysUpdateStatus = alwaysUpdate;
 }

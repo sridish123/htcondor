@@ -10,7 +10,7 @@ class DockerProc : public VanillaProc {
 
 		virtual int StartJob();
 		virtual bool JobReaper( int pid, int status );
-		virtual bool ExecReaper( int pid, int status );
+		virtual int ExecReaper( int pid, int status );
 		virtual bool JobExit();
 
 		virtual void Suspend();
@@ -34,7 +34,7 @@ class DockerProc : public VanillaProc {
 		virtual void SetupDockerSsh();
 		virtual int  AcceptSSHClient(Stream *stream);
 
-		virtual int getStats(int tid);
+		virtual void getStats();
 		static bool Detect();
 		static bool Version( std::string & version );
 

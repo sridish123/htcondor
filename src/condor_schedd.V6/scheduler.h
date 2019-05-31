@@ -84,7 +84,30 @@ extern int updateSchedDInterval( JobQueueJob*, const JOB_ID_KEY&, void* );
 
 class JobQueueCluster;
 
-typedef std::set<JOB_ID_KEY> JOB_ID_SET;
+//typedef std::set<JOB_ID_KEY> JOB_ID_SET;
+class LocalJobRec {
+  public:
+	int			prio;
+	JOB_ID_KEY 	job_id;
+
+	LocalJobRec(int _prio, JOB_ID_KEY _job_id) :
+		prio(_prio),
+		job_id(_job_id)
+	{}
+	bool operator<(const LocalJobRec& rhs) const {
+		// We want LocalJobRec objects to run in priority order, but when two
+		// records have equal priority, they run in order of submission which we
+		// infer from the cluster.proc pair (lower numbers go first)
+		if(this->prio == rhs.prio) {
+			if(this->job_id.cluster == rhs.job_id.cluster) {
+				return this->job_id.proc < rhs.job_id.proc;
+			}
+			return this->job_id.cluster < rhs.job_id.cluster;
+		}
+		// When sorting in priority order, higher numbers go first
+		return this->prio > rhs.prio;
+	}
+};
 
 bool jobLeaseIsValid( ClassAd* job, int cluster, int proc );
 
@@ -269,7 +292,7 @@ class match_rec: public ClaimIdParser
 	~match_rec();
 
     char*   		peer; //sinful address of startd
-	MyString        m_description;
+	std::string        m_description;
 
 		// cluster of the job we used to obtain the match
 	int				origcluster; 
@@ -314,7 +337,7 @@ class match_rec: public ClaimIdParser
 
 	void makeDescription();
 	char const *description() {
-		return m_description.Value();
+		return m_description.c_str();
 	}
 
 	PROC_ID m_now_job;
@@ -388,7 +411,7 @@ typedef enum {
 class ContactStartdArgs
 {
 public:
-	ContactStartdArgs( char const* the_claim_id, char const *extra_claims, char* sinful, bool is_dedicated );
+	ContactStartdArgs( char const* the_claim_id, char const *extra_claims, const char* sinful, bool is_dedicated );
 	~ContactStartdArgs();
 
 	char*		claimId( void )		{ return csa_claim_id; };
@@ -471,15 +494,18 @@ class Scheduler : public Service
 	void			schedd_exit();
 	void			invalidate_ads();
 	void			update_local_ad_file(); // warning, may be removed
-	
+
 	// negotiation
 	int				negotiatorSocketHandler(Stream *);
 	int				negotiate(int, Stream *);
 	int				reschedule_negotiator(int, Stream *);
 	void			negotiationFinished( char const *owner, char const *remote_pool, bool satisfied );
 
-	void				reschedule_negotiator_timer() { reschedule_negotiator(0, NULL); }
+	void			reschedule_negotiator_timer() { reschedule_negotiator(0, NULL); }
 	void			release_claim(int, Stream *);
+	// I think this is actually a serious bug...
+	int				release_claim_command_handler(int i, Stream * s) { release_claim(i, s); return 0; }
+
 	AutoCluster		autocluster;
 		// send a reschedule command to the negotiatior unless we
 		// have recently sent one and not yet heard from the negotiator
@@ -497,7 +523,8 @@ class Scheduler : public Service
 	friend	int		NewProc(int cluster_id);
 	friend	int		count_a_job(JobQueueJob*, const JOB_ID_KEY&, void* );
 //	friend	void	job_prio(ClassAd *);
-	friend  int		find_idle_local_jobs(JobQueueJob *, const JOB_ID_KEY&, void*);
+	void			AddRunnableLocalJobs();
+	bool			IsLocalJobEligibleToRun(JobQueueJob* job);
 	friend	int		updateSchedDInterval(JobQueueJob*, const JOB_ID_KEY&, void* );
     friend  void    add_shadow_birthdate(int cluster, int proc, bool is_reconnect);
 	void			display_shadow_recs();
@@ -516,7 +543,7 @@ class Scheduler : public Service
 	void			addCronTabClassAd( JobQueueJob* );
 	void			addCronTabClusterId( int );
 	void			indexAJob(JobQueueJob* job, bool loading_job_queue=false);
-	void			removeJobFromIndexes(const JOB_ID_KEY& job_id);
+	void			removeJobFromIndexes(const JOB_ID_KEY& job_id, int job_prio=0);
 	int				RecycleShadow(int cmd, Stream *stream);
 	void			finishRecycleShadow(shadow_rec *srec);
 
@@ -552,7 +579,6 @@ class Scheduler : public Service
 	void			ExpediteStartJobs();
 	void			StartJobs();
 	void			StartJob(match_rec *rec);
-	void			StartLocalJobs();
 	void			sendAlives();
 	void			RecomputeAliveInterval(int cluster, int proc);
 	void			StartJobHandler();
@@ -737,6 +763,8 @@ class Scheduler : public Service
 	const OwnerInfo * lookup_owner_const(const char*);
 	OwnerInfo * incrementRecentlyAdded(OwnerInfo * ownerinfo, const char * owner);
 
+	std::set<LocalJobRec> LocalJobsPrioQueue;
+
 private:
 
 	// We have to evaluate requirements in the listed order to maintain
@@ -814,7 +842,6 @@ private:
 	int				NumUniqueOwners;
 	OwnerInfoMap    OwnersInfo;    // map of job counters by owner, used to enforce MAX_*_PER_OWNER limits
 
-	//JOB_ID_SET      LocalJobIds;  // set of jobid's of local and scheduler universe jobs.
 	HashTable<UserIdentity, GridJobCounts> GridJobOwners;
 	time_t			NegotiationRequestTime;
 	int				ExitWhenDone;  // Flag set for graceful shutdown
@@ -907,6 +934,8 @@ private:
 	OwnerInfo * get_ownerinfo(JobQueueJob * job);
 	void		remove_unused_owners();
 	void			child_exit(int, int);
+	// AFAICT, reapers should be be registered void to begin with.
+	int				child_exit_from_reaper(int a, int b) { child_exit(a, b); return 0; }
 	void			scheduler_univ_job_exit(int pid, int status, shadow_rec * srec);
 	void			scheduler_univ_job_leave_queue(PROC_ID job_id, int status, ClassAd *ad);
 	void			clean_shadow_recs();
@@ -967,7 +996,6 @@ private:
 
 	shadow_rec*		start_std(match_rec*, PROC_ID*, int univ);
 	shadow_rec*		start_sched_universe_job(PROC_ID*);
-	shadow_rec*		start_local_universe_job(PROC_ID*);
 	bool			spawnJobHandlerRaw( shadow_rec* srec, const char* path,
 										ArgList const &args,
 										Env const *env, 
@@ -1047,6 +1075,17 @@ private:
 	int m_history_helper_rid;
 
 	bool m_matchPasswordEnabled;
+
+	// State for token request.
+	void try_token_request();
+	// Right now, we will at most have one token request in flight;
+	// when we are ready to do this for multiple pools at a time, we
+	// will make these data structs into vectors.
+	std::string m_token_request_id;
+	std::string m_token_client_id;
+	Daemon *m_token_daemon;
+	bool m_initial_update{true}; // First update to the collector after reconfig blocks so we can trigger
+					// token auth if needed
 
 	friend class DedicatedScheduler;
 };

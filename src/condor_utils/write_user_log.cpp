@@ -105,11 +105,11 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml)
+							int format_opts)
 {
 	log_file_cache = NULL;
 	Reset( );
-	m_use_xml = xml;
+	m_format_opts = format_opts;
 	
 	// For PrivSep:
 #if !defined(WIN32)
@@ -128,11 +128,11 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml)
+							int format_opts)
 {
 	log_file_cache = NULL;
 	Reset( );
-	m_use_xml = xml;
+	m_format_opts = format_opts;
 	
 	// For PrivSep:
 #if !defined(WIN32)
@@ -149,11 +149,11 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml)
+							int format_opts)
 {
 	log_file_cache = NULL;
 	Reset();
-	m_use_xml = xml;
+	m_format_opts = format_opts;
 
 	// For PrivSep:
 #if !defined(WIN32)
@@ -169,11 +169,11 @@ WriteUserLog::WriteUserLog (const char *owner,
 							int c,
 							int p,
 							int s,
-							bool xml)
+							int format_opts)
 {
 	log_file_cache = NULL;
 	Reset();
-	m_use_xml = xml;
+	m_format_opts = format_opts;
 
 	// For PrivSep:
 #if !defined(WIN32)
@@ -342,6 +342,20 @@ WriteUserLog::internalInitialize( int c, int p, int s )
 	return true;
 }
 
+// Read in just the m_format_opts configuration
+void WriteUserLog::setUseCLASSAD(int fmt_type)
+{
+	if ( ! m_configured) {
+		m_format_opts = USERLOG_FORMAT_DEFAULT;
+		auto_free_ptr fmt(param("DEFAULT_USERLOG_FORMAT_OPTIONS"));
+		if (fmt) {
+			m_format_opts = ULogEvent::parse_opts(fmt, m_format_opts);
+		}
+	}
+	m_format_opts &= ~(ULogEvent::formatOpt::CLASSAD);
+	m_format_opts |= (ULogEvent::formatOpt::CLASSAD & fmt_type);
+}
+
 // Read in our configuration information
 bool
 WriteUserLog::Configure( bool force )
@@ -356,6 +370,13 @@ WriteUserLog::Configure( bool force )
 
 	m_enable_fsync = param_boolean( "ENABLE_USERLOG_FSYNC", true );
 	m_enable_locking = param_boolean( "ENABLE_USERLOG_LOCKING", false );
+
+	// TODO: revisit this if we let the job choose to enable or disable UTC, SUB_SECOND or ISO_DATE
+	// if we are merging job and defult flags, we need to do a better job than this.
+	auto_free_ptr fmt(param("DEFAULT_USERLOG_FORMAT_OPTIONS"));
+	if (fmt) {
+		m_format_opts = ULogEvent::parse_opts(fmt, USERLOG_FORMAT_DEFAULT);
+	}
 
 	if ( m_global_disable ) {
 		return true;
@@ -396,7 +417,13 @@ WriteUserLog::Configure( bool force )
 	}
 	set_priv(previous);
 
-	m_global_use_xml = param_boolean( "EVENT_LOG_USE_XML", false );
+	m_global_format_opts = 0;
+	fmt.set(param("EVENT_LOG_FORMAT_OPTIONS"));
+	if (fmt) { m_global_format_opts |= ULogEvent::parse_opts(fmt, 0); }
+	if (param_boolean("EVENT_LOG_USE_XML", false)) {
+		m_global_format_opts &= ~(ULogEvent::formatOpt::CLASSAD);
+		m_global_format_opts |= ULogEvent::formatOpt::XML;
+	}
 	m_global_count_events = param_boolean( "EVENT_LOG_COUNT_EVENTS", false );
 	m_global_max_rotations = param_integer( "EVENT_LOG_MAX_ROTATIONS", 1, 0 );
 	m_global_fsync_enable = param_boolean( "EVENT_LOG_FSYNC", false );
@@ -452,12 +479,12 @@ WriteUserLog::Reset( void )
 	m_rotation_lock_fd = -1;
 	m_rotation_lock_path = NULL;
 
-	m_use_xml = XML_USERLOG_DEFAULT;
+	m_format_opts = USERLOG_FORMAT_DEFAULT;
 
 	m_creator_name = NULL;
 
 	m_global_disable = false;
-	m_global_use_xml = false;
+	m_global_format_opts = 0;
 	m_global_count_events = false;
 	m_global_max_filesize = 1000000;
 	m_global_max_rotations = 1;
@@ -957,7 +984,8 @@ WriteUserLog::checkGlobalLogRotation( void )
 				 m_global_path, errno, strerror(errno) );
 	}
 	else {
-		ReadUserLog	log_reader( fp, m_global_use_xml, false );
+		bool is_xml = (m_global_format_opts & ULogEvent::formatOpt::XML) != 0;
+		ReadUserLog	log_reader( fp, is_xml, false );
 		if ( header_reader.Read( log_reader ) != ULOG_OK ) {
 			dprintf( D_ALWAYS,
 					 "WriteUserLog: Error reading header of \"%s\"\n",
@@ -1207,7 +1235,7 @@ WriteUserLog::writeGlobalEvent( ULogEvent &event,
 		lseek( fd, 0, SEEK_SET );
 	}
 
-	return doWriteEvent( fd, &event, m_global_use_xml );
+	return doWriteEvent( fd, &event, m_global_format_opts );
 }
 
 bool
@@ -1215,7 +1243,7 @@ WriteUserLog::doWriteEvent( ULogEvent *event,
 							log_file& log,
 							bool is_global_event,
 							bool is_header_event,
-							bool use_xml,
+							int  format_opts,
 							ClassAd *)
 {
 	int success;
@@ -1226,7 +1254,7 @@ WriteUserLog::doWriteEvent( ULogEvent *event,
 	if (is_global_event) {
 		fd = m_global_fd;
 		lock = m_global_lock;
-		use_xml = m_global_use_xml;
+		format_opts = m_global_format_opts;
 		priv = set_condor_priv();
 	} else {
 		fd = log.fd;
@@ -1280,7 +1308,7 @@ WriteUserLog::doWriteEvent( ULogEvent *event,
 	}
 
 	before = time(NULL);
-	success = doWriteEvent( fd, event, use_xml );
+	success = doWriteEvent( fd, event, format_opts );
 	after = time(NULL);
 	if ( (after - before) > 5 ) {
 		dprintf( D_FULLDEBUG,
@@ -1323,32 +1351,39 @@ WriteUserLog::doWriteEvent( ULogEvent *event,
 }
 
 bool
-WriteUserLog::doWriteEvent( int fd, ULogEvent *event, bool use_xml )
+WriteUserLog::doWriteEvent( int fd, ULogEvent *event, int format_opts )
 {
 	ClassAd* eventAd = NULL;
 	bool success = true;
 
-	if( use_xml ) {
+	if (format_opts & ULogEvent::formatOpt::CLASSAD) {
 
-		eventAd = event->toClassAd();	// must delete eventAd eventually
+		eventAd = event->toClassAd((format_opts & ULogEvent::formatOpt::UTC) != 0);	// must delete eventAd eventually
 		if (!eventAd) {
 			dprintf( D_ALWAYS,
 					 "WriteUserLog Failed to convert event type # %d to classAd.\n",
 					 event->eventNumber);
 			success = false;
 		} else {
-			std::string adXML;
-			classad::ClassAdXMLUnParser xmlunp;
-
-			eventAd->Delete( ATTR_TARGET_TYPE );
-			xmlunp.SetCompactSpacing(false);
-			xmlunp.Unparse(adXML, eventAd);
-			if ( adXML.length() < 1 ) {
-				dprintf( D_ALWAYS,
-						 "WriteUserLog Failed to convert event type # %d to XML.\n",
-						 event->eventNumber);
+			std::string output;
+			if (format_opts & ULogEvent::formatOpt::JSON) {
+				classad::ClassAdJsonUnParser  unparser;
+				unparser.Unparse(output, eventAd);
+				if ( ! output.empty()) output += "\n";
+			} else /*if (format_opts & ULogEvent::formatOpt::XML)*/ {
+				eventAd->Delete(ATTR_TARGET_TYPE); // TJ 2019: I think this is no longer necessary
+				classad::ClassAdXMLUnParser unparser;
+				unparser.SetCompactSpacing(false);
+				unparser.Unparse(output, eventAd);
 			}
-			if ( write( fd, adXML.c_str(), adXML.length() ) < 0) {
+
+			if (output.empty()) {
+				dprintf( D_ALWAYS,
+						 "WriteUserLog Failed to convert event type # %d to %s.\n",
+						 event->eventNumber,
+						 (format_opts & ULogEvent::formatOpt::JSON) ? "JSON" : "XML");
+			}
+			if ( write( fd, output.data(), output.length() ) < 0) {
 				success = false;
 			} else {
 				success = true;
@@ -1356,9 +1391,9 @@ WriteUserLog::doWriteEvent( int fd, ULogEvent *event, bool use_xml )
 		}
 	} else {
 		std::string output;
-		success = event->formatEvent( output );
+		success = event->formatEvent( output, format_opts );
 		output += SynchDelimiter;
-		if ( success && write( fd, output.c_str(), output.length() ) < 0 ) {
+		if ( success && write( fd, output.data(), output.length() ) < 0 ) {
 			// TODO Should we print a '\n...\n' like in the older code?
 			success = false;
 		}
@@ -1375,7 +1410,7 @@ bool
 WriteUserLog::doWriteGlobalEvent( ULogEvent* event, ClassAd *ad) 
 {
 	log_file log;
-	return doWriteEvent(event, log, true, false, m_global_use_xml, ad);
+	return doWriteEvent(event, log, true, false, m_global_format_opts, ad);
 }
 
 // Return false on error, true on goodness
@@ -1430,7 +1465,7 @@ WriteUserLog::writeEvent ( ULogEvent *event,
 			//TEMPTEMP -- what the hell *is* this?
 			log_file log;
 			writeJobAdInfoEvent( attrsToWrite, log, event, param_jobad, true,
-				m_global_use_xml );
+				m_global_format_opts );
 		}
 		free( attrsToWrite );
 	}
@@ -1461,8 +1496,9 @@ WriteUserLog::writeEvent ( ULogEvent *event,
 					break; // We are done caring about this event
 				}
 			}
-			if ( ! doWriteEvent(event, **p, false, false, (p == logs.begin()) && m_use_xml,
-					param_jobad) ) {
+			int fmt_opts = m_format_opts;
+			if (! (p == logs.begin())) { fmt_opts &= ~(ULogEvent::formatOpt::XML); }
+			if ( ! doWriteEvent(event, **p, false, false, fmt_opts, param_jobad) ) {
 				dprintf( D_ALWAYS, "WARNING: WriteUserLog::writeEvent user doWriteEvent() failed on normal log %s!\n", (*p)->path.c_str() );
 				ret = false;
 			}
@@ -1474,8 +1510,7 @@ WriteUserLog::writeEvent ( ULogEvent *event,
 				param_jobad->LookupString("JobAdInformationAttrs",&attrsToWrite);
 				if (attrsToWrite) {
 					if (*attrsToWrite) {
-						writeJobAdInfoEvent( attrsToWrite, **p, event, param_jobad, false,
-							(p == logs.begin()) && m_use_xml);
+						writeJobAdInfoEvent(attrsToWrite, **p, event, param_jobad, false, fmt_opts);
 					}
 				free( attrsToWrite );
 				}
@@ -1490,13 +1525,13 @@ WriteUserLog::writeEvent ( ULogEvent *event,
 }
 
 void
-WriteUserLog::writeJobAdInfoEvent(char const *attrsToWrite, log_file& log, ULogEvent *event, ClassAd *param_jobad, bool is_global_event, bool use_xml )
+WriteUserLog::writeJobAdInfoEvent(char const *attrsToWrite, log_file& log, ULogEvent *event, ClassAd *param_jobad, bool is_global_event, int format_opts)
 {
 	ExprTree *tree;
 	classad::Value result;
 	char *curr;
 
-	ClassAd *eventAd = event->toClassAd();
+	ClassAd *eventAd = event->toClassAd((format_opts & ULogEvent::formatOpt::UTC) != 0);
 
 	StringList attrs(attrsToWrite);
 	attrs.rewind();
@@ -1549,7 +1584,7 @@ WriteUserLog::writeJobAdInfoEvent(char const *attrsToWrite, log_file& log, ULogE
 		info_event.cluster = m_cluster;
 		info_event.proc = m_proc;
 		info_event.subproc = m_subproc;
-		doWriteEvent(&info_event, log, is_global_event, false, use_xml, param_jobad);
+		doWriteEvent(&info_event, log, is_global_event, false, format_opts, param_jobad);
 		delete eventAd;
 	}
 }

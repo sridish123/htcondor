@@ -84,7 +84,7 @@ void	main_shutdown_normal(); // do graceful or peaceful depending on daemonCore 
 void	main_shutdown_fast();
 void	invalidate_ads();
 void	main_config();
-int	agent_starter(ReliSock *);
+int	agent_starter(ReliSock *, Stream *);
 int	handle_agent_fetch_log(ReliSock *);
 int	admin_command_handler(Service *, int, Stream *);
 int	ready_command_handler(Service *, int, Stream *);
@@ -156,6 +156,7 @@ public:
 		if ( watchdog_secs > 0 ) {
 			watchdog_secs = watchdog_secs / 1e6 / 3;
 			if (watchdog_secs <= 0) { watchdog_secs = 1; }
+			if (watchdog_secs > 20) { watchdog_secs = 10; }
 			Timeslice ts;
 			ts.setDefaultInterval(watchdog_secs);
 			m_watchdog_timer = daemonCore->Register_Timer(ts,
@@ -235,7 +236,7 @@ cleanup_memory( void )
 		ad = NULL;
 	}
 	if ( MasterName ) {
-		delete [] MasterName;
+		free( MasterName );
 		MasterName = NULL;
 	}
 	if ( FS_Preen ) {
@@ -858,7 +859,7 @@ admin_command_handler( Service*, int cmd, Stream* stream )
 }
 
 int
-agent_starter( ReliSock * s )
+agent_starter( ReliSock * s, Stream * )
 {
 	ReliSock* stream = (ReliSock*)s;
 	char *subsys = NULL;
@@ -1056,7 +1057,7 @@ init_params()
 			} 
 		}
 	} else {
-		delete [] MasterName;
+		free( MasterName );
 		tmp = param( "MASTER_NAME" );
 		MasterName = build_valid_daemon_name( tmp );
 		free( tmp );
@@ -1321,7 +1322,7 @@ init_classad()
 			EXCEPT( "default_daemon_name() returned NULL" );
 		}
 		ad->Assign(ATTR_NAME, default_name);
-		delete [] default_name;
+		free(default_name);
 	}
 
 #if !defined(WIN32)
@@ -1513,7 +1514,7 @@ invalidate_ads() {
 	
 	MyString line;
 	std::string escaped_name;
-	char* default_name = ::strnewp(MasterName);
+	char* default_name = MasterName ? ::strdup(MasterName) : NULL;
 	if(!default_name) {
 		default_name = default_daemon_name();
 	}
@@ -1524,7 +1525,7 @@ invalidate_ads() {
 	cmd_ad.Assign( ATTR_NAME, default_name );
 	cmd_ad.Assign( ATTR_MY_ADDRESS, daemonCore->publicNetworkIpAddr());
 	daemonCore->sendUpdates( INVALIDATE_MASTER_ADS, &cmd_ad, NULL, false );
-	delete [] default_name;
+	free( default_name );
 }
 
 static const struct {
@@ -1814,9 +1815,10 @@ void init_firewall_exceptions() {
 	add_exception = param_boolean("ADD_WINDOWS_FIREWALL_EXCEPTION", NT_ServiceFlag);
 
 	if ( add_exception == false ) {
-		dprintf(D_FULLDEBUG, "ADD_WINDOWS_FIREWALL_EXCEPTION is false, skipping\n");
+		dprintf(D_FULLDEBUG, "ADD_WINDOWS_FIREWALL_EXCEPTION is false, skipping firewall configuration\n");
 		return;
 	}
+	dprintf(D_ALWAYS, "Adding/Checking Windows firewall exceptions for all daemons\n");
 
 	// We use getExecPath() here instead of param() since it's
 	// possible the the Windows Service Control Manager

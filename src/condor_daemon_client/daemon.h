@@ -140,7 +140,7 @@ public:
 		  enountered in the Daemon object, this will start returning a
 		  string desribing it.  Returns NULL if there's no error.
 		  */
-	char* error( void )	{ return _error; }
+	const char* error( void )	{ return _error; }
 
  		/** Return the result code of the previous action.  If there's
 			a problem and the error() string above is set, this result
@@ -167,7 +167,7 @@ public:
 		  NULL).  @return The name of this daemon (not necessarily the
 		  hostname).
 		  */
-	char* name( void );
+	const char* name( void );
 
 		/** Return the hostname where the daemon is running.  This is
 		  just the hostname, without the domain.  For example,
@@ -175,19 +175,19 @@ public:
 		  an error in the locate() method.
 		  @return Just the hostname where the daemon is running.
 		  */
-	char* hostname( void );
+	const char* hostname( void );
 
 		/** 
 			@return The version string of this daemon, or NULL if we
 			don't know it.
 		*/
-	char* version( void );
+	const char* version( void );
 
 		/** 
 			@return The platform string of this daemon, or NULL if we
 			don't know it.
 		*/
-	char* platform( void );
+	const char* platform( void );
 
 		/** Return the full hostname where the daemon is running.
 		  This is the fully qualified hostname, including the domain
@@ -196,7 +196,7 @@ public:
 		  method. 
 		  @return The fully-qualified hostname where the daemon is running.
 		  */
-	char* fullHostname( void );
+	const char* fullHostname( void );
 
 		/** Return the address of the daemon.  This is given as a
 		  "sinful string", which is used throughout Condor to specify
@@ -206,7 +206,7 @@ public:
 		  only if there was an error in the locate() method.
 		  @return The sinful string of the daemon.
 		  */
-	char* addr( void );
+	const char* addr( void );
 
 		/** Return the remote pool this daemon reports to.  If the
 		  requested daemon is reporting to a remote pool (not the
@@ -216,7 +216,7 @@ public:
 		  reporting to the local pool.
 		  @return The name of the collector for the daemon.
 		  */
-	char* pool( void );
+	const char* pool( void );
 
 		/** Return the port the daemon is listening on.  This is the
 		  integer port number that daemon has bound to.  It will
@@ -567,6 +567,69 @@ public:
 		 */
 	bool getInstanceID( std::string & instanceID );
 
+		/*
+		 * Request a token from the remote daemon.
+		 *
+		 * Caller can optionally request a maximum token lifetime; if none is desired,
+		 * then set `lifetime` to -1.
+		 */
+	bool getSessionToken( const std::vector<std::string> &authz_bounding_limit, int lifetime,
+		std::string &token, CondorError *err=NULL );
+
+		/*
+		 * Start a token request workflow from the remote daemon, potentially as an
+		 * unauthenticated user.
+		 *
+		 * As with `getSessionToken`, the user can request limits on the token's
+		 * capabilities (maximum lifetime, bounding set) and additionally request a
+		 * specific identity.
+		 *
+		 * The caller should provide a human-friendly ID (not necessarily unique; may
+		 * be the hostname) that will help the request approver to identify the request.
+		 *
+		 * If we are able to authenticate, then the token may be issued immediately;
+		 * in that case, the function will set the `token` parameter to a non-empty string
+		 * and return true.  If we are unable to authenticate (or have insufficient
+		 * permissions at the server-side), then the `request_id` parameter will be
+		 * set; use `finishTokenRequest` to poll for completion.
+		 *
+		 * Returns true on success or false on failure.
+		 */
+	bool startTokenRequest( const std::string identity,
+		const std::vector<std::string> &authz_bounding_set, int lifetime,
+		const std::string &client_id, std::string &token, std::string &request_id,
+		CondorError *err=NULL ) noexcept;
+
+		/**
+		 * Poll for and finish a token request.
+		 *
+		 * The `request_id` is the ID returned by a prior call to `startTokenRequest`.
+		 */
+	bool finishTokenRequest( const std::string &client_id, const std::string &request_id,
+		std::string &token, CondorError *err=nullptr ) noexcept;
+
+		/**
+		 * List all the token requests in the system.
+		 *
+		 * The `request_id`, if non-empty, causes only a given request to be returned;
+		 * otherwise, all requests are returned.
+		 */
+	bool listTokenRequest( const std::string &request_id, std::vector<classad::ClassAd> &results,
+		CondorError *err=nullptr ) noexcept;
+
+		/**
+		 * Approve a specific token request.
+		 *
+		 * The `request_id` and `client_id` must match a given request.
+		 */
+	bool approveTokenRequest( const std::string &client_id, const std::string &request_id,
+		CondorError *err=nullptr ) noexcept;
+
+		/**
+		 * When authentication fails - but TOKEN is a valid method - this is set to true.
+		 */
+	bool shouldTryTokenRequest() const {return m_should_try_token_request;};
+
 protected:
 	// Data members
 	char* _name;
@@ -588,7 +651,8 @@ protected:
 	bool _tried_locate;
 	bool _tried_init_hostname;
 	bool _tried_init_version;
-	bool _is_configured; 
+	bool _is_configured;
+	bool m_should_try_token_request{false};
 	SecMan _sec_man;
 	StringList daemon_list;
 
@@ -681,7 +745,7 @@ protected:
 		  use that, and pass it to build_valid_daemon_name() to make
 		  sure we have a fully-qualified hostname.  If not, we just
 		  use get_local_fqdn().  The string we return is newly
-		  allocated and should be deallocated with delete []. 
+		  allocated and should be deallocated with free(). 
 		  */
 	char* localName( void );
 
@@ -742,7 +806,7 @@ protected:
 		   the value you pass in.  Unlike newError(), this DOES NOT
 		   make a copy of what you pass (since so many of our util lib
 		   functions already allocate a string), so the string you
-		   pass in should be a strnewp()'ed or equivalent string.  
+		   pass in should be a strdup()'ed or equivalent string.  
 		   We simply return the value you pass in.
 		*/
 	char* New_full_hostname( char* );
@@ -813,8 +877,14 @@ protected:
 		   Internal function used by public versions of startCommand().
 		   It may be either blocking or nonblocking, depending on the
 		   nonblocking flag.  This version uses an existing socket.
+
+		   This function previously was also named `startCommand`; it
+		   was fairly confusing because there is also the non-static
+		   `startCommand`; the `_internal` suffix was added to help
+		   differentiate between the 6 different variants (besides the
+		   13 argument signature!).
 		 */
-	static StartCommandResult startCommand( int cmd, Sock* sock, int timeout, CondorError *errstack, int subcmd, StartCommandCallbackType *callback_fn, void *misc_data, bool nonblocking, char const *cmd_description, char *version, SecMan *sec_man, bool raw_protocol, char const *sec_session_id );
+	static StartCommandResult startCommand_internal( int cmd, Sock* sock, int timeout, CondorError *errstack, int subcmd, StartCommandCallbackType *callback_fn, void *misc_data, bool nonblocking, char const *cmd_description, SecMan *sec_man, bool raw_protocol, char const *sec_session_id, bool &should_try_token_request );
 
 		/**
 		   Internal function used by public versions of startCommand().

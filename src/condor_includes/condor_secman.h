@@ -92,6 +92,7 @@ public:
         static std::string m_tag;
 	static HashTable<MyString, MyString> command_map;
 	static int sec_man_ref_count;
+	static std::set<std::string> m_not_my_family;
 
 	// Manage the pool password
 	static std::string m_pool_password;
@@ -262,6 +263,11 @@ public:
 		// of the session attributes produced by ExportSecSessionInfo
 		// and apply them while creating a session.
 	bool ImportSecSessionInfo(char const *session_info,ClassAd &policy);
+
+		// Once the authentication methods are known, fill in metadata from
+		// the relevant subclass; this may allow the remote client to skip a
+		// authentication which has no chance to succeed.
+	void UpdateAuthenticationMetadata(ClassAd &ad);
 
 	// Attributes for cached Security Policy Ad
 	DCpermission m_cached_auth_level;

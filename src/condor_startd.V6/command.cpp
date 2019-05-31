@@ -202,9 +202,9 @@ int swap_claim_and_activation(Resource * rip, ClassAd & opts, Stream* stream)
 	int rval = NOT_OK;
 	Resource* rip_dest = NULL;
 	std::string idd;
-	if (opts.EvalString("DestinationSlotName", rip->r_cur->ad(), idd)) {
+	if (EvalString("DestinationSlotName", &opts, rip->r_cur->ad(), idd)) {
 		rip_dest = resmgr->get_by_name(idd.c_str());
-	} else if (opts.EvalString("DestinationClaimId", rip->r_cur->ad(), idd)) {
+	} else if (EvalString("DestinationClaimId", &opts, rip->r_cur->ad(), idd)) {
 		rip_dest = resmgr->get_by_cur_id(idd.c_str());
 	}
 
@@ -522,8 +522,8 @@ countres:
 	int ResCount = 0;
 	cal.Open();
 	while( (ad=cal.Next()) ) {
-                MyString remoteuser;
-                MyString name;
+		std::string remoteuser;
+		std::string name;
                 ad->LookupString("RemoteUser",remoteuser);
                 ad->LookupString("Name",name);
 		if(strcmp(curuser.c_str(), remoteuser.c_str()) == 0) {
@@ -531,7 +531,7 @@ countres:
 		}
 	}
 #ifndef WIN32
-	if(!param_boolean("TOKENS", false)) {
+	if(!param_boolean("CREDD_OAUTH_MODE", false)) {
 		if (ResCount == 0) {
 			dprintf(D_FULLDEBUG, "CREDMON: user %s no longer running jobs, mark cred for sweeping.\n", curuser.c_str());
 			credmon_mark_creds_for_sweeping(curuser.c_str());
@@ -567,6 +567,8 @@ int command_suspend_claim( Service*, int cmd, Stream* stream )
 		refuse( stream );
 		return FALSE;
 	}
+
+	free( id );
 	
 	State s = rip->state();
 	switch( s ) {
@@ -615,9 +617,11 @@ int command_continue_claim( Service*, int cmd, Stream* stream )
 			break;
 		default:
 			rip->log_ignore( cmd, s, rip->activity() );
+			free(id);
 			return FALSE;
 	}		
 	
+	free(id);
 	return rval;
 }
 
@@ -800,10 +804,10 @@ command_query_ads( Service*, int, Stream* stream)
 		return FALSE;
 	}
 
-   MyString stats_config;
+	std::string stats_config;
    int      dc_publish_flags = daemonCore->dc_stats.PublishFlags;
    queryAd.LookupString("STATISTICS_TO_PUBLISH",stats_config);
-   if ( ! stats_config.IsEmpty()) {
+   if ( ! stats_config.empty()) {
 #if 0 // HACK to test swapping claims without a schedd
        dprintf(D_ALWAYS, "Got QUERY_STARTD_ADS with stats config: %s\n", stats_config.c_str());
        if (starts_with_ignore_case(stats_config.c_str(), "swap:")) {
@@ -812,7 +816,7 @@ command_query_ads( Service*, int, Stream* stream)
        } else
 #endif
       daemonCore->dc_stats.PublishFlags = 
-         generic_stats_ParseConfigString(stats_config.Value(), 
+         generic_stats_ParseConfigString(stats_config.c_str(), 
                                          "DC", "DAEMONCORE", 
                                          dc_publish_flags);
    }
@@ -820,7 +824,7 @@ command_query_ads( Service*, int, Stream* stream)
 		// Construct a list of all our ClassAds:
 	resmgr->makeAdList( &ads, &queryAd );
 	
-    if ( ! stats_config.IsEmpty()) {
+    if ( ! stats_config.empty()) {
        daemonCore->dc_stats.PublishFlags = dc_publish_flags;
     }
 
@@ -1712,7 +1716,7 @@ accept_request_claim( Resource* rip, Claim* leftover_claim, bool and_pair )
 
 		// Get the owner of this claim out of the request classad.
 	if( (rip->r_cur->ad())->
-			EvalString( ATTR_USER, rip->r_cur->ad(), RemoteOwner ) == 0 ) {
+			LookupString( ATTR_USER, RemoteOwner ) == 0 ) {
 		rip->dprintf( D_ALWAYS, 
 				 "Can't evaluate attribute %s in request ad.\n", 
 				 ATTR_USER );
@@ -1763,7 +1767,7 @@ int
 activate_claim( Resource* rip, Stream* stream ) 
 {
 		// Formerly known as "startjob"
-	int mach_requirements = 1;
+	bool mach_requirements = true;
 	ClassAd	*req_classad = NULL, *mach_classad = rip->r_classad;
 	ReliSock rsock_1, rsock_2;
 #ifndef WIN32
@@ -1842,9 +1846,9 @@ activate_claim( Resource* rip, Stream* stream )
     }
 
 	rip->r_reqexp->restore();
-	if( mach_classad->EvalBool( ATTR_REQUIREMENTS, 
+	if( EvalBool( ATTR_REQUIREMENTS, mach_classad,
 								req_classad, mach_requirements ) == 0 ) {
-		mach_requirements = 0;
+		mach_requirements = false;
 	}
 	if (!(cp_sufficient && mach_requirements)) {
 		rip->dprintf( D_ALWAYS, "Machine Requirements check failed!\n" );
@@ -2668,7 +2672,7 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	Sock * sock = (Sock *)stream;
 	ClassAd commandAd;
 	// This becomes owned by the new slot's claim.
-	ClassAd * resourceAd = new ClassAd();
+	ClassAd * requestAd = new ClassAd();
 
 	int failureMode = param_integer( "COALESCE_FAILURE_MODE", 0 );
 
@@ -2680,26 +2684,27 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 	if(! getClassAd( sock, commandAd )) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to get command ad\n" );
+		delete requestAd;
 		return FALSE;
 	}
 
-	if(! getClassAd( sock, * resourceAd )) {
+	if(! getClassAd( sock, * requestAd ) || ! sock->end_of_message()) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to get resource request\n" );
-		delete resourceAd;
+		delete requestAd;
 		return FALSE;
 	}
 
 	std::string claimIDListString;
 	if(! commandAd.LookupString( ATTR_CLAIM_ID_LIST, claimIDListString )) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): command ad missing claim ID list\n" );
-		delete resourceAd;
+		delete requestAd;
 		return FALSE;
 	}
 
 	StringList claimIDList( claimIDListString.c_str() );
 	if( claimIDList.isEmpty() ) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): command ad's claim ID list empty or invalid\n" );
-		delete resourceAd;
+		delete requestAd;
 		return FALSE;
 	}
 	// Remove duplicate claims.
@@ -2780,9 +2785,11 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		errorString = "FAILURE INJECTION: 3";
 	}
 
+	sock->encode();
+
 	if( result != CA_SUCCESS ) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): %s\n", errorString.c_str() );
-		delete resourceAd;
+		delete requestAd;
 
 		ClassAd replyAd;
 		replyAd.InsertAttr( ATTR_RESULT, getCAResultString( result ) );
@@ -2792,12 +2799,14 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 		ClassAd slotAd;
 		putClassAd( sock, slotAd );
 
+		sock->end_of_message();
+
 		return FALSE;
 	}
 
 	if( ! parent ) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): unable to coalesce any slots\n" );
-		delete resourceAd;
+		delete requestAd;
 
 		ClassAd replyAd;
 		replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_FAILURE ) );
@@ -2806,6 +2815,8 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 		ClassAd slotAd;
 		putClassAd( sock, slotAd );
+
+		sock->end_of_message();
 
 		return FALSE;
 	}
@@ -2831,10 +2842,10 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 	Claim * leftoverClaim = NULL;
 	dprintf( D_ALWAYS, "command_coalesce_slots(): creating coalesced slot...\n" );
-	Resource * coalescedSlot = initialize_resource( parent, resourceAd, leftoverClaim );
+	Resource * coalescedSlot = initialize_resource( parent, requestAd, leftoverClaim );
 	if( coalescedSlot == NULL ) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): unable to coalesce slots\n" );
-		delete resourceAd;
+		delete requestAd;
 
 		ClassAd replyAd;
 		replyAd.InsertAttr( ATTR_RESULT, getCAResultString( CA_FAILURE ) );
@@ -2843,6 +2854,8 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 		ClassAd slotAd;
 		putClassAd( sock, slotAd );
+
+		sock->end_of_message();
 
 		return FALSE;
 	}
@@ -2868,7 +2881,7 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 	// We'e ignoring consumption policy here.  (See request_claim().)  This
 	// is probably a good thing.
 
-	coalescedSlot->r_cur->setjobad( resourceAd );
+	coalescedSlot->r_cur->setjobad( requestAd );
 	// We're ignoring rank here.  (See request_claim().)
 	coalescedSlot->r_cur->loadAccountingInfo();
 	coalescedSlot->r_cur->loadRequestInfo();
@@ -2895,7 +2908,7 @@ command_coalesce_slots( Service *, int, Stream * stream ) {
 
 	ClassAd slotAd( * coalescedSlot->r_classad );
 	// coalescedSlot->publish_private( & slotAd );
-	if(! putClassAd( sock, slotAd )) {
+	if(! putClassAd( sock, slotAd ) || !sock->end_of_message()) {
 		dprintf( D_ALWAYS, "command_coalesce_slots(): failed to send slot ad\n" );
 		return FALSE;
 	}

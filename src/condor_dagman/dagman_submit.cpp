@@ -22,6 +22,7 @@
 #include "condor_attributes.h"
 #include "util_lib_proto.h"
 #include "my_popen.h"
+#include "condor_string.h"
 
 #include <sstream>
 
@@ -460,7 +461,7 @@ fake_condor_submit( CondorID& condorID, Job* job, const char* DAGNodeName,
 
 	WriteUserLog ulog;
 	ulog.setEnableGlobalLog( false );
-	ulog.setUseXML( false );
+	ulog.setUseCLASSAD( 0 );
 	ulog.initialize( logFile, condorID._cluster,
 		condorID._proc, condorID._subproc );
 
@@ -527,7 +528,7 @@ bool writePreSkipEvent( CondorID& condorID, Job* job, const char* DAGNodeName,
 
 	WriteUserLog ulog;
 	ulog.setEnableGlobalLog( false );
-	ulog.setUseXML( false );
+	ulog.setUseCLASSAD( 0 );
 	ulog.initialize( std::vector<const char*>(1,logFile), condorID._cluster,
 		condorID._proc, condorID._subproc );
 

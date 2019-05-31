@@ -203,7 +203,7 @@ int DockerProc::StartJob() {
 int execPid;
 ReliSock *ns;
 
-bool
+int
 DockerProc::ExecReaper(int pid, int status) {
 	dprintf( D_FULLDEBUG, "DockerProc::JobReaper() pid is %d with status %d\n", pid, status);
 	if (pid == execPid) {
@@ -213,7 +213,7 @@ DockerProc::ExecReaper(int pid, int status) {
 	} else {
 		dprintf(D_ALWAYS, "docker exec unknown pid %d exited\n", pid);
 	}
-	return true;
+	return 1;
 }
 
 bool DockerProc::JobReaper( int pid, int status ) {
@@ -717,10 +717,9 @@ bool DockerProc::ShutdownFast() {
 }
 
 
-int
-DockerProc::getStats(int /*tid*/) {
+void
+DockerProc::getStats() {
 	DockerAPI::stats( containerName, memUsage, netIn, netOut, userCpu, sysCpu);
-	return true;
 }
 
 bool DockerProc::PublishUpdateAd( ClassAd * ad ) {

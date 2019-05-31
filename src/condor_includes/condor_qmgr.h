@@ -36,7 +36,7 @@
 #endif
 
 
-typedef struct {
+typedef struct _Qmgr_connection {
 	bool dummy;
 } Qmgr_connection;
 
@@ -268,7 +268,7 @@ int GetAttributeInt(int cluster, int proc, const char *attr, int *value);
 /** Get value of attr for job with specified cluster and proc.
 	@return -1 on failure; 0 on success
 */
-int GetAttributeBool(int cluster, int proc, const char *attr, int *value);
+int GetAttributeBool(int cluster, int proc, const char *attr, bool *value);
 /** Get value of string attr for job with specified cluster and proc.
 	@return -1 on failure; 0 on success. Allocates new copy of the string.
 */
@@ -279,6 +279,8 @@ int GetAttributeStringNew( int cluster_id, int proc_id, const char *attr_name,
 */
 int GetAttributeString( int cluster_id, int proc_id, char const *attr_name,
 						MyString &val );
+int GetAttributeString( int cluster_id, int proc_id, char const *attr_name,
+                        std::string &val );
 /** Get value of attr for job with specified cluster and proc.
 	Allocates new copy of the unparsed expression string.
 	@return -1 on failure; 0 on success

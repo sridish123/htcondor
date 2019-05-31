@@ -23,7 +23,6 @@
 #include "condor_attributes.h"
 #include "condor_state.h"
 #include "status_types.h"
-#include "get_daemon_name.h"
 #include "sig_install.h"
 #include "daemon.h"
 #include "dc_collector.h"
@@ -328,7 +327,7 @@ render_slot_id (std::string & out, ClassAd * ad, Formatter & /*fmt*/)
 	static char outstr[10];
 	outstr[0] = 0;
 	//bool from_name = false;
-	int is_dynamic = false;
+	bool is_dynamic = false;
 	if (/*from_name || */(ad->LookupBool(ATTR_SLOT_DYNAMIC, is_dynamic) && is_dynamic)) {
 		std::string name;
 		if (ad->LookupString(ATTR_NAME, name) && (0 == name.find("slot"))) {
@@ -1326,6 +1325,7 @@ void init_condor_config()
 		// is no global config file, so tell the config subsystem that.
 		config_continue_if_no_config(true);
 	}
+	set_priv_initialize(); // allow uid switching if root
 	config();
 }
 

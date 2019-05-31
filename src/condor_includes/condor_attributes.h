@@ -166,6 +166,7 @@
 #define ATTR_DISK  "Disk"
 #define ATTR_DISK_USAGE  "DiskUsage"
 #define ATTR_DOCKER_IMAGE "DockerImage"
+#define ATTR_DOCKER_NETWORK_TYPE "DockerNetworkType"
 #define ATTR_DOCKER_VOLUMES "DockerVolumes"
 #define ATTR_DOCKER_VERSION  "DockerVersion"
 #define ATTR_EMAIL_ATTRIBUTES  "EmailAttributes"
@@ -248,6 +249,7 @@
 #define ATTR_HAS_ENCRYPT_EXECUTE_DIRECTORY "HasEncryptExecuteDirectory"
 #define ATTR_HAS_FILE_TRANSFER  "HasFileTransfer"
 #define ATTR_HAS_FILE_TRANSFER_PLUGIN_METHODS  "HasFileTransferPluginMethods"
+#define ATTR_HAS_JOB_TRANSFER_PLUGINS  "HasJobTransferPlugins"
 #define ATTR_HAS_PER_FILE_ENCRYPTION  "HasPerFileEncryption"
 #define ATTR_HAS_IO_PROXY  "HasIOProxy"
 #define ATTR_HAS_JAVA  "HasJava"
@@ -323,7 +325,11 @@
 #define ATTR_JOB_CURRENT_START_DATE  "JobCurrentStartDate"
 #define ATTR_JOB_CURRENT_START_EXECUTING_DATE  "JobCurrentStartExecutingDate"
 #define ATTR_JOB_CURRENT_START_TRANSFER_OUTPUT_DATE  "JobCurrentStartTransferOutputDate"
+#define ATTR_JOB_CURRENT_FINISH_TRANSFER_OUTPUT_DATE  "JobCurrentFinishTransferOutputDate"
+#define ATTR_JOB_CURRENT_START_TRANSFER_INPUT_DATE  "JobCurrentStartTransferInputDate"
+#define ATTR_JOB_CURRENT_FINISH_TRANSFER_INPUT_DATE  "JobCurrentFinishTransferInputDate"
 #define ATTR_CUMULATIVE_TRANSFER_TIME  "CumulativeTransferTime"
+#define ATTR_JOB_DOCKER_NETWORK_TYPE "DockerNetworkType"
 #define ATTR_JOB_DURATION  "JobDuration"
 #define ATTR_ENCRYPT_EXECUTE_DIRECTORY "EncryptExecuteDirectory"
 #define ATTR_JOB_ENVIRONMENT1  "Env"
@@ -379,6 +385,7 @@
 #define ATTR_JOB_REMOTE_USER_CPU  "RemoteUserCpu"
 #define ATTR_JOB_CUMULATIVE_REMOTE_SYS_CPU  "CumulativeRemoteSysCpu"
 #define ATTR_JOB_CUMULATIVE_REMOTE_USER_CPU  "CumulativeRemoteUserCpu"
+#define ATTR_JOB_DISCONNECTED_DATE  "JobDisconnectedDate"
 #define ATTR_JOB_REMOTE_WALL_CLOCK  "RemoteWallClockTime"
 #define ATTR_JOB_ROOT_DIR  "RootDir"
 #define ATTR_JOB_RUN_COUNT  "JobRunCount"
@@ -568,8 +575,6 @@
 #define ATTR_REMOTE_USER  "RemoteUser"
 #define ATTR_REMOTE_USER_PRIO  "RemoteUserPrio"
 #define ATTR_REMOTE_USER_RESOURCES_IN_USE  "RemoteUserResourcesInUse"
-// Deprecated (cruft) -- use: ATTR_REMOTE_SLOT_ID 
-#define ATTR_REMOTE_VIRTUAL_MACHINE_ID  "RemoteVirtualMachineID"
 #define ATTR_REMOVE_KILL_SIG  "RemoveKillSig"
 #define ATTR_REMOVE_REASON  "RemoveReason"
 #define ATTR_REQUEUE_REASON  "RequeueReason"
@@ -599,6 +604,7 @@
 #define ATTR_SCHEDULER  "Scheduler"
 #define ATTR_SHADOW_WAIT_FOR_DEBUG  "ShadowWaitForDebug"
 #define ATTR_SHOULD_FORWARD	"ShouldForward"
+#define ATTR_SCITOKENS_FILE "ScitokensFile"
 #define ATTR_SINGULARITY_VERSION "SingularityVersion"
 #define ATTR_SLOT_ID  "SlotID"
 #define ATTR_SLOT_PAIR_NAME  "SlotPairName"
@@ -716,8 +722,6 @@
 #define ATTR_TOTAL_TIME_DRAINED_IDLE  "TotalTimeDrainedIdle"
 #define ATTR_TOTAL_TIME_DRAINED_RETIRING  "TotalTimeDrainedRetiring"
 
-// Deprecated (cruft) -- use: ATTR_TOTAL_SLOTS;
-#define ATTR_TOTAL_VIRTUAL_MACHINES  "TotalVirtualMachines"
 #define ATTR_TOTAL_VIRTUAL_MEMORY  "TotalVirtualMemory"
 #define ATTR_UID  "Uid"
 #define ATTR_UID_DOMAIN  "UidDomain"
@@ -770,8 +774,6 @@
 #define ATTR_VERSION					AttrGetName( ATTRE_VERSION )
 #define ATTR_SCHEDD_BIRTHDATE  "ScheddBday"
 #define ATTR_SHADOW_VERSION  "ShadowVersion"
-// Deprecated (cruft) -- use: ATTR_SLOT_ID
-#define ATTR_VIRTUAL_MACHINE_ID  "VirtualMachineID"
 #define ATTR_SHOULD_TRANSFER_FILES  "ShouldTransferFiles"
 #define ATTR_WHEN_TO_TRANSFER_OUTPUT  "WhenToTransferOutput"
 #define ATTR_TRANSFER_TYPE  "TransferType"
@@ -782,6 +784,7 @@
 #define ATTR_TRANSFER_ERROR  "TransferErr"
 #define ATTR_TRANSFER_INPUT_FILES  "TransferInput"
 #define ATTR_TRANSFER_INPUT_REMAPS  "TransferInputRemaps"
+#define ATTR_TRANSFER_PLUGINS  "TransferPlugins"
 #define ATTR_TRANSFER_INPUT_SIZE_MB  "TransferInputSizeMB"
 #define ATTR_PUBLIC_INPUT_FILES  "PublicInputFiles"
 #define ATTR_MAX_TRANSFER_INPUT_MB "MaxTransferInputMB"
@@ -855,6 +858,7 @@
 #define ATTR_SEC_SERVER_ENDPOINT  "ServerEndpoint"
 #define ATTR_SEC_SERVER_COMMAND_SOCK  "ServerCommandSock"
 #define ATTR_SEC_SERVER_PID  "ServerPid"
+#define ATTR_SEC_CONNECT_SINFUL  "ConnectSinful"
 #define ATTR_SEC_PARENT_UNIQUE_ID  "ParentUniqueID"
 #define ATTR_SEC_PACKET_COUNT  "PacketCount"
 #define ATTR_SEC_NEGOTIATION  "OutgoingNegotiation"
@@ -871,6 +875,13 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_SEC_TRIED_AUTHENTICATION  "TriedAuthentication"
 #define ATTR_SEC_AUTHORIZATION_SUCCEEDED  "AuthorizationSucceeded"
 #define ATTR_SEC_RETURN_CODE  "ReturnCode"
+#define ATTR_SEC_ISSUER_KEYS "IssuerKeys"
+#define ATTR_SEC_LIMIT_AUTHORIZATION "LimitAuthorization"
+#define ATTR_SEC_TOKEN "Token"
+#define ATTR_SEC_TOKEN_LIFETIME "TokenLifetime"
+#define ATTR_SEC_TRUST_DOMAIN "TrustDomain"
+#define ATTR_SEC_CLIENT_ID "ClientId"
+#define ATTR_SEC_REQUEST_ID "RequestId"
 
 #define ATTR_MULTIPLE_TASKS_PER_PVMD  "MultipleTasksPerPvmd"
 
@@ -883,9 +894,9 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_LAST_CHECKPOINT_PLATFORM  "LastCheckpointPlatform"
 #define ATTR_IS_VALID_CHECKPOINT_PLATFORM  "IsValidCheckpointPlatform"
 
-#define ATTR_CHECKPOINT_EXIT_CODE  "CheckpointExitCode"
-#define ATTR_CHECKPOINT_EXIT_SIGNAL  "CheckpointExitSignal"
-#define ATTR_CHECKPOINT_EXIT_BY_SIGNAL  "CheckpointExitBySignal"
+#define ATTR_CHECKPOINT_EXIT_CODE  "SuccessCheckpointExitCode"
+#define ATTR_CHECKPOINT_EXIT_SIGNAL  "SuccessCheckpointExitSignal"
+#define ATTR_CHECKPOINT_EXIT_BY_SIGNAL  "SuccessCheckpointExitBySignal"
 
 #define ATTR_WITHIN_RESOURCE_LIMITS  "WithinResourceLimits"
 

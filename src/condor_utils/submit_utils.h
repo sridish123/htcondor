@@ -23,6 +23,7 @@
 #include "condor_config.h" // for MACRO_SOURCE
 #include <dc_schedd.h> // for ShouldTransferFiles_t
 
+
 /*
 **	submit keywords that control submit behavior
 */
@@ -141,6 +142,7 @@
 #define SUBMIT_KEY_TransferInput "transfer_input"
 #define SUBMIT_KEY_TransferOutput "transfer_output"
 #define SUBMIT_KEY_TransferError "transfer_error"
+#define SUBMIT_KEY_TransferPlugins "transfer_plugins"
 #define SUBMIT_KEY_MaxTransferInputMB "max_transfer_input_mb"
 #define SUBMIT_KEY_MaxTransferOutputMB "max_transfer_output_mb"
 
@@ -234,6 +236,7 @@
 // docker "universe" Parameters
 //
 #define SUBMIT_KEY_DockerImage "docker_image"
+#define SUBMIT_KEY_DockerNetworkType "docker_network_type"
 
 //
 // VM universe Parameters
@@ -317,12 +320,10 @@
 
 #define SUBMIT_KEY_REMOTE_PREFIX "Remote_"
 
-#if !defined(WIN32)
 #define SUBMIT_KEY_KillSig "kill_sig"
 #define SUBMIT_KEY_RmKillSig "remove_kill_sig"
 #define SUBMIT_KEY_HoldKillSig "hold_kill_sig"
 #define SUBMIT_KEY_KillSigTimeout "kill_sig_timeout"
-#endif
 
 // class to parse, hold and manage a python style slice: [x:y:z]
 // used by the condor_submit queue 'foreach' handling
@@ -423,7 +424,7 @@ public:
 
 // used to indicate the role of a file when invoking the check_file callback
 enum _submit_file_role {
-	SFR_STDIN,
+	SFR_GENERIC,
 	SFR_STDOUT,
 	SFR_STDERR,
 	SFR_INPUT,
@@ -549,7 +550,7 @@ public:
 	// After calling this method, subsequent calls to make_job_ad() will produce a job ad that
 	// is chained to the cluster ad
 	// This function does nothing if the SubmitHash is using a foreign clusterad (i.e. you called set_cluster_ad())
-	bool fold_job_into_base_ad(ClassAd * job);
+	bool fold_job_into_base_ad(int cluster_id, ClassAd * job);
 
 	// If we have an initialized cluster ad, return it
 	ClassAd * get_cluster_ad() {
@@ -581,7 +582,7 @@ public:
 		baseJob.Clear();
 		jid.cluster = 0; jid.proc = 0;
 		clusterAd = NULL;
-		base_job_is_cluster_ad = false;
+		base_job_is_cluster_ad = 0;
 	}
 
 	int AssignJobExpr (const char *attr, const char * expr, const char * source_label=NULL);
@@ -597,8 +598,8 @@ public:
 	CondorError* error_stack() const { return SubmitMacroSet.errors; }
 
 	void optimize() { if (SubmitMacroSet.sorted < SubmitMacroSet.size) optimize_macros(SubmitMacroSet); }
-	void dump(FILE* out, int flags);
-	const char* to_string(std::string & buf, int flags);
+	void dump(FILE* out, int flags); // print the hash to the given FILE*
+	const char* to_string(std::string & buf, int flags); // print (append) the hash to the supplied buffer
 	const char* make_digest(std::string & buf, int cluster_id, StringList & vars, int options);
 	void setup_macro_defaults(); // setup live defaults table
 
@@ -627,8 +628,8 @@ protected:
 	const char * abort_macro_name; // if there is an abort_code and these are non-null, then the abort was because of this macro
 	const char * abort_raw_macro_val;
 
-	// keep track of whether we have turned the baseJob into a cluster ad yet
-	bool base_job_is_cluster_ad;
+	// keep track of whether we have turned the baseJob into a cluster ad yet, and what cluster it is
+	int base_job_is_cluster_ad;
 
 	// options set externally (by command line arguments?)
 	bool DisableFileChecks; // file checks disabled by config, not submit file
@@ -637,6 +638,8 @@ protected:
 	bool IsRemoteJob;
 	int (*FnCheckFile)(void*pv, SubmitHash * sub, _submit_file_role role, const char * name, int flags);
 	void *CheckFileArg;
+
+	bool CheckProxyFile;
 
 	// automatic 'live' submit variables. these pointers are set to point into the macro set allocation
 	// pool. so the will be automatically freed. They are also set into the macro_set.defaults tables
@@ -657,12 +660,7 @@ protected:
 	bool already_warned_requirements_mem;
 	bool already_warned_job_lease_too_small;
 	bool already_warned_notification_never;
-	long long ExecutableSizeKb; // size of cmd or sizeof VM memory backing
-	long long TransferInputSizeKb;
-	auto_free_ptr tdp_cmd;
-	auto_free_ptr tdp_input;
 	auto_free_ptr RunAsOwnerCredD;
-	MyString JobRequirements;
 	MyString JobIwd;
 	#if !defined(WIN32)
 	MyString JobRootdir;
@@ -686,91 +684,71 @@ protected:
 	// worker functions that build up the job from the hashtable
 	// they pass data between themselves by setting class variables
 	// so the must be called in a specific order.
-	int SetDescription();
-	int SetJobStatus();
-	int SetJobLease();
-	int SetSimpleJobExprs();
-	int SetRemoteAttrs();
-	int SetJobMachineAttrs();
-	int SetExecutable();
-	int SetUniverse();
-	int SetMachineCount();
-	int SetImageSize();
-	int SetRequestResources();
-	//int SetStdFile( int which_file );
-	int SetStdin();
-	int SetStdout();
-	int SetStderr();
-	int SetPriority();
-	int SetNiceUser();
-	int SetNotification();
-	int SetWantRemoteIO();
-	int SetNotifyUser ();
-	int SetEmailAttributes();
-	int SetCronTab();
-	int SetRemoteInitialDir();
-	int SetExitRequirements();
-	int SetOutputDestination();
-	int SetWantGracefulRemoval();
-	int SetJobMaxVacateTime();
-	int SetArguments();
-	int SetGridParams();
-	int SetGSICredentials();
-	int SetJobDeferral();
-	int SetJobRetries();
-	int SetEnvironment();
-	#if !defined(WIN32)
+
+	int SetUniverse();  /* run once */
+
+#if !defined(WIN32)
 	int ComputeRootDir();
 	int SetRootDir();
 	int check_root_dir_access();
-	#endif
-	int SetRequirements();
-	//bool check_requirements( char const *orig, MyString &answer );
-	int SetTransferFiles();
-	int SetPerFileEncryption();
-	int SetEncryptExecuteDir();
-	int SetTDP();
-	int SetRunAsOwner();
-	int SetLoadProfile();
-	int SetRank();
+#endif
 	int ComputeIWD();
-	int SetIWD();
-	int SetUserLog();
-	int SetCoreSize();
-	int SetFileOptions();
-	int SetFetchFiles();
-	int SetCompressFiles();
-	int SetAppendFiles();
-	int SetLocalFiles();
-	#if !defined(WIN32)
-	int SetKillSig();
-	char *fixupKillSigName(char* sig);
-	#endif
+	int SetIWD();		  /* factory:ok */
 
-	int SetPeriodicHoldCheck();
-	int SetPeriodicRemoveCheck();
-	int SetNoopJob();
-	int SetLeaveInQueue();
-	int SetDAGNodeName();
-	int SetMatchListLen();
-	int SetDAGManJobId();
-	int SetLogNotes();
-	int SetUserNotes();
-	int SetStackSize();
-	int SetJarFiles();
-	int SetJavaVMArgs();
-	int SetParallelStartupScripts(); //JDB
-	int SetMaxJobRetirementTime();
-	int SetConcurrencyLimits();
-	int SetAccountingGroup();
-	int SetVMParams();
+
+	int SetExecutable();  /* run once if */ // TODO: split out some functionality
+	int SetArguments();  /* run once if */
+	int SetGridParams();  /* run once if, grid universe only */
+	int SetVMParams();  /* run once if, VM universe only */
+	int SetJavaVMArgs();  /* run once if,  */
+	int SetParallelParams();  /* run once */
+
+	int SetEnvironment(); /* run once if, special */
+
+	int SetJobStatus();  /* run once if */
+
+	int SetTDP();  /* run once if, maybe split up?*/
+	int SetStdin();  /* run once if */
+	int SetStdout();  /* run once if */
+	int SetStderr();  /* run once if */
+	int SetGSICredentials();  /* run once if */
+
+	int SetNotification();  /* factory:ok */
+	int SetRank();  /* run once if */
+	int SetPeriodicExpressions();  /* factory:ok */
+	int SetLeaveInQueue();  /* factory:ok */
+	int SetJobRetries();  /* factory:ok */
+	int SetKillSig();  /* run once if */
+	char *fixupKillSigName(char* sig);
+
+	int SetImageSize(); /* run always */ // TODO: , split out request_disk
+
+	int SetRequestResources(); /* n attrs, prunable by pattern */
+	int SetConcurrencyLimits();  /* 2 attrs, prunable */
+	int SetAccountingGroup();  /* 3 attrs, prunable */
+
+	int SetSimpleJobExprs(); /* run always */
+	int SetAutoAttributes(); /* run always */
+	int ReportCommonMistakes(); /* run always */
+
+	int SetJobDeferral();  /* run always */
+
+	// a LOT of the above functions must happen before SetTransferFiles, which in turn must be before SetRequirements
+	int SetTransferFiles();
 	int FixupTransferInputFiles();
+	//bool check_requirements( char const *orig, MyString &answer );
+	int SetRequirements(); // after SetTransferFiles
+
+	int SetForcedSubmitAttrs(); // set +Attrib (MY.Attrib) values from SUBMIT_ATTRS directly into the job ad. this should be called second to last
 	int SetForcedAttributes();	// set +Attrib (MY.Attrib) hashtable keys directly into the job ad.  this should be called last.
 
 	// construct the Requirements expression for a VM uinverse job.
 	int AppendVMRequirements(MyString & vmanswer, bool VMCheckpoint, bool VMNetworking, const MyString &VMNetworkType, bool VMHardwareVT, bool vm_need_fsdomain);
 
-	bool NeedsJobDeferral(); // check if the job ad has  Cron attributes set, checked by SetRequirements
+	// check if the job ad has  Cron attributes set, checked by SetRequirements
+	// return value is NULL if false,
+	// otherwise it is the name of the attribute that tells us we need job deferral
+	const char * NeedsJobDeferral();
 
 	int CheckStdFile(
 		_submit_file_role role,
@@ -782,6 +760,8 @@ protected:
 
 	// private helper functions
 	void fixup_rhs_for_digest(const char * key, std::string & rhs);
+	int query_universe(MyString & sub_type, bool & is_docker); // figure out universe, but DON'T modify the cached members
+	bool key_is_prunable(const char * key); // return true if key can be pruned from submit digest
 	void push_error(FILE * fh, const char* format, ... ) CHECK_PRINTF_FORMAT(3,4);
 	void push_warning(FILE * fh, const char* format, ... ) CHECK_PRINTF_FORMAT(3,4);
 private:
@@ -789,9 +769,16 @@ private:
 	int64_t calc_image_size_kb( const char *name);
 
 	// returns a count of files in the input list
-	int process_input_file_list(StringList * input_list, long long & accumulate_size_kb);
+	int process_input_file_list(StringList * input_list, long long * accumulate_size_kb);
 	//int non_negative_int_fail(const char * Name, char * Value);
-	void transfer_vm_file(const char *filename, long long & accumulate_size_kb);
+	typedef int (SubmitHash::*FNSETATTRS)(const char * key);
+	FNSETATTRS is_special_request_resource(const char * key);
+
+	int SetRequestMem(const char * key);   /* used by SetRequestResources */
+	int SetRequestDisk(const char * key);  /* used by SetRequestResources */
+	int SetRequestCpus(const char * key);  /* used by SetRequestResources */
+
+	int process_vm_input_files(StringList & input_files, long long * accumulate_size_kb); // call after building the input files list to find .vmx and .vmdk files in that list
 };
 
 struct SubmitStepFromQArgs {

@@ -593,7 +593,7 @@ static double parse_user_resource_config(const char * tag, const char * res_valu
 	if ( ! is_simple_double) {
 		// ok not a simple double, try evaluating it as a classad expression.
 		ClassAd ad;
-		if (ad.AssignExpr(tag,res_value) && ad.EvalFloat(tag, NULL, num)) {
+		if (ad.AssignExpr(tag,res_value) && ad.LookupFloat(tag, num)) {
 			// it was an expression that evaluated to a double, so it's a simple double after all
 			is_simple_double = true;
 		} else {
@@ -628,13 +628,13 @@ double MachAttributes::init_machine_resource_from_script(const char * tag, const
 		int error = 0;
 		bool is_eof = false;
 		ClassAd ad;
-		int cAttrs = ad.InsertFromFile(fp, is_eof, error);
+		int cAttrs = InsertFromFile(fp, ad, is_eof, error);
 		if (cAttrs <= 0) {
 			if (error) dprintf(D_ALWAYS, "Could not parse ClassAd for local resource '%s' (error %d) assuming quantity of 0\n", tag, error);
 		} else {
 			classad::Value value;
 			MyString attr(ATTR_OFFLINE_PREFIX); attr += tag;
-			MyString res_value;
+			std::string res_value;
 			StringList offline_ids;
 			if (ad.LookupString(attr.c_str(),res_value)) {
 				offline = parse_user_resource_config(tag, res_value.c_str(), offline_ids);
@@ -1077,10 +1077,9 @@ MachAttributes::start_benchmarks( Resource* rip, int &count )
 		return;
 	}
 
-	// This should be a bool, but EvalBool() expects an int
-	int run_benchmarks = 0;
-	if ( cp->EvalBool( ATTR_RUN_BENCHMARKS, cp, run_benchmarks ) == 0 ) {
-		run_benchmarks = 0;
+	bool run_benchmarks = false;
+	if ( cp->LookupBool( ATTR_RUN_BENCHMARKS, run_benchmarks ) == 0 ) {
+		run_benchmarks = false;
 	}
 	if ( !run_benchmarks ) {
 		return;

@@ -223,6 +223,7 @@ main( int argc, char *argv[] )
 		usage();
 	}
 
+	set_priv_initialize(); // allow uid switching if root
 	config();
 
 
@@ -425,7 +426,7 @@ main( int argc, char *argv[] )
 			exit(1);
 		}
 		std::string constr(daemonname); constr.insert(0, ATTR_NAME " == \""); constr.append("\"");
-		delete[] daemonname;
+		free(daemonname);
 		CondorQuery query(SCHEDD_AD);
 		query.addORConstraint (constr.c_str());
 
@@ -745,8 +746,8 @@ mayUserForceRm( )
 
 	free(tmp);
 
-	int is_okay = 0;
-	if(tmpAd.EvalBool(TESTNAME, 0, is_okay)) {
+	bool is_okay = false;
+	if(tmpAd.LookupBool(TESTNAME, is_okay)) {
 		return is_okay;
 	} else {
 		// Something went wrong.  May be undefined because

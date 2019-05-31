@@ -352,6 +352,7 @@ main( int argc, const char *argv[] )
 	set_mySubSystem( MySubsys, SUBSYSTEM_TYPE_TOOL );
 
 	myDistro->Init( argc, argv );
+	set_priv_initialize(); // allow uid switching if root
 	config();
 
 #ifdef USE_XFORM_UTILS
@@ -1033,7 +1034,7 @@ static bool read_classad_file (
 
 		int error;
 		bool is_eof;
-		int cAttrs = classad->InsertFromFile(file, is_eof, error, &parse_help);
+		int cAttrs = InsertFromFile(file, *classad, is_eof, error, &parse_help);
 
 		bool include_classad = cAttrs > 0 && error >= 0;
 		if (include_classad && constr) {
@@ -1092,8 +1093,8 @@ class CondorQClassAdFileParseHelper : public compat_classad::CondorClassAdFilePa
 		: CondorClassAdFileParseHelper("\n", typ)
 		, is_schedd(false), is_submitter(false)
 	{}
-	virtual int PreParse(std::string & line, ClassAd & ad, FILE* file);
-	virtual int OnParseError(std::string & line, ClassAd & ad, FILE* file);
+	virtual int PreParse(std::string & line, classad::ClassAd & ad, FILE* file);
+	virtual int OnParseError(std::string & line, classad::ClassAd & ad, FILE* file);
 	std::string schedd_name;
 	std::string schedd_addr;
 	bool is_schedd;
@@ -1102,7 +1103,7 @@ class CondorQClassAdFileParseHelper : public compat_classad::CondorClassAdFilePa
 
 // this method is called before each line is parsed. 
 // return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
-int CondorQClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/, FILE* /*file*/)
+int CondorQClassAdFileParseHelper::PreParse(std::string & line, classad::ClassAd & /*ad*/, FILE* /*file*/)
 {
 	// treat blank lines as delimiters.
 	if (line.size() <= 0) {
@@ -1153,7 +1154,7 @@ int CondorQClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/
 
 // this method is called when the parser encounters an error
 // return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
-int CondorQClassAdFileParseHelper::OnParseError(std::string & line, ClassAd & ad, FILE* file)
+int CondorQClassAdFileParseHelper::OnParseError(std::string & line, classad::ClassAd & ad, FILE* file)
 {
 	// when we get a parse error, skip ahead to the start of the next classad.
 	int ee = this->PreParse(line, ad, file);
@@ -1434,6 +1435,10 @@ static ExprTree * XFormCopyValueToTree(classad::Value & val)
 		classad::ClassAd* aval;
 		val.IsClassAdValue(aval);
 		tree = aval->Copy();
+	} else if (vtyp == classad::Value::SCLASSAD_VALUE) {
+		classad_shared_ptr<classad::ClassAd> aval;
+		val.IsSClassAdValue(aval);
+		tree = aval.get()->Copy();
 	} else {
 		tree = classad::Literal::MakeLiteral(val);
 	}

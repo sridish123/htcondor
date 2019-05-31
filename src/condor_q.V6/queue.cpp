@@ -386,8 +386,8 @@ class CondorQClassAdFileParseHelper : public compat_classad::CondorClassAdFilePa
 		: CondorClassAdFileParseHelper("\n", typ)
 		, is_schedd(false), is_submitter(false)
 	{}
-	virtual int PreParse(std::string & line, ClassAd & ad, FILE* file);
-	virtual int OnParseError(std::string & line, ClassAd & ad, FILE* file);
+	virtual int PreParse(std::string & line, classad::ClassAd & ad, FILE* file);
+	virtual int OnParseError(std::string & line, classad::ClassAd & ad, FILE* file);
 	std::string schedd_name;
 	std::string schedd_addr;
 	bool is_schedd;
@@ -396,7 +396,7 @@ class CondorQClassAdFileParseHelper : public compat_classad::CondorClassAdFilePa
 
 // this method is called before each line is parsed. 
 // return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
-int CondorQClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/, FILE* /*file*/)
+int CondorQClassAdFileParseHelper::PreParse(std::string & line, classad::ClassAd & /*ad*/, FILE* /*file*/)
 {
 	// treat blank lines as delimiters.
 	if (line.size() <= 0) {
@@ -447,7 +447,7 @@ int CondorQClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/
 
 // this method is called when the parser encounters an error
 // return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
-int CondorQClassAdFileParseHelper::OnParseError(std::string & line, ClassAd & ad, FILE* file)
+int CondorQClassAdFileParseHelper::OnParseError(std::string & line, classad::ClassAd & ad, FILE* file)
 {
 	// when we get a parse error, skip ahead to the start of the next classad.
 	int ee = this->PreParse(line, ad, file);
@@ -497,7 +497,7 @@ int main (int argc, const char **argv)
 	char		*scheddName=NULL;
 	std::string		scheddMachine;
 	int		useFastScheddQuery = 0;
-	char		*tmp;
+	const char	*tmp;
 	int         retval = 0;
 
 	Collectors = NULL;
@@ -505,6 +505,7 @@ int main (int argc, const char **argv)
 
 	// load up configuration file
 	myDistro->Init( argc, argv );
+	set_priv_initialize(); // allow uid switching if root
 	config();
 	dprintf_config_tool_on_error(0);
 	dprintf_OnExitDumpOnErrorBuffer(stderr);
@@ -697,9 +698,9 @@ int main (int argc, const char **argv)
 
 		first = false;
 
-		MyString scheddVersion;
+		std::string scheddVersion;
 		ad->LookupString(ATTR_VERSION, scheddVersion);
-		CondorVersionInfo v(scheddVersion.Value());
+		CondorVersionInfo v(scheddVersion.c_str());
 		if (v.built_since_version(8, 3, 3)) {
 			bool v3_query_with_auth = v.built_since_version(8,5,6) && (default_fetch_opts & CondorQ::fetch_MyJobs);
 			useFastScheddQuery = v3_query_with_auth ? 3 : 2;
@@ -1004,7 +1005,7 @@ processCommandLineArguments (int argc, const char *argv[])
 			scheddQuery.setLocationLookup(daemonname);
 			Q.addSchedd(daemonname);
 
-			delete [] daemonname;
+			free(daemonname);
 			i++;
 			querySchedds = true;
 		} 
@@ -1869,7 +1870,7 @@ render_remote_host (std::string & result, ClassAd *ad, Formatter &)
 static bool
 render_cpu_time (double & cputime, ClassAd *ad, Formatter &)
 {
-	if ( ! ad->EvalFloat(ATTR_JOB_REMOTE_USER_CPU, NULL, cputime))
+	if ( ! ad->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, cputime))
 		return false;
 
 	cputime = job_time(cputime, ad);
@@ -1884,10 +1885,10 @@ render_memory_usage(double & mem_used_mb, ClassAd *ad, Formatter &)
 	long long memory_usage;
 	// print memory usage unless it's unavailable, then print image size
 	// note that memory usage is megabytes but imagesize is kilobytes.
-	if (ad->EvalInteger(ATTR_MEMORY_USAGE, NULL, memory_usage)) {
+	if (ad->LookupInteger(ATTR_MEMORY_USAGE, memory_usage)) {
 		mem_used_mb = memory_usage;
 		max_mem_used = MAX(max_mem_used, mem_used_mb);
-	} else if (ad->EvalInteger(ATTR_IMAGE_SIZE, NULL, image_size)) {
+	} else if (ad->LookupInteger(ATTR_IMAGE_SIZE, image_size)) {
 		mem_used_mb = image_size / 1024.0;
 		max_mem_used = MAX(max_mem_used, mem_used_mb);
 	} else {
@@ -1944,12 +1945,12 @@ format_readable_bytes(const classad::Value &val, Formatter &)
 static bool
 render_job_description(std::string & out, ClassAd *ad, Formatter &)
 {
-	if ( ! ad->EvalString(ATTR_JOB_CMD, NULL, out))
+	if ( ! ad->LookupString(ATTR_JOB_CMD, out))
 		return false;
 
 	std::string description;
-	if ( ! ad->EvalString("MATCH_EXP_" ATTR_JOB_DESCRIPTION, NULL, description)) {
-		ad->EvalString(ATTR_JOB_DESCRIPTION, NULL, description);
+	if ( ! ad->LookupString("MATCH_EXP_" ATTR_JOB_DESCRIPTION, description)) {
+		ad->LookupString(ATTR_JOB_DESCRIPTION, description);
 	}
 	if ( ! description.empty()) {
 		formatstr(out, "(%s)", description.c_str());
@@ -2018,7 +2019,7 @@ render_job_status_char(std::string & result, ClassAd*ad, Formatter &)
 		said suspension is also second class. */
 	if (param_boolean("REAL_TIME_JOB_SUSPEND_UPDATES", false)) {
 		int last_susp_time;
-		if (!ad->EvalInteger(ATTR_LAST_SUSPENSION_TIME,NULL,last_susp_time))
+		if (!ad->LookupInteger(ATTR_LAST_SUSPENSION_TIME,last_susp_time))
 		{
 			last_susp_time = 0;
 		}
@@ -2033,12 +2034,12 @@ render_job_status_char(std::string & result, ClassAd*ad, Formatter &)
 	}
 
 		// adjust status field to indicate file transfer status
-	int transferring_input = false;
-	int transferring_output = false;
-	int transfer_queued = false;
-	ad->EvalBool(ATTR_TRANSFERRING_INPUT,NULL,transferring_input);
-	ad->EvalBool(ATTR_TRANSFERRING_OUTPUT,NULL,transferring_output);
-	ad->EvalBool(ATTR_TRANSFER_QUEUED,NULL,transfer_queued);
+	bool transferring_input = false;
+	bool transferring_output = false;
+	bool transfer_queued = false;
+	ad->LookupBool(ATTR_TRANSFERRING_INPUT,transferring_input);
+	ad->LookupBool(ATTR_TRANSFERRING_OUTPUT,transferring_output);
+	ad->LookupBool(ATTR_TRANSFER_QUEUED,transfer_queued);
 	if( transferring_input ) {
 		put_result[0] = '<';
 		put_result[1] = transfer_queued ? 'q' : ' ';
@@ -2082,7 +2083,7 @@ static bool
 render_mbps (double & mbps, ClassAd *ad, Formatter & /*fmt*/)
 {
 	double bytes_sent;
-	if ( ! ad->EvalFloat(ATTR_BYTES_SENT, NULL, bytes_sent))
+	if ( ! ad->LookupFloat(ATTR_BYTES_SENT, bytes_sent))
 		return false;
 
 	double wall_clock=0.0, bytes_recvd=0.0, total_mbits;
@@ -2105,7 +2106,7 @@ render_mbps (double & mbps, ClassAd *ad, Formatter & /*fmt*/)
 static bool
 render_cpu_util (double & cputime, ClassAd *ad, Formatter & /*fmt*/)
 {
-	if ( ! ad->EvalFloat(ATTR_JOB_REMOTE_USER_CPU, NULL, cputime))
+	if ( ! ad->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, cputime))
 		return false;
 
 	int ckpt_time = 0;
@@ -2125,31 +2126,31 @@ render_buffer_io_misc (std::string & misc, ClassAd *ad, Formatter & /*fmt*/)
 	misc.clear();
 
 	int univ = 0;
-	if ( ! ad->EvalInteger(ATTR_JOB_UNIVERSE,NULL,univ))
+	if ( ! ad->LookupInteger(ATTR_JOB_UNIVERSE,univ))
 		return false;
 
 	if (univ==CONDOR_UNIVERSE_STANDARD) {
 
 		double seek_count=0;
 		int buffer_size=0, block_size=0;
-		ad->EvalFloat(ATTR_FILE_SEEK_COUNT,NULL,seek_count);
-		ad->EvalInteger(ATTR_BUFFER_SIZE,NULL,buffer_size);
-		ad->EvalInteger(ATTR_BUFFER_BLOCK_SIZE,NULL,block_size);
+		ad->LookupFloat(ATTR_FILE_SEEK_COUNT,seek_count);
+		ad->LookupInteger(ATTR_BUFFER_SIZE,buffer_size);
+		ad->LookupInteger(ATTR_BUFFER_BLOCK_SIZE,block_size);
 
 		formatstr(misc, " seeks=%d, buf=%d,%d", (int)seek_count, buffer_size, block_size);
 	} else {
 
 		int ix = 0;
-		int bb = false;
-		ad->EvalBool(ATTR_TRANSFERRING_INPUT,NULL, bb);
+		bool bb = false;
+		ad->LookupBool(ATTR_TRANSFERRING_INPUT, bb);
 		ix += bb?1:0;
 
 		bb = false;
-		ad->EvalBool(ATTR_TRANSFERRING_OUTPUT,NULL,bb);
+		ad->LookupBool(ATTR_TRANSFERRING_OUTPUT,bb);
 		ix += bb?2:0;
 
 		bb = false;
-		ad->EvalBool(ATTR_TRANSFER_QUEUED,NULL,bb);
+		ad->LookupBool(ATTR_TRANSFER_QUEUED,bb);
 		ix += bb?4:0;
 
 		if (ix) {
@@ -2423,7 +2424,7 @@ render_gridResource(std::string & result, ClassAd * ad, Formatter & /*fmt*/ )
 	const bool fshow_host_port = false;
 	const size_t width = 1+6+1+8+1+18+1;
 
-	if ( ! ad->EvalString(ATTR_GRID_RESOURCE, NULL, str))
+	if ( ! ad->LookupString(ATTR_GRID_RESOURCE, str))
 		return false;
 
 	// GridResource is a string with the format 
@@ -2485,7 +2486,7 @@ render_gridJobId(std::string & jid, ClassAd *ad, Formatter & /*fmt*/ )
 	std::string str;
 	std::string host;
 
-	if ( ! ad->EvalString(ATTR_GRID_JOB_ID, NULL, str))
+	if ( ! ad->LookupString(ATTR_GRID_JOB_ID, str))
 		return false;
 
 	std::string grid_type = "globus";
@@ -2982,6 +2983,7 @@ union _jobid {
 };
 
 static union _jobid sequence_id = { 0, INT_MAX };
+static bool assume_cluster_ad_if_no_proc_id = false; // set to true when we expect to get clusterad ads that don't have a ProcId attribute
 
 // callback function for processing a job from the Q query that just adds the job into a IdToClassaAdMap.
 static bool AddJobToClassAdCollection(void * pv, ClassAd* ad) {
@@ -3010,7 +3012,9 @@ static bool AddJobToClassAdCollection(void * pv, ClassAd* ad) {
 		ad->LookupInteger(attr_id, jobid.id);
 	} else {
 		ad->LookupInteger( ATTR_CLUSTER_ID, jobid.cluster );
-		if ( ! ad->LookupInteger( ATTR_PROC_ID, jobid.proc )) { jobid.proc = -1; }
+		if ( ! ad->LookupInteger( ATTR_PROC_ID, jobid.proc ) && assume_cluster_ad_if_no_proc_id) {
+			jobid.proc = -1;
+		}
 	}
 
 	auto pp = pmap->insert(std::pair<long long, UniqueClassAdPtr>(jobid.id,UniqueClassAdPtr()));
@@ -4214,6 +4218,15 @@ show_schedd_queue(const char* scheddAddress, const char* scheddName, const char*
 	buffer_line_processor pfnProcess = NULL;
 	void *                pvProcess = NULL;
 	if (better_analyze || dash_unmatchable || (dash_long && ! g_stream_results)) {
+		if (dash_factory) {
+			// if we will be fetching clusterads, they will not have a ProcId attribute
+			// so we should treat that a ProcId == -1. 
+			// If NOT fetching factory ads, then we should use the sequence number as the sort key
+			// when the ProdId is missing. This means that -factory -job will potentially generate
+			// errors when the files being read have no ProcId attribute.
+			// we call that user error, not a bug.
+			assume_cluster_ad_if_no_proc_id = app.attrs.isEmpty() || app.attrs.contains_anycase(ATTR_PROC_ID);
+		}
 		pfnProcess = AddJobToClassAdCollection;
 		pvProcess = &ads;
 	} else if (g_stream_results) {
@@ -4929,7 +4942,7 @@ static void init_standard_summary_mask(ClassAd * summary_ad)
 	PrintMaskMakeSettings dummySettings;
 	std::vector<GroupByKeyInfo> dummyGrpBy;
 	MyString sumyformat(standard_summary2);
-	MyString myname;
+	std::string myname;
 	if (summary_ad->LookupString("MyName", myname)) { 
 		sumyformat = standard_summary3;
 		sumyformat.replaceString("$(ME)", myname.c_str());

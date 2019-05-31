@@ -235,9 +235,17 @@ static size_t compute_pid_hash(const pid_t &key)
 
 // DaemonCore constructor.
 
+#ifdef WIN32
+// when this is set to true, the pidWatcherThreads will quit without touching any DaemonCore data structures
+// used in the DaemonCore destructor to insure we don't crash on the way out the door even if a child
+// races us to the exit.
+bool abort_pid_watcher_threads = false;
+#endif
+
 DaemonCore::DaemonCore(int ComSize,int SigSize,
 				int SocSize,int ReapSize,int PipeSize)
-	: comTable(32),
+	: m_create_family_session(true),
+	comTable(32),
 	sigTable(10),
 	reapTable(4),
 	t(TimerManager::GetTimerManager()),
@@ -263,6 +271,7 @@ DaemonCore::DaemonCore(int ComSize,int SigSize,
 	pidTable = new PidHashTable(compute_pid_hash);
 	ppid = 0;
 #ifdef WIN32
+	abort_pid_watcher_threads = false;
 	// init the mutex
 	#pragma warning(suppress: 28125) // should InitCritSec inside a try/except block..
 	InitializeCriticalSection(&Big_fat_mutex);
@@ -292,7 +301,7 @@ DaemonCore::DaemonCore(int ComSize,int SigSize,
 
 	nCommand = 0;
 	CommandEnt blankCommandEnt;
-	memset(&blankCommandEnt, '\0', sizeof(CommandEnt));
+	blankCommandEnt.is_cpp = false;
 	comTable.fill(blankCommandEnt);
 	m_unregisteredCommand.num = 0;
 
@@ -462,6 +471,11 @@ DaemonCore::DaemonCore(int ComSize,int SigSize,
 DaemonCore::~DaemonCore()
 {
 	int		i;
+
+	#ifdef WIN32
+	// force pid watcher threads to quit without doing any more "reaping" (lest they crash)
+	abort_pid_watcher_threads = true;
+	#endif
 
 	if( m_ccb_listeners ) {
 		delete m_ccb_listeners;
@@ -687,7 +701,7 @@ int DaemonCore::FileDescriptorSafetyLimit()
 		int file_descriptor_max = Selector::fd_select_size();
 #ifdef WIN32
 		// Set the danger level at 1 less than the max (Windows doesn't put sockets into the same table as files)
-		file_descriptor_safety_limit = file_descriptor_max - 1;
+		file_descriptor_safety_limit = file_descriptor_max - 10;
 #else
 		// Set the danger level at 80% of the max
 		file_descriptor_safety_limit = file_descriptor_max - file_descriptor_max/5;
@@ -2966,6 +2980,7 @@ DaemonCore::reconfig(void) {
 
 	SecMan *secman = getSecMan();
 	secman->reconfig();
+	secman->getIpVerify()->Init();
 
 		// add a random offset to avoid pounding DNS
 	int dns_interval = param_integer("DNS_CACHE_REFRESH",
@@ -3213,7 +3228,7 @@ DaemonCore::Do_Wake_up_select()
 		async_pipe_signal = true;
 #ifdef WIN32
 		if (GetCurrentThreadId() == dcmainThreadId) {
-			dprintf (D_ALWAYS, "DaemonCore::Do_Wake_up_select called from main thread. this should never happen.");
+			dprintf (D_ALWAYS, "DaemonCore::Do_Wake_up_select called from main thread. this should never happen.\n");
 			return false;
 		}
 		fSuccess = send(async_pipe[1].get_socket(), "!", 1, 0) > 0;
@@ -3295,7 +3310,12 @@ void DaemonCore::Driver()
 
 	for(;;)
 	{
+		// handle queued pump work. these are like zero timeout one-shot timers
+		// but unlike timers, can be registered from any thread (only Windows needs the second part)
+		// We do this before the signal handlers so that pump work can be used to raise a signal
+		int num_pumpwork_fired = DoPumpWork();
 
+		// call signal handlers for any pending signals
 		// call signal handlers for any pending signals
 		sent_signal = FALSE;	// set to True inside Send_Signal()
 			for (i=0;i<nSig;i++) {
@@ -3348,10 +3368,6 @@ void DaemonCore::Driver()
         group_runtime = runtime;
 
 		// Prepare to enter main select()
-
-		// handle queued pump work. these are like zero timeout one-shot timers
-		// but unlike timers, can be registered from any thread
-		int num_pumpwork_fired = DoPumpWork();
 
 		// call Timeout() - this function does 2 things:
 		//   first, it calls any timer handlers whose time has arrived.
@@ -3511,7 +3527,7 @@ void DaemonCore::Driver()
 			// daemons that are single threaded (all of them). If you
 			// have questions ask matt.
 		if (IsDebugLevel(D_PERF_TRACE)) {
-			dprintf(D_ALWAYS, "PERF: entering select\n");
+			dprintf(D_ALWAYS, "PERF: entering select. timeout=%d\n", (int)timeout);
 		}
 
 		selector.execute();
@@ -5677,8 +5693,12 @@ pid_t CreateProcessForkit::clone_safe_getpid() {
 		// caching in libc).  Therefore, use the syscall to get
 		// the answer directly.
 
-	int retval = syscall(SYS_getpid);
-
+	pid_t retval;
+#ifdef __alpha__
+	retval = syscall(SYS_getxpid);
+#else
+	retval = syscall(SYS_getpid);
+#endif
 		// If we were fork'd with CLONE_NEWPID, we think our PID is 1.
 		// In this case, ask the parent!
 	if (retval == 1) {
@@ -5698,7 +5718,13 @@ pid_t CreateProcessForkit::clone_safe_getppid() {
 		// See above comment for clone_safe_getpid() for explanation of
 		// why we need to do this.
 	
-	int retval = syscall(SYS_getppid);
+	pid_t retval;
+#if defined(__alpha__) && defined(__GNUC__)
+	syscall(SYS_getxpid);
+	__asm__("mov $20, %0" : "=r"(retval) : :);
+#else
+	retval = syscall(SYS_getppid);
+#endif
 
 		// If ppid is 0, then either Condor is init (DEAR GOD) or we
 		// were created with CLONE_NEWPID; ask the parent!
@@ -6971,6 +6997,7 @@ int DaemonCore::Create_Process(
 		IpVerify* ipv = getSecMan()->getIpVerify();
 		MyString id = CONDOR_CHILD_FQU;
 		ipv->PunchHole(DAEMON, id);
+		ipv->PunchHole(CLIENT_PERM, id);
 
 		privateinheritbuf += " SessionKey:";
 
@@ -6982,6 +7009,19 @@ int DaemonCore::Create_Process(
 			goto wrapup;
 		}
 		ClaimIdParser claimId(session_id_c_str, session_info.Value(), session_key_c_str);
+		privateinheritbuf += claimId.claimId();
+	}
+	if(want_command_port != FALSE && !m_family_session_id.empty() && priv != PRIV_USER_FINAL && priv != PRIV_CONDOR_FINAL)
+	{
+		MyString family_session_info;
+		bool rc = getSecMan()->ExportSecSessionInfo(m_family_session_id.c_str(), family_session_info);
+		if(!rc)
+		{
+			dprintf(D_ALWAYS, "ERROR: Create_Process failed to export family security session for child daemon.\n");
+			goto wrapup;
+		}
+		ClaimIdParser claimId(m_family_session_id.c_str(), family_session_info.Value(), m_family_session_key.c_str());
+		privateinheritbuf += " FamilySessionKey:";
 		privateinheritbuf += claimId.claimId();
 	}
 #endif
@@ -7818,7 +7858,7 @@ int DaemonCore::Create_Process(
 						 "with the ProcD\n",
 						 executable );
 				Register_Timer(0,
-					(TimerHandlercpp)&DaemonCore::CheckProcInterface,
+					(TimerHandlercpp)&DaemonCore::CheckProcInterfaceFromTimer,
 					"DaemonCore::CheckProcInterface", this );
 				break;
 
@@ -8539,6 +8579,16 @@ DaemonCore::Proc_Family_Cleanup()
 	}
 }
 
+bool
+DaemonCore::Proc_Family_QuitProcd(void(*notify)(void*me, int pid, int status), void*me)
+{
+	if (m_proc_family) {
+		return m_proc_family->quit(notify, me);
+	}
+	return false;
+}
+
+
 #define REFACTOR_SOCK_INHERIT 1
 #ifdef REFACTOR_SOCK_INHERIT
 // extracts the parent address and inherited socket information from the given inherit string
@@ -8838,15 +8888,12 @@ DaemonCore::Inherit( void )
 	information around.
 	*/
 #ifndef Solaris
+	std::string family_session_info;
 	const char *privEnvName = EnvGetName( ENV_PRIVATE );
 	const char *privTmp = GetEnv( privEnvName );
 	if ( privTmp != NULL ) {
 		dprintf ( D_DAEMONCORE, "Processing %s from parent\n", privEnvName );
 	}
-	if(!privTmp)
-	{
-		return;
-		}
 
 	StringList private_list(privTmp, " ");
 	UnsetEnv( privEnvName );
@@ -8877,6 +8924,65 @@ DaemonCore::Inherit( void )
 			MyString id;
 			id.formatstr("%s", CONDOR_PARENT_FQU);
 			ipv->PunchHole(DAEMON, id);
+			ipv->PunchHole(CLIENT_PERM, id);
+		}
+		if( strncmp(ptmp,"FamilySessionKey:",17)==0 ) {
+			if ( param_boolean("SEC_USE_FAMILY_SESSION", true) ) {
+				dprintf(D_DAEMONCORE, "Inheriting family security session.\n");
+				ClaimIdParser claimid(ptmp+17);
+				m_family_session_id = claimid.secSessionId();
+				m_family_session_key = claimid.secSessionKey();
+				family_session_info = claimid.secSessionInfo();
+			} else {
+				dprintf(D_DAEMONCORE, "Ignoring inherited family security session\n");
+			}
+		}
+	}
+
+	if ( m_family_session_id.empty() ) {
+		if ( m_create_family_session && param_boolean("SEC_USE_FAMILY_SESSION", true) ) {
+			dprintf(D_DAEMONCORE, "Creating family security session.\n");
+			char* c_session_id = Condor_Crypt_Base::randomHexKey();
+			char* c_session_key = Condor_Crypt_Base::randomHexKey();
+
+			m_family_session_id = "family:";
+			m_family_session_id += c_session_id;
+			m_family_session_key = c_session_key;
+
+			free(c_session_id);
+			free(c_session_key);
+		} else {
+			dprintf(D_DAEMONCORE, "Not creating family security session\n");
+		}
+	}
+
+	if ( ! m_family_session_id.empty() ) {
+		bool rc = getSecMan()->CreateNonNegotiatedSecuritySession(
+				DAEMON,
+				m_family_session_id.c_str(),
+				m_family_session_key.c_str(),
+				family_session_info.c_str(),
+				CONDOR_FAMILY_FQU,
+				NULL,
+				0);
+
+		if(!rc) {
+			dprintf(D_ALWAYS, "ERROR: Failed to create family security session.\n");
+			m_family_session_id.clear();
+			m_family_session_key.clear();
+		} else {
+
+			KeyCacheEntry *entry = NULL;
+			rc = getSecMan()->session_cache->lookup(m_family_session_id.c_str(),entry);
+			ASSERT( rc && entry && entry->policy() );
+			entry->policy()->Assign( ATTR_SEC_REMOTE_VERSION, CondorVersion() );
+			IpVerify* ipv = getSecMan()->getIpVerify();
+			ipv->PunchHole(DAEMON, CONDOR_FAMILY_FQU);
+			ipv->PunchHole(ADVERTISE_MASTER_PERM, CONDOR_FAMILY_FQU);
+			ipv->PunchHole(ADVERTISE_SCHEDD_PERM, CONDOR_FAMILY_FQU);
+			ipv->PunchHole(ADVERTISE_STARTD_PERM, CONDOR_FAMILY_FQU);
+			ipv->PunchHole(NEGOTIATOR, CONDOR_FAMILY_FQU);
+			ipv->PunchHole(CLIENT_PERM, CONDOR_FAMILY_FQU);
 		}
 	}
 #endif
@@ -9172,6 +9278,7 @@ DaemonCore::HandleDC_SERVICEWAITPIDS(int)
 
 
 #ifdef WIN32
+
 // This function runs in a seperate thread and wathces over children
 unsigned
 pidWatcherThread( void* arg )
@@ -9190,6 +9297,8 @@ pidWatcherThread( void* arg )
 	entry = (DaemonCore::PidWatcherEntry *) arg;
 
 	for (;;) {
+
+	if (abort_pid_watcher_threads) { return FALSE; };
 
 	::EnterCriticalSection(&(entry->crit_section));
 	numentries = 0;
@@ -9301,6 +9410,7 @@ pidWatcherThread( void* arg )
 
 		// now just wait for something to happen instead of busy looping.
 		result = ::WaitForMultipleObjects(numentries + 1, hKids, FALSE, INFINITE);
+		if (abort_pid_watcher_threads) { return FALSE; };
 	}
 
 
@@ -10751,12 +10861,10 @@ DaemonCore::evalExpr( ClassAd* ad, const char* param_name,
 			free(expr);
 			return false;
 		}
-		int result = 0;
-		if (ad->EvalBool(attr_name, NULL, result) && result) {
+		if (ad->LookupBool(attr_name, value) && value) {
 			dprintf( D_ALWAYS,
 					 "The %s expression \"%s\" evaluated to TRUE: %s\n",
 					 attr_name, expr, message );
-			value = true;
 		}
 		free(expr);
 	}
@@ -10915,17 +11023,28 @@ DaemonCore::PidEntry::pipeFullWrite(int fd)
 	return 0;
 }
 
-void DaemonCore::send_invalidate_session ( const char* sinful, const char* sessid ) {
+void DaemonCore::send_invalidate_session ( const char* sinful, const char* sessid, const ClassAd* info_ad ) {
 	if ( !sinful ) {
 		dprintf (D_SECURITY, "DC_AUTHENTICATE: couldn't invalidate session %s... don't know who it is from!\n", sessid);
 		return;
+	}
+
+	std::string the_msg = sessid;
+
+	// If given a non-empty ad, add it to our message.
+	// This extra information is understood in version 8.8.0
+	// and above.
+	if ( info_ad && info_ad->size() > 0 ) {
+		the_msg += "\n";
+		classad::ClassAdUnParser unparser;
+		unparser.Unparse(the_msg, info_ad);
 	}
 
 	classy_counted_ptr<Daemon> daemon = new Daemon(DT_ANY,sinful,NULL);
 
 	classy_counted_ptr<DCStringMsg> msg = new DCStringMsg(
 		DC_INVALIDATE_KEY,
-		sessid );
+		the_msg.c_str() );
 
 	msg->setSuccessDebugLevel(D_SECURITY);
 	msg->setRawProtocol(true);

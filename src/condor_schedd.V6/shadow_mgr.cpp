@@ -52,7 +52,7 @@
 
 Shadow::Shadow( const char* path_arg, ClassAd* ad )
 {
-	s_path = strnewp( path_arg );
+	s_path = strdup( path_arg );
 	s_ad = ad;
 	s_is_dc = false;
 	m_version_info = NULL;
@@ -72,7 +72,7 @@ Shadow::Shadow( const char* path_arg, ClassAd* ad )
 Shadow::Shadow( const Shadow& s )
 {
 	if( s.s_path ) {
-		s_path = strnewp( s.s_path );
+		s_path = strdup( s.s_path );
 	} else {
 		s_path = NULL;
 	}
@@ -98,7 +98,7 @@ Shadow::Shadow( const Shadow& s )
 Shadow::~Shadow()
 {
 	if( s_path ) {
-		delete [] s_path;
+		free(s_path);
 	}
 	if( s_ad ) {
 		delete( s_ad );
@@ -112,14 +112,14 @@ Shadow::~Shadow()
 bool
 Shadow::provides( const char* ability )
 {
-	int has_it = 0;
+	bool has_it = false;
 	if( ! s_ad ) {
 		return false;
 	}
-	if( ! s_ad->EvalBool(ability, NULL, has_it) ) { 
-		has_it = 0;
+	if( ! s_ad->LookupBool(ability, has_it) ) {
+		has_it = false;
 	}
-	return (bool)has_it;
+	return has_it;
 }
 
 

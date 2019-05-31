@@ -217,9 +217,7 @@ a \DCPerm{READ} or both a
    Authorization at this access level should only be given to
    the user account under which the HTCondor daemons run.
    The \DCPerm{DAEMON} level of access implies both
-   \DCPerm{READ} and \DCPerm{WRITE} access.  Any setting for this access
-   level that is not defined will default to the corresponding setting
-   in the \DCPerm{WRITE} access level.
+   \DCPerm{READ} and \DCPerm{WRITE} access.
 
 \item[\DCPerm{NEGOTIATOR}] \label{sec-level-negotiator} This 
    access level is used specifically to verify that commands are
@@ -1073,16 +1071,6 @@ ALLOW_ADMINISTRATOR = condor-admin@cs.wisc.edu/*.cs.wisc.edu
 # condor daemon certificate(s) trusted by condor tools and daemons
 # when connecting to other condor daemons
 GSI_DAEMON_NAME = /C=US/O=Condor/O=UW/OU=CS/CN=condor@cs.wisc.edu
-
-# clear out any host-based authorizations
-# (unnecessary if you leave authentication REQUIRED,
-#  but useful if you make it optional and want to
-#  allow some unauthenticated operations, such as
-#  ALLOW_READ = */*.cs.wisc.edu)
-HOSTALLOW_READ =
-HOSTALLOW_WRITE =
-HOSTALLOW_NEGOTIATOR =
-HOSTALLOW_ADMINISTRATOR =
 \end{verbatim}
 \normalsize
 
@@ -2044,8 +2032,8 @@ configuration macros.
 where there is a conflict.
 This implies that if a specific user is both denied and granted authorization,
 the conflict is resolved by denying access.
-\item{2. }If macros are omitted, the default behavior is to grant
-authorization for every user.
+\item{2. }If macros are omitted, the default behavior is to deny
+authorization for all users.
 \end{description}
 
 In addition, there are some hard-coded authorization rules that
@@ -2097,14 +2085,6 @@ ALLOW_CONFIG          = condor-admin@cs.wisc.edu/*.cs.wisc.edu
 ALLOW_NEGOTIATOR      = condor@cs.wisc.edu/condor.cs.wisc.edu, \
                         condor@cs.wisc.edu/condor2.cs.wisc.edu
 ALLOW_DAEMON          = condor@cs.wisc.edu/*.cs.wisc.edu
-
-# Clear out any old-style HOSTALLOW settings:
-HOSTALLOW_READ =
-HOSTALLOW_WRITE =
-HOSTALLOW_DAEMON =
-HOSTALLOW_NEGOTIATOR =
-HOSTALLOW_ADMINISTRATOR =
-HOSTALLOW_OWNER =
 \end{verbatim}
 \normalsize
 
@@ -2595,7 +2575,7 @@ ALLOW_OWNER = $(FULL_HOSTNAME), $(ALLOW_ADMINISTRATOR)
 view the pool.  Only NCSA machines and the machine raven.cs.wisc.edu can join
 the pool.
 Note: the machine raven.cs.wisc.edu has the read access it needs through the
-wild card setting in \MacroNI{ALLOW\_READ}).
+wild card setting in \MacroNI{ALLOW\_READ}.
 This example also shows
 how to use the continuation character, \verb@\@, to continue a long list of 
 machines onto multiple lines, making it more readable.

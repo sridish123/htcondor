@@ -1239,9 +1239,15 @@ class DaemonCore : public Service
 
 	/** Used to explicitly cleanup our ProcFamilyInterface object
 	    (used by the Master before it restarts, since in that
-	    case the DaemonCore destructor won't be called)
+	    case the DaemonCore destructor won't be called. also used by a glexec'd starter before it exits)
 	*/
 	void Proc_Family_Cleanup();
+
+	/** Used to explicitly stop a condor_procd child process if there is one
+		(used by the Master before it restarts or exits so that it can be sure to reap the child process)
+		returns true if the procd is stopping and the notify callback will be called when it is reaped
+	*/
+	bool Proc_Family_QuitProcd(void(*notify)(void*me,int pid,int status), void*me);
 
     /** @name Data pointer functions.
         These functions deal with
@@ -1620,6 +1626,10 @@ class DaemonCore : public Service
 		counted_ptr<SafeSock> m_ssock;	// udp command socket
 	};
 	typedef std::vector<SockPair> SockPairVec;
+
+	bool m_create_family_session;
+	std::string m_family_session_id;
+	std::string m_family_session_key;
 
   private:
 	SockPairVec dc_socks;
@@ -2000,6 +2010,7 @@ class DaemonCore : public Service
 	// Method to check on and possibly recover from a bad connection
 	// to the procd. Suitable to be registered as a one-shot timer.
 	int CheckProcInterface();
+	void CheckProcInterfaceFromTimer() { (void)CheckProcInterface(); }
 
 	// misc helper functions
 	void CheckPrivState( void );
@@ -2074,7 +2085,13 @@ class DaemonCore : public Service
 		*/
 	void initCollectorList(void);
 
-	void send_invalidate_session ( const char* sinful, const char* sessid );
+	// Inform a client that they attempted to resume a session that
+	// we don't have.
+	// If the client is version 8.8.0 or later, extended information
+	// can be provided in the info_ad. Older clients will assume the
+	// ad is part of the session id to invalidate.
+	void send_invalidate_session ( const char* sinful, const char* sessid,
+	                               const ClassAd* info_ad = NULL );
 
 	bool m_wants_restart;
 	bool m_in_daemon_shutdown;

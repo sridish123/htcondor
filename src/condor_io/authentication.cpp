@@ -61,6 +61,7 @@ char const *EXECUTE_SIDE_MATCHSESSION_FQU = "execute-side@matchsession";
 char const *SUBMIT_SIDE_MATCHSESSION_FQU = "submit-side@matchsession";
 char const *CONDOR_CHILD_FQU = "condor@child";
 char const *CONDOR_PARENT_FQU = "condor@parent";
+char const *CONDOR_FAMILY_FQU = "condor@family";
 
 Authentication::Authentication( ReliSock *sock )
 	: m_auth(NULL),
@@ -230,9 +231,15 @@ int Authentication::authenticate_continue( CondorError* errstack, bool non_block
 
 #ifdef HAVE_EXT_OPENSSL
 			case CAUTH_SSL:
-				m_auth = new Condor_Auth_SSL(mySock);
+				m_auth = new Condor_Auth_SSL(mySock, 0, false);
 				m_method_name = "SSL";
 				break;
+#ifdef HAVE_EXT_SCITOKENS
+			case CAUTH_SCITOKENS:
+				m_auth = new Condor_Auth_SSL(mySock, 0, true);
+				m_method_name = "SCITOKENS";
+				break;
+#endif
 #endif
 
 #if defined(HAVE_EXT_KRB5) 
@@ -242,11 +249,37 @@ int Authentication::authenticate_continue( CondorError* errstack, bool non_block
 				break;
 #endif
 
-#ifdef HAVE_EXT_OPENSSL  // 3DES is the prequisite for passwd auth
+#ifdef HAVE_EXT_OPENSSL  // 3DES is the prerequisite for passwd auth
 			case CAUTH_PASSWORD:
-				m_auth = new Condor_Auth_Passwd(mySock);
+				m_auth = new Condor_Auth_Passwd(mySock, 1);
 				m_method_name = "PASSWORD";
 				break;
+			case CAUTH_TOKEN: {
+					// Make a copy of the pointer as a Condor_Auth_Passwd to avoid
+					// repetitive static_cast<> below.
+				auto tmp_auth = new Condor_Auth_Passwd(mySock, 2);
+				m_auth = tmp_auth;
+				const classad::ClassAd *policy = mySock->getPolicyAd();
+				if (policy) {
+					std::string issuer;
+					if (policy->EvaluateAttrString(ATTR_SEC_TRUST_DOMAIN, issuer)) {
+						tmp_auth->set_remote_issuer(issuer);
+					}
+					std::string key_str;
+					if (policy->EvaluateAttrString(ATTR_SEC_ISSUER_KEYS, key_str)) {
+						StringList key_list(key_str.c_str());
+						const char *key;
+						key_list.rewind();
+						std::vector<std::string> keys;
+						while ( (key = key_list.next()) ) {
+							keys.push_back(key);
+						}
+						tmp_auth->set_remote_keys(keys);
+					}
+				}
+                                m_method_name = "TOKEN";
+                                break;
+			}
 #endif
  
 #if defined(WIN32)
@@ -287,6 +320,16 @@ int Authentication::authenticate_continue( CondorError* errstack, bool non_block
 				dprintf(D_SECURITY|D_FULLDEBUG,"AUTHENTICATE: no available authentication methods succeeded!\n");
 				errstack->push("AUTHENTICATE", AUTHENTICATE_ERR_OUT_OF_METHODS,
 						"Failed to authenticate with any method");
+
+					// Now that TOKEN is enabled by default, we should suggest
+					// that a TOKEN request is always tried.  This is because
+					// the TOKEN auth method is removed from the list of default
+					// methods if we don't have a client side token (precisely when
+					// we want this to be set to true!).
+					// In the future, we can always reproduce the entire chain of
+					// logic to determine if TOKEN auth is tried.
+					m_should_try_token_request |= mySock->isClient();
+
 				return 0;
 
 			default:
@@ -591,7 +634,7 @@ void Authentication::map_authentication_name_to_canonical_name(int authenticatio
 					dprintf (D_SECURITY, "Globus-based mapping failed; will use gsi@unmapped.\n");
 				}
 #else
-				dprintf(D_ALWAYS, "ZKM: GSI not compiled, but was used?!!");
+				dprintf(D_ALWAYS, "ZKM: GSI not compiled, but was used?!!\n");
 #endif
 				return;
 			} else {
@@ -622,7 +665,7 @@ void Authentication::map_authentication_name_to_canonical_name(int authenticatio
 		int retval = ((Condor_Auth_X509*)authenticator_)->nameGssToLocal(authentication_name);
 		dprintf(D_SECURITY, "nameGssToLocal returned %s\n", retval ? "success" : "failure");
 #else
-		dprintf(D_ALWAYS, "ZKM: GSI not compiled, so can't call nameGssToLocal!!");
+		dprintf(D_ALWAYS, "ZKM: GSI not compiled, so can't call nameGssToLocal!!\n");
 #endif
 	} else {
 		dprintf (D_FULLDEBUG, "ZKM: global_map_file not present!\n");
@@ -1034,6 +1077,15 @@ int Authentication::handshake(MyString my_methods, bool non_blocking) {
 			dprintf (D_SECURITY, "HANDSHAKE: excluding GSI: %s\n", x509_error_string());
 			method_bitmask &= ~CAUTH_GSI;
 		}
+#ifdef HAVE_EXT_SCITOKENS
+		if ( (method_bitmask & CAUTH_SCITOKENS) && Condor_Auth_SSL::Initialize() == false )
+#else
+		if (method_bitmask & CAUTH_SCITOKENS)
+#endif
+		{
+			dprintf (D_SECURITY, "HANDSHAKE: excluding SciTokens: %s\n", "Initialization failed");
+			method_bitmask &= ~CAUTH_SCITOKENS;
+		}
 #if defined(HAVE_EXT_MUNGE)
 		if ( (method_bitmask & CAUTH_MUNGE) && Condor_Auth_MUNGE::Initialize() == false )
 #else
@@ -1103,6 +1155,15 @@ Authentication::handshake_continue(MyString my_methods, bool non_blocking)
 		dprintf (D_SECURITY, "HANDSHAKE: excluding GSI: %s\n", x509_error_string());
 		client_methods &= ~CAUTH_GSI;
 		shouldUseMethod = selectAuthenticationType( my_methods, client_methods );
+	}
+#ifdef HAVE_EXT_SCITOKENS
+	if ( (shouldUseMethod & CAUTH_SCITOKENS) && Condor_Auth_SSL::Initialize() == false )
+#else
+	if (shouldUseMethod & CAUTH_SCITOKENS)
+#endif
+	{
+		dprintf (D_SECURITY, "HANDSHAKE: excluding SciTokens: %s\n", "Initialization failed");
+		shouldUseMethod &= ~CAUTH_SCITOKENS;
 	}
 #if defined(HAVE_EXT_MUNGE)
 	if ( (shouldUseMethod & CAUTH_MUNGE) && Condor_Auth_MUNGE::Initialize() == false )

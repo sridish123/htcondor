@@ -1251,8 +1251,7 @@ void main_init (int argc, char ** const argv) {
 			dagman.CleanUp();
 			
 				// Note: debug_error calls DC_Exit().
-        	debug_error( 1, DEBUG_QUIET, "Failed to parse %s\n",
-					 	dagFile );
+        	debug_error( 1, DEBUG_QUIET, "Failed to parse dag file\n");
     	}
 	}
 
@@ -1790,6 +1789,11 @@ main_pre_dc_init( int, char*[] )
 	}
 }
 
+void
+main_pre_command_sock_init()
+{
+	daemonCore->m_create_family_session = false;
+}
 
 int
 main( int argc, char **argv )
@@ -1801,6 +1805,7 @@ main( int argc, char **argv )
 	dc_main_shutdown_fast = main_shutdown_fast;
 	dc_main_shutdown_graceful = main_shutdown_graceful;
 	dc_main_pre_dc_init = main_pre_dc_init;
+	dc_main_pre_command_sock_init = main_pre_command_sock_init;
 	return dc_main( argc, argv );
 }
 

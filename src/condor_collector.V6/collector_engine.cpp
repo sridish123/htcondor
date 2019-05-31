@@ -445,8 +445,8 @@ bool CollectorEngine::ValidateClassAd(int command,ClassAd *clientAd,Sock *sock)
 	}
 
 	if(ipattr) {
-		MyString my_address;
-		MyString subsys_ipaddr;
+		std::string my_address;
+		std::string subsys_ipaddr;
 
 			// Some ClassAds contain two copies of the IP address,
 			// one named "MyAddress" and one named "<SUBSYS>IpAddr".
@@ -463,8 +463,8 @@ bool CollectorEngine::ValidateClassAd(int command,ClassAd *clientAd,Sock *sock)
 				        " IP addresses: %s=%s, %s=%s\n",
 				        COLLECTOR_REQUIREMENTS,
 				        (sock ? sock->get_sinful_peer() : "(NULL)"),
-				        ipattr, subsys_ipaddr.Value(),
-				        ATTR_MY_ADDRESS, my_address.Value());
+				        ipattr, subsys_ipaddr.c_str(),
+				        ATTR_MY_ADDRESS, my_address.c_str());
 				return false;
 			}
 		}
@@ -472,10 +472,10 @@ bool CollectorEngine::ValidateClassAd(int command,ClassAd *clientAd,Sock *sock)
 
 
 		// Now verify COLLECTOR_REQUIREMENTS
-	int collector_req_result = 0;
-	if( !m_collector_requirements->EvalBool(COLLECTOR_REQUIREMENTS,clientAd,collector_req_result) ) {
+	bool collector_req_result = false;
+	if( !EvalBool(COLLECTOR_REQUIREMENTS,m_collector_requirements,clientAd,collector_req_result) ) {
 		dprintf(D_ALWAYS,"WARNING: %s did not evaluate to a boolean result.\n",COLLECTOR_REQUIREMENTS);
-		collector_req_result = 0;
+		collector_req_result = false;
 	}
 	if( !collector_req_result ) {
 		static int details_shown=0;
@@ -575,8 +575,8 @@ collect (int command,ClassAd *clientAd,const condor_sockaddr& from,int &insert,S
 				// Negotiator matches up private ad with public ad by
 				// using the following.
 			if( retVal ) {
-				pvtAd->CopyAttribute( ATTR_MY_ADDRESS, retVal );
-				pvtAd->CopyAttribute( ATTR_NAME, retVal );
+				CopyAttribute( ATTR_MY_ADDRESS, *pvtAd, *retVal );
+				CopyAttribute( ATTR_NAME, *pvtAd, *retVal );
 			}
 
 			CollectorEngine_rucc_getPvtAd_runtime.Add(rt.tick(rt_last));

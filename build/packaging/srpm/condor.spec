@@ -4,7 +4,6 @@
 # % define fedora   16
 # % define osg      0
 # % define uw_build 1
-# % define std_univ 1
 
 %define plumage 0
 %define systemd 0
@@ -26,18 +25,6 @@
 %endif
 %endif
 
-# enable std universe by default 
-%if %undefined std_univ
-%define std_univ 1
-%endif
-
-%ifarch %{ix86}
-%if 0%{?rhel} >= 6
-# std universe is not ported to 32bit rhel6
-%define std_univ 0
-%endif
-%endif
-
 %if %uw_build
 %define debug 1
 %define verbose 1
@@ -45,7 +32,6 @@
 
 # define these to 1 if you want to include externals in source rpm
 %define bundle_uw_externals 0
-%define bundle_std_univ_externals 0
 
 # Things not turned on, or don't have Fedora packages yet
 %define qmf 0
@@ -53,8 +39,6 @@
 %if 0%{?fedora}
 %define blahp 1
 %define cream 0
-# a handful of std universe files don't seem to get built in fedora...
-%define std_univ 0
 %else
 %define blahp 1
 %define cream 1
@@ -63,9 +47,6 @@
 %if 0%{?hcc}
 %define blahp 0
 %define cream 0
-%if 0%{?rhel} >= 6
-%define std_univ 0
-%endif
 %endif
 
 # Don't bother building CREAM for 32-bit RHEL7
@@ -73,10 +54,6 @@
 %if 0%{?rhel} >= 7
 %define cream 0
 %endif
-%endif
-
-%if 0%{?osg} && 0%{?rhel} == 7
-%define std_univ 0
 %endif
 
 %define glexec 1
@@ -191,13 +168,6 @@ Source117: unicoregahp-1.2.0.tar.gz
 Source118: voms-2.0.6.tar.gz
 %endif
 
-%if %bundle_std_univ_externals
-Source120: glibc-2.12-2-x86_64.tar.gz
-Source121: glibc-2.5-20061008T1257-p0.tar.gz
-Source122: glibc-2.5-20061008T1257-x86_64-p0.tar.gz
-Source123: zlib-1.2.3.tar.gz
-%endif
-
 
 #% if 0%osg
 Patch8: osg_sysconfig_in_init_script.patch
@@ -225,7 +195,7 @@ BuildRequires: boost-devel
 BuildRequires: redhat-rpm-config
 BuildRequires: sqlite-devel
 
-%if %uw_build || %std_univ
+%if %uw_build
 BuildRequires: cmake >= 2.8
 BuildRequires: gcc-c++
 %if 0%{?rhel} >= 6
@@ -342,6 +312,8 @@ Requires: blahp >= 1.16.1
 Requires: %name-external-libs%{?_isa} = %version-%release
 %endif
 
+# Box file transfer plugin requires python-requests
+Requires: python-requests
 
 Requires: initscripts
 
@@ -577,24 +549,15 @@ BOSCO provides an overlay system so the remote clusters appear to be a HTCondor
 cluster.  This allows the user to run their workflows using HTCondor tools across
 multiple clusters.
 
-%if %std_univ
-%package std-universe
-Summary: Enable standard universe jobs for HTCondor
+%package -n minicondor
+Summary: Configuration for a single-node HTCondor
 Group: Applications/System
 Requires: %name = %version-%release
+Requires: python2-condor = %version-%release
 
-%description std-universe
-Includes all the files necessary to support running standard universe jobs.
-%endif
-
-%package single-node
-Summary: Conguration for a single-node (personal) HTCondor
-Group: Applications/System
-Requires: %name = %version-%release
-
-%description single-node
+%description -n minicondor
 This example configuration is good for trying out HTCondor for the first time.
-It only configures the IPv4 loopback address, turns on basic security and
+It only configures the IPv4 loopback address, turns on basic security, and
 shortens many timers to be more responsive.
 
 %if %uw_build
@@ -616,6 +579,7 @@ Summary: External packages built into HTCondor
 Group: Applications/System
 Requires: %name = %version-%release
 Requires: %name-external-libs%{?_isa} = %version-%release
+Provides: blahp
 
 %description externals
 Includes the external packages built when UW_BUILD is enabled
@@ -679,9 +643,6 @@ Requires: %name-cream-gahp = %version-%release
 %endif
 Requires: python2-condor = %version-%release
 Requires: %name-bosco = %version-%release
-%if %std_univ
-Requires: %name-std-universe = %version-%release
-%endif
 %if %uw_build
 Requires: %name-externals = %version-%release
 Requires: %name-external-libs = %version-%release
@@ -732,10 +693,7 @@ cmake \
        -DPACKAGEID:STRING=%{version}-%{condor_release} \
        -DUW_BUILD:BOOL=TRUE \
        -DCONDOR_RPMBUILD:BOOL=TRUE \
-%if ! %std_univ
-       -DCLIPPED:BOOL=TRUE \
-%endif
-%if %bundle_uw_externals || %bundle_std_univ_externals
+%if %bundle_uw_externals
        -DEXTERNALS_SOURCE_URL:STRING="$RPM_SOURCE_DIR" \
 %endif
        -D_VERBOSE:BOOL=TRUE \
@@ -766,10 +724,7 @@ cmake \
 %else
 
 %cmake -DBUILD_TESTING:BOOL=FALSE \
-%if %std_univ
-       -DCLIPPED:BOOL=FALSE \
-%endif
-%if %bundle_uw_externals || %bundle_std_univ_externals
+%if %bundle_uw_externals
        -DEXTERNALS_SOURCE_URL:STRING="$RPM_SOURCE_DIR" \
 %endif
 %if 0%{?fedora}
@@ -827,7 +782,7 @@ cmake \
 # Patch condor_config.generic for 64-bit rpm
 (cd src/condor_examples; patch < condor_config.generic.rpm.patch)
 
-%if %uw_build || %std_univ
+%if %uw_build
 # build externals first to avoid dependency issues
 make %{?_smp_mflags} externals
 %endif
@@ -895,7 +850,7 @@ cp %{SOURCE5} %{buildroot}/%{_sysconfdir}/condor/config.d/20dedicated_scheduler_
 populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/00-small-shadow
 %endif
 
-populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/00-single-node
+populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/00-minicondor
 populate %_sysconfdir/condor/config.d %{buildroot}/etc/examples/50ec2.config
 
 %if %qmf
@@ -978,10 +933,6 @@ cp %{SOURCE8} %{buildroot}%{_datadir}/condor/
 %endif
 
 # Install perl modules
-install -m 0755 src/condor_scripts/Condor.pm %{buildroot}%{_datadir}/condor/
-install -m 0755 src/condor_scripts/CondorPersonal.pm %{buildroot}%{_datadir}/condor/
-install -m 0755 src/condor_scripts/CondorTest.pm %{buildroot}%{_datadir}/condor/
-install -m 0755 src/condor_scripts/CondorUtils.pm %{buildroot}%{_datadir}/condor/
 
 # Install python-binding libs
 mkdir -p %{buildroot}%{python_sitearch}
@@ -1022,6 +973,7 @@ rm -rf %{buildroot}%{_usrsrc}/drmaa/drmaa-*
 rm -rf %{buildroot}/usr/DOC
 rm -rf %{buildroot}/usr/INSTALL
 rm -rf %{buildroot}/usr/LICENSE-2.0.txt
+rm -rf %{buildroot}/usr/NOTICE.txt
 rm -rf %{buildroot}/usr/README
 rm -rf %{buildroot}/usr/examples/
 rm -rf %{buildroot}%{_includedir}/MyString.h
@@ -1053,10 +1005,6 @@ rm -rf %{buildroot}%{_datadir}/condor/libcondorapi.a
 rm -rf %{buildroot}%{_mandir}/man1/cleanup_release.1*
 rm -rf %{buildroot}%{_mandir}/man1/condor_cold_start.1*
 rm -rf %{buildroot}%{_mandir}/man1/condor_cold_stop.1*
-%if ! %std_univ
-rm -rf %{buildroot}%{_mandir}/man1/condor_checkpoint.1*
-rm -rf %{buildroot}%{_mandir}/man1/condor_compile.1*
-%endif
 rm -rf %{buildroot}%{_mandir}/man1/condor_config_bind.1*
 rm -rf %{buildroot}%{_mandir}/man1/condor_configure.1*
 rm -rf %{buildroot}%{_mandir}/man1/condor_load_history.1*
@@ -1089,26 +1037,6 @@ install -p -m 0644 %{SOURCE6} %{buildroot}%{_sysconfdir}/condor/config.d/10-batc
 install -p -m 0644 %{SOURCE7} %{buildroot}%{_sysconfdir}/condor/config.d/00-restart_peaceful.config
 %endif
 
-%if %std_univ
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/condor_rt0.o
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcomp_libgcc.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcomp_libgcc_eh.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcomp_libstdc++.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondor_c.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondor_nss_dns.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondor_nss_files.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondor_resolv.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondor_z.a
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondorsyscall.a
-%ifarch %{ix86}
-%if 0%{?rhel} == 5
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/libcondorzsyscall.a
-%endif
-%endif
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/ld
-populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/real-ld
-%endif
-
 %if %uw_build
 populate %{_libdir}/condor %{buildroot}/%{_libdir}/libdrmaa.so
 populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/condor/libglobus*.so*
@@ -1134,7 +1062,7 @@ rm -rf %{buildroot}
 %files
 %exclude %_sbindir/openstack_gahp
 %defattr(-,root,root,-)
-%doc LICENSE-2.0.txt examples
+%doc LICENSE-2.0.txt NOTICE.txt examples
 %dir %_sysconfdir/condor/
 %config(noreplace) %_sysconfdir/condor/condor_config
 %if %systemd
@@ -1156,11 +1084,7 @@ rm -rf %{buildroot}
 %_datadir/condor/Chirp.jar
 %_datadir/condor/CondorJavaInfo.class
 %_datadir/condor/CondorJavaWrapper.class
-%_datadir/condor/Condor.pm
 %_datadir/condor/scimark2lib.jar
-%_datadir/condor/CondorPersonal.pm
-%_datadir/condor/CondorTest.pm
-%_datadir/condor/CondorUtils.pm
 %if 0%{?rhel} >= 7
 %_datadir/condor/htcondor.pp
 %endif
@@ -1218,8 +1142,11 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_kflops
 %_libexecdir/condor/condor_mips
 %_libexecdir/condor/data_plugin
+%_libexecdir/condor/box_plugin.py
+%_libexecdir/condor/box_plugin.pyc
+%_libexecdir/condor/box_plugin.pyo
 %_libexecdir/condor/curl_plugin
-%_libexecdir/condor/multifile_curl_plugin
+%_libexecdir/condor/legacy_curl_plugin
 %_libexecdir/condor/condor_shared_port
 %_libexecdir/condor/condor_glexec_wrapper
 %_libexecdir/condor/glexec_starter_setup.sh
@@ -1334,6 +1261,12 @@ rm -rf %{buildroot}
 %_bindir/condor_continue
 %_bindir/condor_suspend
 %_bindir/condor_test_match
+%_bindir/condor_token_create
+%_bindir/condor_token_fetch
+%_bindir/condor_token_request
+%_bindir/condor_token_request_approve
+%_bindir/condor_token_request_list
+%_bindir/condor_token_list
 %_bindir/condor_drain
 %_bindir/condor_ping
 %_bindir/condor_tail
@@ -1570,37 +1503,8 @@ rm -rf %{buildroot}
 %_mandir/man1/bosco_stop.1.gz
 %_mandir/man1/bosco_uninstall.1.gz
 
-%if %std_univ
-%files std-universe
-%_bindir/condor_checkpoint
-%_bindir/condor_compile   
-%_sbindir/condor_ckpt_server
-%_sbindir/condor_shadow.std
-%_sbindir/condor_starter.std
-%_mandir/man1/condor_compile.1.gz
-%_mandir/man1/condor_checkpoint.1.gz
-%_libdir/condor/ld
-%_libdir/condor/real-ld
-%_libdir/condor/condor_rt0.o
-%_libdir/condor/libcomp_libgcc.a
-%_libdir/condor/libcomp_libgcc_eh.a
-%_libdir/condor/libcomp_libstdc++.a
-%_libdir/condor/libcondor_c.a
-%_libdir/condor/libcondor_nss_dns.a
-%_libdir/condor/libcondor_nss_files.a
-%_libdir/condor/libcondor_resolv.a
-%_libdir/condor/libcondor_z.a
-%_libdir/condor/libcondorsyscall.a
-%_libexecdir/condor/condor_ckpt_probe
-%ifarch %{ix86}
-%if 0%{?rhel} == 5
-%_libdir/condor/libcondorzsyscall.a
-%endif
-%endif
-%endif
-
-%files single-node
-%config(noreplace) %_sysconfdir/condor/config.d/00-single-node
+%files -n minicondor
+%config(noreplace) %_sysconfdir/condor/config.d/00-minicondor
 
 
 %if %uw_build
@@ -1789,6 +1693,56 @@ fi
 %endif
 
 %changelog
+* Wed May 22 2019 Tim Theisen <tim@cs.wisc.edu> - 8.8.3-1
+- Fixed a bug where jobs were killed instead of peacefully shutting down
+- Fixed a bug where a restarted schedd wouldn't connect to its running jobs
+- Improved file transfer performance when sending multiple files
+- Fix a bug that prevented interactive submit from working with Singularity
+- Orphaned Docker containers are now cleaned up on execute nodes
+- Restored a deprecated Python interface that is used to read the event log
+
+* Wed Apr 17 2019 Tim Theisen <tim@cs.wisc.edu> - 8.9.1-1
+- An efficient curl plugin that supports uploads and authentication tokens
+- HTCondor automatically supports GPU jobs in Docker and Singularity
+- File transfer times are now recorded in the user job log and the job ad
+
+* Thu Apr 11 2019 Tim Theisen <tim@cs.wisc.edu> - 8.8.2-1
+- Fixed problems with condor_ssh_to_job and Singularity jobs
+- Fixed a problem that could cause condor_annex to crash
+- Fixed a problem where the job queue would very rarely be corrupted
+- condor_userprio can report concurrency limits again
+- Fixed the GPU discovery and monitoring code to map GPUs in the same way
+- Made the CHIRP_DELAYED_UPDATE_PREFIX configuration knob work again
+- Fixed restarting HTCondor from the Service Control Manager on Windows
+- Fixed a problem where local universe jobs could not use condor_submit
+- Restored a deprecated Python interface that is used to read the event log
+- Fixed a problem where condor_shadow reuse could confuse DAGMan
+
+* Thu Feb 28 2019 Tim Theisen <tim@cs.wisc.edu> - 8.9.0-1
+- Absent any configuration, HTCondor denies authorization to all users
+- All HTCondor daemons under a condor_master share a security session
+- Scheduler Universe jobs are prioritized by job priority
+
+* Tue Feb 19 2019 Tim Theisen <tim@cs.wisc.edu> - 8.8.1-1
+- Fixed excessive CPU consumption with GPU monitoring
+- GPU monitoring is off by default; enable with "use feature: GPUsMonitor"
+- HTCondor now works with the new CUDA version 10 libraries
+- Fixed a bug where sometimes jobs would not start on a Windows execute node
+- Fixed a bug that could cause DAGman to go into an infinite loop on exit
+- The JobRouter doesn't forward the USER attribute between two UID Domains
+- Made Collector.locateAll() more efficient in the Python bindings
+- Improved efficiency of the negotiation code in the condor_schedd
+
+* Thu Jan 03 2019 Tim Theisen <tim@cs.wisc.edu> - 8.8.0-1
+- Automatically add AWS resources to your pool using HTCondor Annex
+- The Python bindings now include submit functionality
+- Added the ability to run a job immediately by replacing a running job
+- A new minicondor package makes single node installations easy
+- HTCondor now tracks and reports GPU utilization
+- Several performance enhancements in the collector
+- The grid universe can create and manage VM instances in Microsoft Azure
+- The MUNGE security method is now supported on all Linux platforms
+
 * Wed Oct 31 2018 Tim Theisen <tim@cs.wisc.edu> - 8.7.10-1
 - Can now interactively submit Docker jobs
 - The administrator can now add arguments to the Singularity command line

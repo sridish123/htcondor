@@ -389,6 +389,7 @@ public:
 	const std::string &getSessionID() const {return _session;}
 
 	void getPolicyAd(classad::ClassAd &ad) const;
+	const classad::ClassAd *getPolicyAd() const {return _policy_ad;}
 	void setPolicyAd(const classad::ClassAd &ad);
 
 		/// True if socket has tried to authenticate or socket is
@@ -401,6 +402,11 @@ public:
 	bool triedAuthentication() const { return _tried_authentication; }
 
 	void setTriedAuthentication(bool toggle) { _tried_authentication = toggle; }
+
+		// True if the socket failed to authenticate with the remote
+		// server but may succeed with a token request workflow.
+	bool shouldTryTokenRequest() const { return _should_try_token_request; }
+	void setShouldTryTokenRequest(bool val) { _should_try_token_request = val; }
 
 		/// Returns true if the fully qualified user name is
 		/// a non-anonymous user name (i.e. something not from
@@ -552,6 +558,7 @@ protected:
 	std::string     _session;
 	classad::ClassAd *_policy_ad;
 	bool            _tried_authentication;
+	bool            _should_try_token_request{false};
 
 	bool ignore_connect_timeout;	// Used by HA Daemon
 

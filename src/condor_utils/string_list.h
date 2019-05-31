@@ -39,9 +39,14 @@ public:
 	void initializeFromString (const char *, char delim_char);
 
 	/** Note: the contains* methods have side affects -- they
-		change "current" to point at the location of the match */
+		change "current" to point at the location of the match
+		(so do the prefix* methods) */
+	// prefix() works like contains_withwildcard() would if all of the
+	// items in the list ended with a '*'. That is, it returns true if
+	// any item in the list is a prefix of the given string.
+	bool prefix( const char * );
+	bool prefix_anycase( const char * );
 	bool contains( const char * );
-	bool substring( const char * );
 	bool contains_anycase( const char * );
 	bool contains_withwildcard( const char *str );
 	bool contains_anycase_withwildcard( const char * );
@@ -72,6 +77,12 @@ public:
 		char * p = (char *)malloc(cb+2);
 		memcpy(p, mem, cb); p[cb] = p[cb+1] = 0;
 		m_strings.Append(p);
+	}
+	// move items from that list to the end of this list.
+	void take_list(StringList & that) {
+		while ( ! that.m_strings.IsEmpty()) {
+			m_strings.Append(that.m_strings.PopHead());
+		}
 	}
 	
 	/** This is invalid when "current" points to NULL as stated in list.h*/

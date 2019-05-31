@@ -1,3 +1,71 @@
+condor (8.8.3-1) stable; urgency=medium
+
+  * Fixed a bug where jobs were killed instead of peacefully shutting down
+  * Fixed a bug where a restarted schedd wouldn't connect to its running jobs
+  * Improved file transfer performance when sending multiple files
+  * Fix a bug that prevented interactive submit from working with Singularity
+  * Orphaned Docker containers are now cleaned up on execute nodes
+  * Restored a deprecated Python interface that is used to read the event log
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Wed, 22 May 2019 07:16:49 -0500
+
+condor (8.9.1-1) unstable; urgency=medium
+
+  * An efficient curl plugin that supports uploads and authentication tokens
+  * HTCondor automatically supports GPU jobs in Docker and Singularity
+  * File transfer times are now recorded in the user job log and the job ad
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Wed, 17 Apr 2019 06:50:37 -0600
+
+condor (8.8.2-1) stable; urgency=medium
+
+  * Fixed problems with condor_ssh_to_job and Singularity jobs
+  * Fixed a problem that could cause condor_annex to crash
+  * Fixed a problem where the job queue would very rarely be corrupted
+  * condor_userprio can report concurrency limits again
+  * Fixed the GPU discovery and monitoring code to map GPUs in the same way
+  * Made the CHIRP_DELAYED_UPDATE_PREFIX configuration knob work again
+  * Fixed restarting HTCondor from the Service Control Manager on Windows
+  * Fixed a problem where local universe jobs could not use condor_submit
+  * Restored a deprecated Python interface that is used to read the event log
+  * Fixed a problem where condor_shadow reuse could confuse DAGMan
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Thu, 11 Apr 2019 07:48:19 -0500
+
+condor (8.9.0-1) unstable; urgency=medium
+
+  * Absent any configuration, HTCondor denies authorization to all users
+  * All HTCondor daemons under a condor_master share a security session
+  * Scheduler Universe jobs are prioritized by job priority
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Wed, 27 Feb 2019 17:05:36 -0600
+
+condor (8.8.1-1) stable; urgency=medium
+
+  * Fixed excessive CPU consumption with GPU monitoring
+  * GPU monitoring is off by default; enable with "use feature: GPUsMonitor"
+  * HTCondor now works with the new CUDA version 10 libraries
+  * Fixed a bug where sometimes jobs would not start on a Windows execute node
+  * Fixed a bug that could cause DAGman to go into an infinite loop on exit
+  * The JobRouter doesn't forward the USER attribute between two UID Domains
+  * Made Collector.locateAll() more efficient in the Python bindings
+  * Improved efficiency of the negotiation code in the condor_schedd
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Mon, 18 Feb 2019 15:44:41 -0600
+
+condor (8.8.0-1) stable; urgency=medium
+
+  * Automatically add AWS resources to your pool using HTCondor Annex
+  * The Python bindings now include submit functionality
+  * Added the ability to run a job immediately by replacing a running job
+  * A new minihtcondor package makes single node installations easy
+  * HTCondor now tracks and reports GPU utilization
+  * Several performance enhancements in the collector
+  * The grid universe can create and manage VM instances in Microsoft Azure
+  * The MUNGE security method is now supported on all Linux platforms
+
+ -- Tim Theisen <tim@cs.wisc.edu>  Thu, 03 Jan 2019 12:03:47 -0600
+
 condor (8.7.10-1) unstable; urgency=medium
 
   * Can now interactively submit Docker jobs
