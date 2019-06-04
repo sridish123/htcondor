@@ -46,7 +46,6 @@
 #include "condor_daemon_core.h"
 #include "extArray.h"
 #include "HashTable.h"
-#include <set>
 #include "dagman_metrics.h"
 
 using namespace std;
@@ -2266,13 +2265,11 @@ void Dag::WriteRescue (const char * rescue_file, const char * dagFile,
     	it.ToBeforeFirst();
     	while (it.Next(job)) {
 
-        	set<JobID_t> & _queue = job->GetQueueRef(Job::Q_CHILDREN);
-        	if (!_queue.empty()) {
+        	if (!job->GetQueueRef(Job::Q_CHILDREN).empty()) {
             	fprintf(fp, "PARENT %s CHILD", job->GetJobName());
 
-				set<JobID_t>::const_iterator qit;
-				for (qit = _queue.begin(); qit != _queue.end(); qit++) {
-                	Job * child = FindNodeByNodeID( *qit );
+				for (auto &qit: job->GetQueueRef(Job::Q_CHILDREN)) {
+                	Job * child = FindNodeByNodeID( qit );
                 	ASSERT( child != NULL );
                 	fprintf(fp, " %s", child->GetJobName());
 				}
@@ -2465,11 +2462,8 @@ Dag::TerminateJob( Job* job, bool recovery, bool bootstrap )
     // Report termination to all child jobs by removing parent's ID from
     // each child's waiting queue.
     //
-    set<JobID_t> & qp = job->GetQueueRef(Job::Q_CHILDREN);
-
-	set<JobID_t>::const_iterator qit;
-	for (qit = qp.begin(); qit != qp.end(); qit++) {
-        Job * child = FindNodeByNodeID( *qit );
+	for (auto &qit: job->GetQueueRef(Job::Q_CHILDREN)) {
+        Job * child = FindNodeByNodeID( qit );
         ASSERT( child != NULL );
         child->Remove(Job::Q_WAITING, job->GetJobID());
 		if ( child->GetStatus() == Job::STATUS_READY &&
@@ -2596,12 +2590,9 @@ Dag::DFSVisit (Job * job)
 	job->_visited = true; 
 	
 	//Get the children of current job	
-	set<JobID_t> & children = job->GetQueueRef(Job::Q_CHILDREN);
-	set<JobID_t>::const_iterator child_itr;
-
-	for (child_itr = children.begin(); child_itr != children.end(); child_itr++)
+	for (const auto &child_itr:  job->GetQueueRef(Job::Q_CHILDREN))
 	{
-		Job * child = FindNodeByNodeID( *child_itr );
+		Job * child = FindNodeByNodeID( child_itr );
 		DFSVisit (child);
 	}
 	
@@ -2636,11 +2627,8 @@ Dag::isCycle ()
 	while (joblist.Next(job))
 	{
 
-		set<JobID_t> &cset = job->GetQueueRef(Job::Q_CHILDREN);
-		set<JobID_t>::const_iterator cit;
-
-		for(cit = cset.begin(); cit != cset.end(); cit++) {
-			Job * child = FindNodeByNodeID( *cit );
+		for(auto &cit: job->GetQueueRef(Job::Q_CHILDREN)) {
+			Job * child = FindNodeByNodeID( cit );
 
 			//No child's DFS order should be smaller than parent's
 			if (child->_dfsOrder >= job->_dfsOrder) {
@@ -2687,11 +2675,8 @@ Dag::ParentListString( Job *node, const char delim ) const
 	const char* parent_name = NULL;
 	MyString parents_str;
 
-	set<JobID_t> &parent_list = node->GetQueueRef( Job::Q_PARENTS );
-	set<JobID_t>::const_iterator pit;
-
-	for (pit = parent_list.begin(); pit != parent_list.end(); pit++) {
-		parent = FindNodeByNodeID( *pit );
+	for (auto &pit: node->GetQueueRef(Job::Q_PARENTS)) {
+		parent = FindNodeByNodeID( pit );
 		parent_name = parent->GetJobName();
 		ASSERT( parent_name );
 		if( ! parents_str.IsEmpty() ) {
@@ -3517,11 +3502,8 @@ Dag::DumpDotFileArcs(FILE *temp_dot_file)
 		
 		parent_name = parent->GetJobName();
 
-		set<JobID_t> &cset = parent->GetQueueRef(Job::Q_CHILDREN);
-		set<JobID_t>::const_iterator cit;
-
-		for (cit = cset.begin(); cit != cset.end(); cit++) {
-			child = FindNodeByNodeID( *cit );
+		for (auto &cit: parent->GetQueueRef(Job::Q_CHILDREN)) {
+			child = FindNodeByNodeID( cit );
 			
 			child_name  = child->GetJobName();
 			if (parent_name != NULL && child_name != NULL) {

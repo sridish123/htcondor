@@ -28,6 +28,8 @@
 #include "dag.h"
 #include "dagman_metrics.h"
 #include <set>
+#include <vector>
+#include <algorithm>
 
 static const char *JOB_TAG_NAME = "+job_tag_name";
 static const char *PEGASUS_SITE = "+pegasus_site";
@@ -170,7 +172,11 @@ Job::PrefixDirectory(MyString &prefix)
 //---------------------------------------------------------------------------
 bool Job::Remove (const queue_t queue, const JobID_t jobID)
 {
-	if (_queues[queue].erase(jobID) == 0) {
+	if (_queues[queue].erase(std::find(
+							_queues[queue].begin(),
+							_queues[queue].end(),
+								jobID)) == _queues[queue].end())
+	{
 		return false; // element not found
 	}
 
@@ -210,7 +216,7 @@ void Job::Dump ( const Dag *dag ) const {
     for (int i = 0 ; i < 3 ; i++) {
         dprintf( D_ALWAYS, "%15s: ", queue_t_names[i] );
 
-		std::set<JobID_t>::const_iterator qit;
+		set_type_const_iterator qit;
 		for (qit = _queues[i].begin(); qit != _queues[i].end(); qit++) {
 			Job *node = dag->Dag::FindNodeByNodeID( *qit );
 			dprintf( D_ALWAYS | D_NOHEADER, "%s, ", node->GetJobName() );
@@ -491,16 +497,8 @@ Job::TerminateFailure()
 bool
 Job::Add( const queue_t queue, const JobID_t jobID )
 {
-	std::pair<std::set<JobID_t>::iterator, bool> ret;
 
-	ret = _queues[queue].insert(jobID);
-
-	if (ret.second == false) {
-		dprintf( D_ALWAYS,
-				 "ERROR: can't add Job ID %d to DAG: already present!",
-				 jobID );
-		return false;
-	}
+	_queues[queue].push_back(jobID);
 
 	return true;
 }
@@ -583,14 +581,16 @@ Job::GetStatusName() const
 bool
 Job::HasChild( Job* child ) {
 	JobID_t cid;
-	std::set<JobID_t>::iterator it;
+	set_type_iterator it;
 
 	if( !child ) {
 		return false;
 	}
 
 	cid = child->GetJobID();
-	it = _queues[Q_CHILDREN].find(cid);
+	it = std::find(_queues[Q_CHILDREN].begin(), 
+				   _queues[Q_CHILDREN].end(), 
+					cid);
 
 	if (it == _queues[Q_CHILDREN].end()) {
 		return false;
@@ -602,14 +602,16 @@ Job::HasChild( Job* child ) {
 bool
 Job::HasParent( Job* parent ) {
 	JobID_t pid;
-	std::set<JobID_t>::iterator it;
+	set_type_iterator it;
 
 	if( !parent ) {
 		return false;
 	}
 
 	pid = parent->GetJobID();
-	it = _queues[Q_PARENTS].find(pid);
+	it = std::find(_queues[Q_PARENTS].begin(),
+				   _queues[Q_PARENTS].end(),
+					pid);
 
 	if (it == _queues[Q_PARENTS].end()) {
 		return false;
@@ -666,7 +668,10 @@ Job::RemoveDependency( queue_t queue, JobID_t job )
 bool
 Job::RemoveDependency( queue_t queue, JobID_t job, MyString &whynot )
 {
-	if (_queues[queue].erase(job) == 0)
+	if (_queues[queue].erase(std::find(
+							_queues[queue].begin(),
+							_queues[queue].end(),
+								job)) == _queues[queue].end())
 	{
 		whynot = "no such dependency";
 		return false;

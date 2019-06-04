@@ -425,8 +425,8 @@ DagmanMetrics::GetGraphHeightRecursive( Job* node, Dag* dag, unordered_map<strin
 
 	// Recursive case: call this function recursively on all child nodes, then
 	// return the greatest height found among all children.
-	set<JobID_t>& childNodes = node->GetQueueRef( Job::Q_CHILDREN );
-	set<JobID_t>::const_iterator it;
+	Job::set_type & childNodes = node->GetQueueRef( Job::Q_CHILDREN );
+	Job::set_type_const_iterator it;
 	int maxHeight = 0;
 	for ( it = childNodes.begin(); it != childNodes.end(); it++ ) {
 		Job* child = dag->FindNodeByNodeID( *it );
@@ -494,8 +494,8 @@ DagmanMetrics::GetGraphWidth( Dag* dag )
 			// For each child of this node, check if they've already in the BFS
 			// queue by looking in bfsJobTracker. If not, then add them to the 
 			// BFS queue. Otherwise just ignore and move on.
-			set<JobID_t>& childNodes = thisNode->GetQueueRef( Job::Q_CHILDREN );
-			set<JobID_t>::const_iterator it;
+			Job::set_type& childNodes = thisNode->GetQueueRef( Job::Q_CHILDREN );
+			Job::set_type_const_iterator it;
 			for ( it = childNodes.begin(); it != childNodes.end(); it++ ) {
 				Job* child = dag->FindNodeByNodeID( *it );
 				if ( bfsJobTracker.find( child ) == bfsJobTracker.end() ) {
