@@ -86,9 +86,17 @@ BulkRequest::validateAndStore( ClassAd const * command, std::string & validation
 
 		// Convert to the GAHP's single-level JSON.
 		std::map< std::string, std::string > blob;
+
+		// Set a few defaults.
+		command->LookupString( "InstanceProfileARN", blob[ "IAMProfileARN" ] );
+		command->LookupString( "KeyName", blob[ "KeyName" ] );
+		command->LookupString( "SecurityGroupIDs", blob[ "SecurityGroupIDs" ] );
+
+		// Start with the basics.
 		launchConfiguration.LookupString( "ImageId", blob[ "ImageId" ] );
 		launchConfiguration.LookupString( "SpotPrice", blob[ "SpotPrice" ] );
 		launchConfiguration.LookupString( "KeyName", blob[ "KeyName" ] );
+
 		// We assume that user data is converted to base 64 before it's
 		// sent on the wire.
 		launchConfiguration.LookupString( "UserData", blob[ "UserData" ] );

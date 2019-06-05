@@ -1397,6 +1397,15 @@ annex_main( int argc, char ** argv ) {
 		case ct_create_annex:
 			switch( annexType ) {
 				case at_sfr:
+				// fixm: s/odi/sfr?
+					assignWithDefault( commandArguments, odiInstanceProfileARN,
+						"ANNEX_DEFAULT_ODI_INSTANCE_PROFILE_ARN",
+						"InstanceProfileARN" );
+					assignWithDefault( commandArguments, odiKeyName,
+						"ANNEX_DEFAULT_ODI_KEY_NAME", "KeyName" );
+					assignWithDefault( commandArguments, odiSecurityGroupIDs,
+						"ANNEX_DEFAULT_ODI_SECURITY_GROUP_IDS", "SecurityGroupIDs" );
+
 					getSFRApproval(	commandArguments, sfrConfigFile,
 									leaseDurationSpecified, unclaimedTimeoutSpecified,
 									count, leaseDuration, unclaimedTimeout );
