@@ -14,6 +14,7 @@ Version 8.8.4
 Release Notes:
 
 -  HTCondor version 8.8.4 not yet released.
+
 .. HTCondor version 8.8.4 released on Month Date, 2019.
 
 New Features:
@@ -21,6 +22,10 @@ New Features:
 -  None.
 
 Bugs Fixed:
+
+-  Fixed a bug that could cause the *condor_schedd* to crash when a
+   scheduler universe job is removed.
+   :ticket:`7095`
 
 -  Fixed a bug that could result in job attributes ``CommittedTime`` and
    ``CommittedSlotTime`` reporting overly-large values.
