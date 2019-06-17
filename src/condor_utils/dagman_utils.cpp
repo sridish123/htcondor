@@ -524,10 +524,6 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
     if ( shallowOpts.dagFiles.number() > 1 ) {
         rescueDagBase += "_multi";
     }
-<<<<<<< HEAD
-
-=======
->>>>>>> master
     shallowOpts.strRescueFile = rescueDagBase + ".rescue";
 
     shallowOpts.strLockFile = shallowOpts.primaryDagFile + ".lock";
@@ -542,10 +538,6 @@ DagmanUtils::setUpOptions( SubmitDagDeepOptions &deepOpts,
                  dagman_exe );
         return 1;
     }
-<<<<<<< HEAD
-
-=======
->>>>>>> master
     MyString    msg;
     if ( !GetConfigAndAttrs( shallowOpts.dagFiles, deepOpts.useDagDir,
                 shallowOpts.strConfigFile,
@@ -577,19 +569,11 @@ DagmanUtils::GetConfigAndAttrs( /* const */ StringList &dagFiles, bool useDagDir
             MyString &configFile, StringList &attrLines, MyString &errMsg )
 {
     bool        result = true;
-<<<<<<< HEAD
-
-=======
->>>>>>> master
         // Note: destructor will change back to original directory.
     TmpDir        dagDir;
 
     dagFiles.rewind();
     char *dagFile;
-<<<<<<< HEAD
-
-=======
->>>>>>> master
     while ( (dagFile = dagFiles.next()) != NULL ) {
 
             //
