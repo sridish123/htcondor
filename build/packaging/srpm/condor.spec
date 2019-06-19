@@ -320,8 +320,13 @@ BuildRequires: gridsite-devel
 BuildRequires: blahp
 %endif
 
+%if 0%{?rhel} >= 7
+BuildRequires: boost169-devel
+BuildRequires: boost169-python2
+BuildRequires: boost169-python3
+%endif
+
 %if 0%{?rhel} >= 6 || 0%{?fedora}
-BuildRequires: boost-python
 BuildRequires: libuuid-devel
 Requires: libuuid
 %endif
