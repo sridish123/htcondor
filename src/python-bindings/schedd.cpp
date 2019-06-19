@@ -2246,6 +2246,61 @@ ConnectionSentry::~ConnectionSentry()
     disconnect();
 }
 
+void SetDagOptions(boost::python::dict opts, SubmitDagShallowOptions &shallow_opts, SubmitDagDeepOptions &deep_opts)
+{
+    // Start by setting some default options. These must be set for everything to work correctly.
+    shallow_opts.strSubFile = shallow_opts.primaryDagFile + ".condor.sub";
+    shallow_opts.strSchedLog = shallow_opts.primaryDagFile + ".nodes.log";
+    shallow_opts.strLibOut = shallow_opts.primaryDagFile + ".lib.out";
+    shallow_opts.strLibErr = shallow_opts.primaryDagFile + ".lib.err";
+    deep_opts.doRescueFrom = 0;
+    deep_opts.updateSubmit = false;
+
+    // Iterate over the list of arguments passed in and set the appropriate
+    // values in m_shallowOpts and m_deepOpts
+    boost::python::object iter = opts.attr("__iter__")();
+    while (true) {
+        PyObject *pyobj = PyIter_Next(iter.ptr());
+        if (!pyobj) break;
+        if (PyErr_Occurred()) {
+            boost::python::throw_error_already_set();
+        }
+
+        // Wrestle the key-value pair out of the dict object and save them
+        // both as string objects. 
+        // We can assume the key is a string type, but the the value can be 
+        // a string or an int (or other?)
+        std::string key, value;
+        boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
+        key = boost::python::extract<std::string>(key_obj);
+        boost::python::object value_obj = boost::python::extract<boost::python::object>(opts[key]);
+        std::string value_type = boost::python::extract<std::string>(value_obj.attr("__class__").attr("__name__"));
+        if(value_type == "str") {
+            value = boost::python::extract<std::string>(opts[key]);
+        }
+        else if(value_type == "int") {
+            int value_int = boost::python::extract<int>(opts[key]);
+            value = std::to_string(value_int);
+        }
+
+        // Set shallowOpts or deepOpts variables as appropriate
+        std::string key_lc = key;
+        std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
+        if (key_lc == "maxidle") 
+            shallow_opts.iMaxIdle = atoi(value.c_str());
+        else if (key_lc == "maxjobs") 
+            shallow_opts.iMaxJobs = atoi(value.c_str());
+        else if (key_lc == "maxpre")
+            shallow_opts.iMaxPre = atoi(value.c_str());
+        else if (key_lc == "maxpost")
+            shallow_opts.iMaxPre = atoi(value.c_str());
+        else if (key_lc == "dorescuefrom")
+            deep_opts.doRescueFrom = atoi(value.c_str());
+        else
+            printf("WARNING: DAGMan option '%s' not recognized, skipping\n", key.c_str());
+    }
+}
+
 struct Submit
 {
 	static MACRO_SOURCE EmptyMacroSrc;
@@ -2491,6 +2546,56 @@ public:
         return results;
     }
 
+    static boost::shared_ptr<Submit>
+    from_dag(std::string dag_filename, boost::python::dict opts)
+    {
+        char* sub_data;
+        DagmanUtils dagman_utils;
+        FILE* sub_fp = NULL;
+        size_t sub_size;
+        std::string sub_args;
+        std::string sub_filename = dag_filename + std::string(".condor.sub");
+        StringList dag_file_attr_lines;
+        SubmitDagDeepOptions deep_opts;
+        SubmitDagShallowOptions shallow_opts;
+
+        // Setting any submit options that may have been passed in (ie. max idle, max post)
+        shallow_opts.dagFiles.insert(dag_filename.c_str());
+        shallow_opts.primaryDagFile = dag_filename;
+        SetDagOptions(opts, shallow_opts, deep_opts);
+
+        // Make sure we can actually submit this DAG with the given options.
+        // If we can't, ensureOutputFilesExist() will abort and exit.
+        dagman_utils.ensureOutputFilesExist(deep_opts, shallow_opts);
+
+        // Write out the .condor.sub file we need to submit the DAG
+        dagman_utils.setUpOptions(deep_opts, shallow_opts, dag_file_attr_lines);
+        dagman_utils.writeSubmitFile(deep_opts, shallow_opts, dag_file_attr_lines);
+
+        // Now write the submit file and open it
+        sub_fp = safe_fopen_wrapper_follow(sub_filename.c_str(), "r");
+        if(sub_fp == NULL) {
+            printf("ERROR: Could not read generated DAG submit file %s\n", sub_filename.c_str());
+            return NULL;
+        }
+
+        // Determine size of the file and store its contents in a buffer
+        fseek(sub_fp, 0, SEEK_END);
+        sub_size = ftell(sub_fp);
+        sub_data = new char[sub_size];
+        rewind(sub_fp);
+        if(fread(sub_data, sizeof(char), sub_size, sub_fp) != sub_size) {
+            printf("ERROR: DAG submit file %s returned wrong size\n", sub_filename.c_str());
+        }
+        fclose(sub_fp);
+
+        sub_args = sub_data;
+        delete[] sub_data;
+
+        // Create a Submit object with contents of the .condor.sub file
+        boost::shared_ptr<Submit> sub(new Submit(sub_args));
+        return sub;
+    }
 
     void
     update(boost::python::object source)
@@ -3166,127 +3271,9 @@ private:
 // shared source for all instances of MacroStreamMemoryFile that have an empty stream
 MACRO_SOURCE Submit::EmptyMacroSrc = { false, false, 3, -2, -1, -2 };
 
-struct Dag
-{
-public:
-
-    Dag()
-    {
-    }
-
-    Dag(std::string dag_filename)
-        : m_dagmanUtils(DagmanUtils()),
-          m_dagFilename(dag_filename)
-    {
-        m_subFilename = m_dagFilename + ".condor.sub";
-    }
-
-    std::string toString() const
-    {
-        return m_dagFilename;
-    }
-
-    boost::shared_ptr<Submit>
-    DagSubmit(boost::python::dict opts = boost::python::dict()) 
-    {
-        char* sub_data;
-        FILE* sub_fp = NULL;
-        size_t sub_size;
-        std::string sub_args;
-
-        // Start by setting any submit options that may have been passed in
-        SetOptions(opts);
-
-        // Write out the .condor.sub file we need to submit the DAG
-        StringList dagFileAttrLines;
-        m_shallowOpts.dagFiles.insert(m_dagFilename.c_str());
-        m_shallowOpts.primaryDagFile = m_dagFilename;
-        m_dagmanUtils.setUpOptions(m_deepOpts, m_shallowOpts, dagFileAttrLines);
-        m_dagmanUtils.writeSubmitFile(m_deepOpts, m_shallowOpts, dagFileAttrLines);
-
-        // Now open the file
-        sub_fp = safe_fopen_wrapper_follow(m_subFilename.c_str(), "r");
-        if(sub_fp == NULL) {
-            printf("ERROR: Could not read generated DAG submit file %s\n", m_subFilename.c_str());
-            return NULL;
-        }
-
-        // Determine size of the file and store its contents in a buffer
-        fseek(sub_fp, 0, SEEK_END);
-        sub_size = ftell(sub_fp);
-        sub_data = new char[sub_size];
-        rewind(sub_fp);
-        if(fread(sub_data, sizeof(char), sub_size, sub_fp) != sub_size) {
-            printf("ERROR: DAG submit file %s returned wrong size\n", m_subFilename.c_str());
-        }
-        fclose(sub_fp);
-
-        sub_args = sub_data;
-        delete[] sub_data;
-
-        // Create a Submit object with contents of the .condor.sub file
-        boost::shared_ptr<Submit> sub(new Submit(sub_args));
-        return sub;
-    }
-
-private:
-    DagmanUtils m_dagmanUtils;
-    std::string m_dagFilename;
-    std::string m_subFilename;
-    SubmitDagDeepOptions m_deepOpts;
-    SubmitDagShallowOptions m_shallowOpts;
-
-    void SetOptions(boost::python::dict opts)
-    {
-        // Iterate over the list of arguments passed in and set the appropriate
-        // values in m_shallowOpts and m_deepOpts
-        boost::python::object iter = opts.attr("__iter__")();
-        while (true) {
-            PyObject *pyobj = PyIter_Next(iter.ptr());
-            if (!pyobj) break;
-            if (PyErr_Occurred()) {
-                boost::python::throw_error_already_set();
-            }
-
-            // Wrestle the key-value pair out of the dict object and save them
-            // both as string objects. 
-            // We can assume the key is a string type, but the the value can be 
-            // a string or an int (or other?)
-            std::string key, value;
-            boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
-            key = boost::python::extract<std::string>(key_obj);
-            boost::python::object value_obj = boost::python::extract<boost::python::object>(opts[key]);
-            std::string value_type = boost::python::extract<std::string>(value_obj.attr("__class__").attr("__name__"));
-            if(value_type == "str") {
-                value = boost::python::extract<std::string>(opts[key]);
-            }
-            else if(value_type == "int") {
-                int value_int = boost::python::extract<int>(opts[key]);
-                value = std::to_string(value_int);
-            }
-
-            // Set shallowOpts or deepOpts variables as appropriate
-            std::string key_lc = key;
-            std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
-            if (key_lc == "maxidle") 
-                m_shallowOpts.iMaxIdle = atoi(value.c_str());
-            else if (key_lc == "maxjobs") 
-                m_shallowOpts.iMaxJobs = atoi(value.c_str());
-            else if (key_lc == "maxpre")
-                m_shallowOpts.iMaxPre = atoi(value.c_str());
-            else if (key_lc == "maxpost")
-                m_shallowOpts.iMaxPre = atoi(value.c_str());
-            else
-                printf("WARNING: DAGMan attribute '%s' not recognized, skipping\n", key.c_str());
-        }
-    }
-};
-
-
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(query_overloads, query, 0, 5);
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(submit_overloads, submit, 1, 4);
 BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(transaction_overloads, transaction, 0, 2);
-BOOST_PYTHON_MEMBER_FUNCTION_OVERLOADS(dag_submit_overloads, Dag::DagSubmit, 0, 1);
 
 void export_schedd()
 {
@@ -3907,6 +3894,11 @@ void export_schedd()
             R"C0ND0R(
             As :meth:`dict.update`.
             )C0ND0R")
+        .def("from_dag", &Submit::from_dag,
+            R"C0ND0R(
+            :return: Submit description for a .dag file
+            )C0ND0R")
+        .staticmethod("from_dag")
         ;
     register_ptr_to_python< boost::shared_ptr<Submit> >();
 
@@ -4029,14 +4021,6 @@ void export_schedd()
             )C0ND0R",
             boost::python::args("self"))
         .def("__iter__", &QueryIterator::pass_through)
-        ;
-
-    class_<Dag>("Dag")
-        .def(init<std::string>())
-        .def("Submit", &Dag::DagSubmit, dag_submit_overloads("Returns a Submit object for this DAG.\n"
-            ":param args: DAG submission arguments.\n"
-            ))
-        .def("__str__", &Dag::toString)
         ;
 
     register_ptr_to_python< boost::shared_ptr<ScheddNegotiate> >();
