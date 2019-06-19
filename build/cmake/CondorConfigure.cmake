@@ -82,7 +82,7 @@ message(STATUS "********* BEGINNING CONFIGURATION *********")
 
 # To find python in Windows we will use alternate technique
 if(NOT WINDOWS)
-    if (DARWIN)
+    if(${OS_NAME} STREQUAL "DARWIN")
         include (FindPythonInterp)
         message(STATUS "Got PYTHON_VERSION_STRING = ${PYTHON_VERSION_STRING}")
 # As of cmake 2.8.8, the variable below is defined by FindPythonInterp.
