@@ -2249,6 +2249,7 @@ ConnectionSentry::~ConnectionSentry()
 void SetDagOptions(boost::python::dict opts, SubmitDagShallowOptions &shallow_opts, SubmitDagDeepOptions &deep_opts)
 {
     // Start by setting some default options. These must be set for everything to work correctly.
+    // Some of these might be changed later if different values are specified in opts.
     shallow_opts.strSubFile = shallow_opts.primaryDagFile + ".condor.sub";
     shallow_opts.strSchedLog = shallow_opts.primaryDagFile + ".nodes.log";
     shallow_opts.strLibOut = shallow_opts.primaryDagFile + ".lib.out";
@@ -2294,8 +2295,12 @@ void SetDagOptions(boost::python::dict opts, SubmitDagShallowOptions &shallow_op
             shallow_opts.iMaxPre = atoi(value.c_str());
         else if (key_lc == "maxpost")
             shallow_opts.iMaxPre = atoi(value.c_str());
+        else if (key_lc == "autorescue")
+            deep_opts.autoRescue = atoi(value.c_str()) != 0;
         else if (key_lc == "dorescuefrom")
             deep_opts.doRescueFrom = atoi(value.c_str());
+        else if (key_lc == "force")
+            deep_opts.bForce = atoi(value.c_str()) == 1;
         else
             printf("WARNING: DAGMan option '%s' not recognized, skipping\n", key.c_str());
     }
@@ -2558,6 +2563,8 @@ public:
         StringList dag_file_attr_lines;
         SubmitDagDeepOptions deep_opts;
         SubmitDagShallowOptions shallow_opts;
+
+        dagman_utils.usingPythonBindings = true;
 
         // Setting any submit options that may have been passed in (ie. max idle, max post)
         shallow_opts.dagFiles.insert(dag_filename.c_str());
