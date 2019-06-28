@@ -10,6 +10,7 @@
 %define plumage 0
 %define systemd 0
 %define cgroups 0
+%define python 0
 
 %if 0%{?rhel} >= 6
 %define cgroups 1
@@ -72,6 +73,14 @@
 %if 0%{?rhel} >= 6
 %define std_univ 0
 %endif
+%endif
+
+# Python on 64-bit platform or rhel6
+%ifarch x86_64
+%define python 1
+%endif
+%if 0%{?rhel} == 6
+%define python 1
 %endif
 
 # Don't bother building CREAM for 32-bit RHEL7
@@ -321,9 +330,10 @@ BuildRequires: blahp
 %endif
 
 %if 0%{?rhel} >= 7
+%ifarch x86_64
 BuildRequires: boost169-devel
-BuildRequires: boost169-python2
-BuildRequires: boost169-python3
+BuildRequires: boost169-static
+%endif
 %endif
 
 %if 0%{?rhel} >= 6 || 0%{?fedora}
@@ -594,12 +604,14 @@ host as the DedicatedScheduler.
 
 
 #######################
+%if %python
 %package -n python2-condor
 Summary: Python bindings for HTCondor.
 Group: Applications/System
 Requires: python >= 2.2
 Requires: %name = %version-%release
 %{?python_provide:%python_provide python2-condor}
+Requires: boost169-python2
 # Remove before F30
 Provides: %{name}-python = %{version}-%{release}
 Provides: %{name}-python%{?_isa} = %{version}-%{release}
@@ -619,6 +631,35 @@ Provides: htcondor.so
 %description -n python2-condor
 The python bindings allow one to directly invoke the C++ implementations of
 the ClassAd library and HTCondor from python
+
+
+%if 0%{?rhel} >= 7
+%ifarch x86_64
+#######################
+%package -n python3-condor
+Summary: Python bindings for HTCondor.
+Group: Applications/System
+Requires: python36
+Requires: %name = %version-%release
+Requires: boost169-python3
+
+%if 0%{?rhel} >= 7 && ! %uw_build
+# auto provides generator does not pick these up for some reason
+    %ifarch x86_64
+Provides: classad.so()(64bit)
+Provides: htcondor.so()(64bit)
+    %else
+Provides: classad.so
+Provides: htcondor.so
+    %endif
+%endif
+
+%description -n python3-condor
+The python bindings allow one to directly invoke the C++ implementations of
+the ClassAd library and HTCondor from python
+%endif
+%endif
+%endif
 
 
 #######################
@@ -816,6 +857,11 @@ cmake \
 %else
        -DWITH_CREAM:BOOL=FALSE \
 %endif
+%ifarch %{ix86}
+%if 0%{?rhel} >= 7
+       -DWITH_PYTHON_BINDINGS:BOOL=FALSE \
+%endif
+%endif
        -DPLATFORM:STRING=${NMI_PLATFORM:-unknown} \
        -DCMAKE_VERBOSE_MAKEFILE=ON \
        -DCMAKE_INSTALL_PREFIX:PATH=/usr \
@@ -903,9 +949,9 @@ cmake \
 
 %if %uw_build || %std_univ
 # build externals first to avoid dependency issues
-make %{?_smp_mflags} externals
+make externals
 %endif
-make %{?_smp_mflags}
+make
 
 %install
 # installation happens into a temporary location, this function is
@@ -1028,6 +1074,11 @@ rm -f %{buildroot}/%{_mandir}/man1/condor_reconfig_schedd.1
 # this one got removed but the manpage was left around
 rm -f %{buildroot}/%{_mandir}/man1/condor_glidein.1
 
+# Remove condor_top with no python bindings
+%if ! %python
+rm -f %{buildroot}/%{_bindir}/condor_top
+%endif
+
 # Remove junk
 rm -rf %{buildroot}/%{_sysconfdir}/sysconfig
 rm -rf %{buildroot}/%{_sysconfdir}/init.d
@@ -1071,10 +1122,23 @@ install -m 0755 src/condor_scripts/CondorPersonal.pm %{buildroot}%{_datadir}/con
 install -m 0755 src/condor_scripts/CondorTest.pm %{buildroot}%{_datadir}/condor/
 install -m 0755 src/condor_scripts/CondorUtils.pm %{buildroot}%{_datadir}/condor/
 
+%if %python
 # Install python-binding libs
 mkdir -p %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/{classad,htcondor}.so %{buildroot}%{python_sitearch}
 install -m 0755 src/python-bindings/libpyclassad*.so %{buildroot}%{_libdir}
+
+# Install python-binding libs
+%if 0%{?rhel} >= 7
+%ifarch x86_64
+mkdir -p %{buildroot}/usr/lib64/python3.6/site-packages
+install -m 0755 src/python-bindings/py3classad.so %{buildroot}/usr/lib64/python3.6/site-packages/classad.so
+install -m 0755 src/python-bindings/py3htcondor.so %{buildroot}/usr/lib64/python3.6/site-packages/htcondor.so
+install -m 0755 src/python-bindings/libpy3classad*.so %{buildroot}%{_libdir}
+%endif
+%endif
+%endif
+
 
 # we must place the config examples in builddir so %doc can find them
 mv %{buildroot}/etc/examples %_builddir/%name-%tarball_version
@@ -1157,6 +1221,8 @@ rm -rf %{buildroot}%{_mandir}/man1/uniq_pid_undertaker.1*
 
 rm -rf %{buildroot}%{_datadir}/condor/python/{htcondor,classad}.so
 rm -rf %{buildroot}%{_datadir}/condor/{libpyclassad*,htcondor,classad}.so
+rm -rf %{buildroot}%{_datadir}/condor/python/{py3htcondor,py3classad}.so
+rm -rf %{buildroot}%{_datadir}/condor/{libpy3classad*,py3htcondor,py3classad}.so
 
 # Install BOSCO
 mkdir -p %{buildroot}%{python_sitelib}
@@ -1318,7 +1384,6 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_gangliad
 %_libexecdir/condor/panda-plugin.so
 %_libexecdir/condor/pandad
-%_libexecdir/condor/libcollector_python_plugin.so
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_annex.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
@@ -1705,13 +1770,28 @@ rm -rf %{buildroot}
 %config(noreplace) %_sysconfdir/condor/config.d/20dedicated_scheduler_condor.config
 %endif
 
+%if %python
 %files -n python2-condor
 %defattr(-,root,root,-)
 %_bindir/condor_top
 %_libdir/libpyclassad*.so
 %_libexecdir/condor/libclassad_python_user.so
+%_libexecdir/condor/libcollector_python_plugin.so
 %{python_sitearch}/classad.so
 %{python_sitearch}/htcondor.so
+
+%if 0%{?rhel} >= 7
+%ifarch x86_64
+%files -n python3-condor
+%defattr(-,root,root,-)
+%_libdir/libpy3classad*.so
+%_libexecdir/condor/libclassad_python3_user.so
+%_libexecdir/condor/libcollector_python3_plugin.so
+/usr/lib64/python3.6/site-packages/classad.so
+/usr/lib64/python3.6/site-packages/htcondor.so
+%endif
+%endif
+%endif
 
 %files bosco
 %defattr(-,root,root,-)
