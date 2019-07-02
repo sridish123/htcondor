@@ -337,6 +337,7 @@ BuildRequires: boost169-static
 %endif
 
 %if 0%{?rhel} >= 6 || 0%{?fedora}
+BuildRequires: boost-python
 BuildRequires: libuuid-devel
 Requires: libuuid
 %endif

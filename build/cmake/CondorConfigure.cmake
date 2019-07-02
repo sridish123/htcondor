@@ -85,9 +85,9 @@ if(NOT WINDOWS)
     if(${OS_NAME} STREQUAL "DARWIN")
         include (FindPythonInterp)
         message(STATUS "Got PYTHON_VERSION_STRING = ${PYTHON_VERSION_STRING}")
-# As of cmake 2.8.8, the variable below is defined by FindPythonInterp.
-# This helps ensure we get the same version of the libraries and python
-# on systems with both python2 and python3.
+        # As of cmake 2.8.8, the variable below is defined by FindPythonInterp.
+        # This helps ensure we get the same version of the libraries and python
+        # on systems with both python2 and python3.
         if (DEFINED PYTHON_VERSION_STRING)
             set(Python_ADDITIONAL_VERSIONS "${PYTHON_VERSION_STRING}")
         endif()
@@ -120,7 +120,7 @@ if(NOT WINDOWS)
 
             # Convert the process output into a list
             string(REGEX REPLACE ";" "\\\\;" _PYTHON_VALUES ${_PYTHON_VALUES})
-            string(REGEX REPLACE "\n" ";" _PYTHON_VALUES ${_PYTHON_VALUES}) 
+            string(REGEX REPLACE "\n" ";" _PYTHON_VALUES ${_PYTHON_VALUES})
             list(GET _PYTHON_VALUES 0 PYTHON_VERSION_STRING)
             list(GET _PYTHON_VALUES 1 PYTHON_VERSION_MAJOR)
             list(GET _PYTHON_VALUES 2 PYTHON_VERSION_MINOR)
@@ -170,7 +170,7 @@ if(NOT WINDOWS)
 
             # Convert the process output into a list
             string(REGEX REPLACE ";" "\\\\;" _PYTHON_VALUES ${_PYTHON_VALUES})
-            string(REGEX REPLACE "\n" ";" _PYTHON_VALUES ${_PYTHON_VALUES}) 
+            string(REGEX REPLACE "\n" ";" _PYTHON_VALUES ${_PYTHON_VALUES})
             list(GET _PYTHON_VALUES 0 PYTHON3_VERSION_STRING)
             list(GET _PYTHON_VALUES 1 PYTHON3_VERSION_MAJOR)
             list(GET _PYTHON_VALUES 2 PYTHON3_VERSION_MINOR)
