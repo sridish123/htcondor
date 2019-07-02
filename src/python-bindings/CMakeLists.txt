@@ -288,7 +288,8 @@ else()
         set_target_properties(htcondor PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
       endif()
 
-      install ( TARGETS htcondor classad_module DESTINATION ${C_PYTHONARCHLIB} )
+      install ( TARGETS htcondor classad_module DESTINATION ${C_PYTHONARCHLIB} ) # Package
+      install ( TARGETS htcondor classad_module DESTINATION lib/python ) # Tarball
 
       if ( DARWIN )
           set_target_properties( pyclassad PROPERTIES INSTALL_NAME_DIR ${CMAKE_CURRENT_BINARY_DIR} )
@@ -366,13 +367,13 @@ else()
         set_target_properties(py3htcondor PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
       endif()
 
-      install ( TARGETS py3htcondor py3classad_module DESTINATION ${C_PYTHONARCHLIB} )
+      install ( TARGETS py3htcondor py3classad_module DESTINATION ${C_PYTHON3ARCHLIB} )
 
       if ( DARWIN )
           set_target_properties( py3classad PROPERTIES INSTALL_NAME_DIR ${CMAKE_CURRENT_BINARY_DIR} )
           install( CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${C_LIB}/lib${PYCLASSAD_LIB_NAME}.dylib)" )
-          install( CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${C_PYTHONARCHLIB}/classad.so)" )
-          install( CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${C_PYTHONARCHLIB}/htcondor.so)" )
+          install( CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad.so)" )
+          install( CODE "execute_process(COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs \$ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor.so)" )
       endif()
     endif()
 

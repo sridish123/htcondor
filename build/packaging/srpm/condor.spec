@@ -978,6 +978,11 @@ populate %{_libdir}/ %{buildroot}/%{_datadir}/condor/libclassad.so*
 rm -f %{buildroot}/%{_datadir}/condor/libclassad.a
 mv %{buildroot}%{_datadir}/condor/lib*.so %{buildroot}%{_libdir}/
 
+# Only trigger on 32-bit RHEL6
+if [ -d %{buildroot}%{_datadir}/condor/python2.6 ]; then
+    mv %{buildroot}%{_datadir}/condor/python2.6 %{buildroot}%{_libdir}/
+fi
+
 %if %aviary || %qmf
 populate %{_libdir}/condor/plugins %{buildroot}/%{_usr}/libexec/*-plugin.so
 %endif
@@ -1122,20 +1127,11 @@ install -m 0755 src/condor_scripts/CondorPersonal.pm %{buildroot}%{_datadir}/con
 install -m 0755 src/condor_scripts/CondorTest.pm %{buildroot}%{_datadir}/condor/
 install -m 0755 src/condor_scripts/CondorUtils.pm %{buildroot}%{_datadir}/condor/
 
-%if %python
-# Install python-binding libs
-mkdir -p %{buildroot}%{python_sitearch}
-install -m 0755 src/python-bindings/{classad,htcondor}.so %{buildroot}%{python_sitearch}
-install -m 0755 src/python-bindings/libpyclassad*.so %{buildroot}%{_libdir}
-
 # Install python-binding libs
 %if 0%{?rhel} >= 7
 %ifarch x86_64
-mkdir -p %{buildroot}/usr/lib64/python3.6/site-packages
-install -m 0755 src/python-bindings/py3classad.so %{buildroot}/usr/lib64/python3.6/site-packages/classad.so
-install -m 0755 src/python-bindings/py3htcondor.so %{buildroot}/usr/lib64/python3.6/site-packages/htcondor.so
-install -m 0755 src/python-bindings/libpy3classad*.so %{buildroot}%{_libdir}
-%endif
+mv %{buildroot}/usr/lib64/python3.6/site-packages/py3classad.so %{buildroot}/usr/lib64/python3.6/site-packages/classad.so
+mv %{buildroot}/usr/lib64/python3.6/site-packages/py3htcondor.so %{buildroot}/usr/lib64/python3.6/site-packages/htcondor.so
 %endif
 %endif
 
@@ -1784,6 +1780,7 @@ rm -rf %{buildroot}
 %ifarch x86_64
 %files -n python3-condor
 %defattr(-,root,root,-)
+%_bindir/condor_top
 %_libdir/libpy3classad*.so
 %_libexecdir/condor/libclassad_python3_user.so
 %_libexecdir/condor/libcollector_python3_plugin.so
