@@ -612,7 +612,11 @@ Group: Applications/System
 Requires: python >= 2.2
 Requires: %name = %version-%release
 %{?python_provide:%python_provide python2-condor}
+%if 0%{?rhel} >= 7
+%ifarch x86_64
 Requires: boost169-python2
+%endif
+%endif
 # Remove before F30
 Provides: %{name}-python = %{version}-%{release}
 Provides: %{name}-python%{?_isa} = %{version}-%{release}
