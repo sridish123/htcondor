@@ -2268,8 +2268,8 @@ void SetDagOptions(boost::python::dict opts, SubmitDagShallowOptions &shallow_op
         }
 
         // Wrestle the key-value pair out of the dict object and save them
-        // both as string objects. 
-        // We can assume the key is a string type, but the the value can be 
+        // both as string objects.
+        // We can assume the key is a string type, but the the value can be
         // a string or an int (or other?)
         std::string key, value;
         boost::python::object key_obj = boost::python::object(boost::python::handle<>(pyobj));
@@ -2287,9 +2287,9 @@ void SetDagOptions(boost::python::dict opts, SubmitDagShallowOptions &shallow_op
         // Set shallowOpts or deepOpts variables as appropriate
         std::string key_lc = key;
         std::transform(key_lc.begin(), key_lc.end(), key_lc.begin(), ::tolower);
-        if (key_lc == "maxidle") 
+        if (key_lc == "maxidle")
             shallow_opts.iMaxIdle = atoi(value.c_str());
-        else if (key_lc == "maxjobs") 
+        else if (key_lc == "maxjobs")
             shallow_opts.iMaxJobs = atoi(value.c_str());
         else if (key_lc == "maxpre")
             shallow_opts.iMaxPre = atoi(value.c_str());
@@ -2362,8 +2362,8 @@ public:
 
 
 	Submit(const std::string lines)
-       : m_src_pystring(EmptyMacroSrc) 
-       , m_ms_inline("", 0, EmptyMacroSrc) 
+       : m_src_pystring(EmptyMacroSrc)
+       , m_ms_inline("", 0, EmptyMacroSrc)
        , m_queue_may_append_to_cluster(false)
 	{
 		m_hash.init();
@@ -3743,7 +3743,7 @@ void export_schedd()
                 If a string is used, the text should consist of valid *condor_submit*
                 statments optionally followed by a a single *condor_submit* ``QUEUE``
                 statement. The arguments to the QUEUE statement will be stored
-                in the ``QArgs`` member of this class and used when the :method:`Submit.queue()`
+                in the ``QArgs`` member of this class and used when the :meth:`Submit.queue()`
                 method is called.
                 If omitted, the submit object is initially empty.
             :type input: dict or str
