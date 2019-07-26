@@ -606,6 +606,7 @@ Scheduler::Scheduler() :
 	MaxRunningSchedulerJobsPerOwner = INT_MAX;
 	MaxJobsRunning = 0;
 	AllowLateMaterialize = false;
+	NonDurableLateMaterialize = false;
 	MaxMaterializedJobsPerCluster = INT_MAX;
 	MaxJobsSubmitted = INT_MAX;
 	MaxJobsPerOwner = INT_MAX;
@@ -1507,8 +1508,10 @@ Scheduler::count_jobs()
 		for(int ii=0; d && ii < FlockLevel; ii++ ) {
 			col = (DCCollector*)d;
 dprintf( D_ALWAYS, "[count_jobs]  %s -> %s\n", d->name(), d->addr() );
-			auto data = m_token_requester.createCallbackData(col->name(),
-				DCTokenRequester::default_identity, "ADVERTISE_SCHEDD");
+			auto data = col->name() ?
+					m_token_requester.createCallbackData(col->name(),
+					DCTokenRequester::default_identity, "ADVERTISE_SCHEDD")
+				: nullptr;
 DCCollector dc( col->addr() );
 dprintf( D_ALWAYS, "[dc] %s -> %s\n", dc.name(), dc.addr() );
 			col->sendUpdate( UPDATE_SCHEDD_AD, cad, adSeq, NULL, true, DCTokenRequester::daemonUpdateCallback, data );
@@ -8613,19 +8616,17 @@ Scheduler::AddRunnableLocalJobs()
 		int	max_hosts;
 
 		if (job->LookupInteger(ATTR_CURRENT_HOSTS, cur_hosts) != 1) {
-			cur_hosts = ((status == RUNNING || status == TRANSFERRING_OUTPUT) ? 1 : 0);
+			cur_hosts = 0; // At this point the job must be status idle
 		}
 		if (job->LookupInteger(ATTR_MAX_HOSTS, max_hosts) != 1) {
-			max_hosts = ((status == IDLE) ? 1 : 0);
+			max_hosts = 1; 
 		}
 	
 		//
 		// Before evaluating whether we can run this job, first make 
 		// sure its even eligible to run
-		// We do not count REMOVED or HELD jobs
 		//
-		if ( max_hosts > cur_hosts &&
-			(status == IDLE || status == RUNNING || status == TRANSFERRING_OUTPUT) ) {
+		if ( max_hosts > cur_hosts) {
 			
 			if (!IsLocalJobEligibleToRun(job)) {
 				continue;
@@ -13077,6 +13078,7 @@ Scheduler::Init()
 
 	AllowLateMaterialize = param_boolean("SCHEDD_ALLOW_LATE_MATERIALIZE", false);
 	MaxMaterializedJobsPerCluster = param_integer("MAX_MATERIALIZED_JOBS_PER_CLUSTER", MaxMaterializedJobsPerCluster);
+	NonDurableLateMaterialize = param_boolean("SCHEDD_NON_DURABLE_LATE_MATERIALIZE", false);
 
 		// Limit number of simultaenous connection attempts to startds.
 		// This avoids the schedd getting so busy authenticating with
