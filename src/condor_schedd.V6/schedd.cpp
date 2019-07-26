@@ -1506,8 +1506,11 @@ Scheduler::count_jobs()
 		FlockCollectors->next(d);
 		for(int ii=0; d && ii < FlockLevel; ii++ ) {
 			col = (DCCollector*)d;
+dprintf( D_ALWAYS, "[count_jobs]  %s -> %s\n", d->name(), d->addr() );
 			auto data = m_token_requester.createCallbackData(col->name(),
 				DCTokenRequester::default_identity, "ADVERTISE_SCHEDD");
+DCCollector dc( col->addr() );
+dprintf( D_ALWAYS, "[dc] %s -> %s\n", dc.name(), dc.addr() );
 			col->sendUpdate( UPDATE_SCHEDD_AD, cad, adSeq, NULL, true, DCTokenRequester::daemonUpdateCallback, data );
 			m_flock_collectors_init.insert(d);
 			FlockCollectors->next( d );
@@ -13212,6 +13215,13 @@ Scheduler::Init()
 		FlockCollectors = new DaemonList();
 		FlockCollectors->init( DT_COLLECTOR, flock_collector_hosts );
 		MaxFlockLevel = FlockCollectors->number();
+
+Daemon * d;
+FlockCollectors->rewind();
+dprintf( D_ALWAYS, "FlockCollectors:\n" );
+while( FlockCollectors->next(d) ) {
+    dprintf( D_ALWAYS, "  %s -> %s\n", d->name(), d->addr() );
+}
 
 		if( FlockNegotiators ) {
 			delete FlockNegotiators;

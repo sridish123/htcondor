@@ -1,0 +1,13 @@
+diff --git a/src/condor_daemon_client/daemon.cpp b/src/condor_daemon_client/daemon.cpp
+index f51bd81262..e78ef0c2e3 100644
+--- a/src/condor_daemon_client/daemon.cpp
++++ b/src/condor_daemon_client/daemon.cpp
+@@ -2128,6 +2128,8 @@ Daemon::New_addr( char* str )
+ 				free(_addr);
+ 				_addr = strdup( sinful.getSinful() );
+ 			}
++		} else if( sinful.getAlias() && !_alias ) {
++			_alias = strdup( sinful.getAlias() );
+ 		}
+ 	}
+ 

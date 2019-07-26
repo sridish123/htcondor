@@ -1097,6 +1097,15 @@ Daemon::locate( Daemon::LocateType method )
 		_name = localName();
 	}
 
+	if(! _name) {
+		if( _addr ) {
+			Sinful s(_addr);
+			if( s.valid() && s.getAlias() ) {
+				_name = strdup( s.getAlias() );
+			}
+		}
+	}
+
 	return true;
 }
 

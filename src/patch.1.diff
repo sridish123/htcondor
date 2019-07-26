@@ -1,0 +1,20 @@
+diff --git a/src/condor_daemon_client/daemon.cpp b/src/condor_daemon_client/daemon.cpp
+index f51bd81262..8d3c3445be 100644
+--- a/src/condor_daemon_client/daemon.cpp
++++ b/src/condor_daemon_client/daemon.cpp
+@@ -1097,6 +1097,15 @@ Daemon::locate( Daemon::LocateType method )
+ 		_name = localName();
+ 	}
+ 
++	if(! _name) {
++		if( _addr ) {
++			Sinful s(_addr);
++			if( s.valid() && s.getAlias() ) {
++				_name = strdup( s.getAlias() );
++			}
++		}
++	}
++
+ 	return true;
+ }
+ 

@@ -298,8 +298,11 @@ CollectorList::sendUpdates (int cmd, ClassAd * ad1, ClassAd* ad2, bool nonblocki
 				 daemon->addr() );
 		void *data = nullptr;
 		if (token_requester) {
+dprintf( D_ALWAYS, "[CollectorList]  %s -> %s\n", daemon->name(), daemon->addr() );
 			data = token_requester->createCallbackData(daemon->name(),
 				identity, authz_name);
+DCCollector dc( daemon->addr() );
+dprintf( D_ALWAYS, "[dc] %s -> %s\n", dc.name(), dc.addr() );
 		}
 		if( daemon->sendUpdate(cmd, ad1, *adSeq, ad2, nonblocking,
 			DCTokenRequester::daemonUpdateCallback, data) )

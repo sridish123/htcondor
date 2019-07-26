@@ -356,6 +356,7 @@ public:
 		back.m_trust_domain = trust_domain;
 		back.m_authz_name = data->m_authz_name;
 		back.m_daemon.reset(new DCCollector(data->m_addr.c_str()));
+dprintf( D_ALWAYS, "TokenRequest::daemonUpdateCallback(): m_daemon now %s -> %s\n", back.m_daemon->name(), back.m_daemon->addr() );
 		back.m_callback_fn = &DCTokenRequester::tokenRequestCallback;
 		back.m_callback_data = data;
 
