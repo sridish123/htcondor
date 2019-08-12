@@ -8,10 +8,16 @@ These tutorials are also available as a series of runnable Jupyter notebooks: |b
 
 
 :doc:`Advanced-Schedd-Interactions`
+    Learn about how to perform advanced Schedd queries, submit raw JobAds, and
+    pretend to be a Negotiator.
 
 :doc:`Interacting-With-Daemons`
+    Learn how to interact with HTCondor's daemons manually, and how to configure
+    HTCondor from inside Python.
 
 :doc:`Scalable-Job-Tracking`
+    Learn how to track the status of HTCondor jobs by either polling the Schedd,
+    or by reading job event logs.
 
 
 .. toctree::
@@ -19,5 +25,5 @@ These tutorials are also available as a series of runnable Jupyter notebooks: |b
    :hidden:
 
    Advanced-Schedd-Interactions
-   Scalable-Job-Tracking
    Interacting-With-Daemons
+   Scalable-Job-Tracking
