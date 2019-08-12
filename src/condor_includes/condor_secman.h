@@ -40,7 +40,7 @@
 #include "reli_sock.h"
 
 
-typedef void StartCommandCallbackType(bool success,Sock *sock,CondorError *errstack,void *misc_data);
+typedef void StartCommandCallbackType(bool success, Sock *sock, CondorError *errstack, const std::string &trust_domain, bool should_try_token_request, void *misc_data);
 
 extern char const *USE_TMP_SEC_SESSION;
 
@@ -90,6 +90,9 @@ public:
 	// Alternate session caches.
 	static std::map<std::string,KeyCache*> *m_tagged_session_cache;
         static std::string m_tag;
+	// Alternate tag methods
+	static std::map<DCpermission, std::string> m_tag_methods;
+	static std::string m_tag_token_owner;
 	static HashTable<MyString, MyString> command_map;
 	static int sec_man_ref_count;
 	static std::set<std::string> m_not_my_family;
@@ -105,6 +108,34 @@ public:
 	~SecMan();
 	const SecMan & operator=(const SecMan &);
 
+		// A struct to order all the startCommand parameters below (as opposed
+		// to having 10 parameters to a single function).
+		//
+		// Mostly a duplicate of the internal "SecManStartCommand" class, except
+		// simpler and stripped down.
+	struct StartCommandRequest {
+
+		StartCommandRequest() {}
+		StartCommandRequest(const StartCommandRequest &) = delete;
+
+		int m_cmd{-1};
+		Sock *m_sock{nullptr};
+		bool m_raw_protocol{false};
+		CondorError *m_errstack{nullptr};
+		int m_subcmd{-1};
+		StartCommandCallbackType *m_callback_fn{nullptr};
+		void *m_misc_data{nullptr};
+		bool m_nonblocking{false};
+		const char *m_cmd_description{nullptr};
+		const char *m_sec_session_id{nullptr};
+			// Do the start command on behalf of a specific owner;
+			// empty tag is the default (`condor` for daemons...).
+		std::string m_owner;
+			// If m_owner is set, then we can also specify the authentication
+			// methods to use for that owner.
+		std::vector<std::string> m_methods;
+	};
+
 		// Prepare a socket for sending a CEDAR command.  This takes
 		// care of security negotiation and authentication.
 		// (If raw_protocol=true, then no security negotiation or
@@ -117,7 +148,7 @@ public:
 		// spawn off a non-blocking attempt to create a security
 		// session so that in the future, a UDP command could succeed
 		// without StartCommandWouldBlock.
-	StartCommandResult startCommand( int cmd, Sock* sock, bool raw_protocol, CondorError* errstack, int subcmd, StartCommandCallbackType *callback_fn, void *misc_data, bool nonblocking,char const *cmd_description,char const *sec_session_id);
+	StartCommandResult startCommand(const StartCommandRequest &req);
 
 		// Authenticate a socket using whatever authentication methods
 		// have been configured for the specified perm level.
@@ -151,6 +182,19 @@ public:
 	static void setPoolPassword(const std::string &pool) {m_pool_password = pool;}
 	// An empty pool indicates this is not used.
 	static const std::string &getPoolPassword() {return m_pool_password;}
+
+	// Setup the current authentication methods for a tag; these are considered overrides
+	// and are cleared when the tag is changed.
+	static void setTagAuthenticationMethods(DCpermission perm, const std::vector<std::string> &methods);
+	static const std::string getTagAuthenticationMethods(DCpermission perm);
+
+	// Setup the tag credential owner name; this is considered an override and cleared when the
+	// tag is changed.
+	//
+	// When non-empty, the authentication method should proceed as-if the daemon was running as
+	// the specified owner.  While `tag` is an opaque string, this is interpreted as a username.
+	static void setTagCredentialOwner(const std::string &owner) {m_tag_token_owner = owner;}
+	static const std::string &getTagCredentialOwner() {return m_tag_token_owner;}
 
 	bool	FillInSecurityPolicyAd( DCpermission auth_level,
 									ClassAd* ad,
@@ -224,7 +268,12 @@ public:
 		// Setting duration=0 means the session never expires.  (In this case
 		// it should be explicitly deleted with invalidateKey() when it
 		// is no longer needed.)
-	bool CreateNonNegotiatedSecuritySession(DCpermission auth_level, char const *sesid,char const *private_key,char const *exported_session_info,char const *peer_fqu,char const *peer_sinful, int duration);
+		//
+		// If additional attributes should be copied into the session policy,
+		// these can be copied into the policy parameter:
+	bool CreateNonNegotiatedSecuritySession(DCpermission auth_level, char const *sesid, char const *private_key,
+		char const *exported_session_info, char const *peer_fqu, char const *peer_sinful, int duration,
+		classad::ClassAd *policy);
 
 		// Get security session info to send to our peer so that peer
 		// can create pre-built security session compatible with ours.

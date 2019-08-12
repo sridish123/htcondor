@@ -26,30 +26,31 @@
 #include "daemon.h"
 #include "dc_collector.h"
 #include "directory.h"
-#include "condor_netdb.h"
-#include "token_utils.h"
+
+#include <iostream>
+
+void printRemainingRequests(std::unique_ptr<Daemon> daemon);
 
 void print_usage(const char *argv0) {
-	fprintf(stderr, "Usage: %s [-type TYPE] [-name NAME] [-pool POOL] [-authz AUTHZ] [-lifetime VAL] [-token NAME]\n\n"
-		"Generates a token from a remote daemon and prints its contents to stdout.\n"
-		"\nToken options:\n"
-		"    -authz    <authz>                Whitelist one or more authorization\n"
-		"    -lifetime <val>                  Max token lifetime, in seconds\n"
-		"    -identity <val>                  Requested identity in token\n"
+	fprintf(stderr, "Usage: %s [-type TYPE] [-name NAME] [-pool POOL] [-lifetime LIFETIME] [-netblock NETBLOCK]\n\n"
+		"Generates a new rule at specified daemon to automatically approve requests.\n"
+		"\nOptions:\n"
+		"    -netblock <netblock>            Approve requests coming from this network\n"
+		"                                    Example: 192.168.0.0/24\n"
+		"    -lifetime <val>                 Auto-approval lifetime in seconds\n"
 		"Specifying target options:\n"
 		"    -pool    <host>                 Query this collector\n"
 		"    -name    <name>                 Find a daemon with this name\n"
 		"    -type    <subsystem>            Type of daemon to contact (default: COLLECTOR)\n"
-		"If not specified, the pool's collector is targeted.\n"
-		"\nOther options:\n"
-		"    -token    <NAME>                 Name of token file\n", argv0);
+		"If not specified, the pool's collector is targeted.\n",
+		argv0
+	);
 	exit(1);
 }
 
 int
-request_remote_token(const std::string &pool, const std::string &name, daemon_t dtype,
-	const std::vector<std::string> &authz_list, long lifetime, const std::string &identity,
-	const std::string &token_name)
+auto_approve(const std::string &pool, const std::string &name, daemon_t dtype,
+	const std::string netblock, time_t lifetime)
 {
 	std::unique_ptr<Daemon> daemon;
 	if (!pool.empty()) {
@@ -72,37 +73,46 @@ request_remote_token(const std::string &pool, const std::string &name, daemon_t 
 		exit(1);
 	}
 
-	std::vector<char> hostname;
-	hostname.reserve(MAXHOSTNAMELEN);
-	if (condor_gethostname(&hostname[0], MAXHOSTNAMELEN)) {
-		fprintf(stderr, "ERROR: Unable to determine hostname.\n");
+	CondorError err;
+
+	if (!daemon->autoApproveTokens(netblock, lifetime, &err)) {
+		fprintf(stderr, "Failed to create new auto-approval rule: %s\n",
+			err.getFullText().c_str());
 		exit(1);
 	}
+
+	printf("Successfully installed auto-approval rule for netblock %s with lifetime of %.2f hours\n",
+		netblock.c_str(), static_cast<float>(lifetime)/3600 );
+
+	printRemainingRequests(std::move(daemon));
+	return 0;
+}
+
+void printRemainingRequests(std::unique_ptr<Daemon> daemon) {
 
 	CondorError err;
-	std::string token, request_id;
-
-	std::string client_id = std::string(&hostname[0]) + "-" + std::to_string(get_csrng_uint() % 1000);
-
-	if (!daemon->startTokenRequest(identity, authz_list, lifetime, client_id, token, request_id, &err)) {
-		fprintf(stderr, "Failed to request a new token: %s\n", err.getFullText().c_str());
-		exit(1);
+	std::vector<classad::ClassAd> results;
+	if (!daemon->listTokenRequest("", results, &err)) {
+		fprintf(stderr, "Failed to list remaining token requests: %s\n", err.getFullText().c_str());
+		return;
 	}
-	if (request_id.empty()) {
-		fprintf(stderr, "Remote daemon did not provide a valid request ID.\n");
-		exit(1);
-	}
-	printf("Token request enqueued.  Ask an administrator to please approve request %s.\n", request_id.c_str());
-
-	while (token.empty()) {
-		sleep(5);
-		if (!daemon->finishTokenRequest(client_id, request_id, token, &err)) {
-			fprintf(stderr, "Failed to get a status update for token request: %s\n", err.getFullText().c_str());
-			exit(1);
-		}
+	if (results.empty()) {
+		fprintf(stderr, "Remote daemon reports no un-approved requests pending.\n");
+		return;
 	}
 
-	return htcondor::write_out_token(token_name, token, "");
+	printf("The following requests remain after auto-approval rule was installed:\n");
+	printf("==================================================\n");
+	for (const auto &request_ad : results) {
+		classad::ClassAdUnParser unp;
+		std::string req_contents_str;
+		unp.SetOldClassAd(true);
+		unp.Unparse(req_contents_str, &request_ad);
+
+		printf("%s\n", req_contents_str.c_str());
+	}
+	printf("==================================================\n");
+	printf("To approve these requests, please run condor_token_request_approve manually.\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -110,22 +120,13 @@ int main(int argc, char *argv[]) {
 	daemon_t dtype = DT_COLLECTOR;
 	std::string pool;
 	std::string name;
-	std::string identity;
-	std::string token_name;
-	std::vector<std::string> authz_list;
-	long lifetime = -1;
+	std::string netblock;
+	time_t lifetime = 3600;
 	for (int i = 1; i < argc; i++) {
-		if (is_dash_arg_prefix(argv[i], "authz", 1)) {
+		if (is_dash_arg_prefix(argv[i], "lifetime", 1)) {
 			i++;
 			if (!argv[i]) {
-				fprintf(stderr, "%s: -authz requires an authorization name argument\n", argv[0]);
-				exit(1);
-			}
-			authz_list.push_back(argv[i]);
-		} else if (is_dash_arg_prefix(argv[i], "lifetime", 1)) {
-			i++;
-			if (!argv[i]) {
-				fprintf(stderr, "%s: -lifetime requires an integer in seconds.\n", argv[0]);
+				fprintf(stderr, "%s: -lifetime requires an argument.\n", argv[0]);
 				exit(1);
 			}
 			try {
@@ -134,13 +135,13 @@ int main(int argc, char *argv[]) {
 				fprintf(stderr, "%s: Invalid argument for -lifetime: %s.\n", argv[0], argv[i]);
 				exit(1);
 			}
-		} else if (is_dash_arg_prefix(argv[i], "identity", 1)) {
+		} else if (is_dash_arg_prefix(argv[i], "netblock", 2)) {
 			i++;
 			if (!argv[i]) {
-				fprintf(stderr, "%s: -identity requires an argument.\n", argv[0]);
+				fprintf(stderr, "%s: -netblock request an argument.\n", argv[0]);
 				exit(1);
 			}
-			identity = argv[i];
+			netblock = argv[i];
 		} else if (is_dash_arg_prefix(argv[i], "pool", 1)) {
 			i++;
 			if (!argv[i]) {
@@ -155,13 +156,6 @@ int main(int argc, char *argv[]) {
 				exit(1);
 			}
 			name = argv[i];
-		} else if (is_dash_arg_prefix(argv[i], "token", 2)) {
-			i++;
-			if (!argv[i]) {
-				fprintf(stderr, "%s: -token requires a file name argument.\n", argv[0]);
-				exit(1);
-			}
-			token_name = argv[i];
 		} else if (is_dash_arg_prefix(argv[i], "type", 1)) {
 			i++;
 			if (!argv[i]) {
@@ -189,5 +183,12 @@ int main(int argc, char *argv[]) {
 
 	config();
 
-	return request_remote_token(pool, name, dtype, authz_list, lifetime, identity, token_name);
+	if (netblock.empty()) {
+		fprintf(stderr, "%s: -netblock argument is required.\n"
+			"Example: %s -netblock 192.168.0.0/24\n",
+			argv[0], argv[0]);
+		exit(1);
+	}
+
+	return auto_approve(pool, name, dtype, netblock, lifetime);
 }

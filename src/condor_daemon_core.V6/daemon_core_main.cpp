@@ -41,9 +41,15 @@
 #include "match_prefix.h"
 #include "historyFileFinder.h"
 #include "store_cred.h"
+#include "condor_netaddr.h"
+#include "net_string_list.h"
+#include "dc_collector.h"
+#include "condor_netdb.h"
+#include "token_utils.h"
 
 #include <chrono>
 #include <sstream>
+#include <algorithm>
 
 #ifdef LINUX
 #include <sys/prctl.h>
@@ -131,9 +137,13 @@ static bool doAuthInit = true;
 // It can be set to false by calling the DC_Skip_Core_Init() function.
 static bool doCoreInit = true;
 
+
+	// Right now, the default ID is simply the empty string.
+const std::string DCTokenRequester::default_identity = "";
+
 namespace {
 
-class TokenRequest {
+class TokenRequest : public Service {
 public:
 
 	enum class State {
@@ -157,6 +167,27 @@ public:
 		m_client_id(client_id)
 	{
 		m_request_time = time(NULL);
+	}
+
+	std::string getPublicString() const {
+		std::stringstream ss;
+		std::string bounding_set_info = "<none>";
+		if (!m_authz_bounding_set.empty()) {
+			std::stringstream ss2;
+			bool first = true;
+			for (const auto &authz : m_authz_bounding_set) {
+				if (first) {first = false;}
+				else {ss2 << ",";}
+				ss2 << authz;
+			}
+			bounding_set_info = ss2.str();
+		}
+		ss << "[requested_id = " << m_requested_identity
+			<< "; requester_id = " << m_requester_identity
+			<< "; peer_location = " << m_peer_location
+			<< "; m_authz_bounding_set = " << bounding_set_info
+			<< "]";
+		return ss.str();
 	}
 
 	void setToken(const std::string &token) {
@@ -192,7 +223,288 @@ public:
 
 	const std::string &getPeerLocation() const {return m_peer_location;}
 
+	bool static ShouldAutoApprove(const TokenRequest &token_request, time_t now,
+		std::string &rule_text)
+	{
+
+			// Only auto-approve requests for the condor identity.
+		if (strncmp(token_request.getRequestedIdentity().c_str(), "condor@", 7)) {
+			return false;
+		}
+			// All auto-approve requests must have a bounding set to limit auth.
+		if (!token_request.getBoundingSet().size()) {
+			return false;
+		}
+			// Only auto-approve requests that ask for schedds or startds.
+		for (const auto &authz : token_request.getBoundingSet()) {
+			if ((authz != "ADVERTISE_SCHEDD") && (authz != "ADVERTISE_STARTD")) {
+				return false;
+			}
+		}
+			// Only auto-approve requests that aren't pending.
+		if (token_request.getState() != State::Pending) {
+			dprintf(D_SECURITY|D_FULLDEBUG, "Cannot auto-approve request"
+				" because it is pending.\n");
+			return false;
+		}
+			// Only auto-approve requests that haven't expired.
+		if (now > (token_request.m_request_time + \
+				(token_request.m_lifetime < 0 ?
+				86400 * 365 : token_request.m_lifetime))) {
+			dprintf(D_SECURITY|D_FULLDEBUG, "Cannot auto-approve request"
+				" because it is expired (token was requested at %ld"
+				"; lifetime is %ld; now is %ld).\n",
+				token_request.m_request_time,
+				token_request.m_lifetime, now);
+			return false;
+		}
+
+		auto peer_location = token_request.getPeerLocation();
+		dprintf(D_FULLDEBUG|D_SECURITY, "Evaluating request against %lu rules.\n", m_approval_rules.size());
+		for (auto &rule : m_approval_rules) {
+			if (!rule.m_approval_netblock->find_matches_withnetwork(
+					peer_location.c_str(), nullptr)) {
+				char * netblock = rule.m_approval_netblock->print_to_string();
+				dprintf(D_FULLDEBUG|D_SECURITY, "Cannot auto-approve request;"
+					" peer %s does not match netblock %s.\n",
+					peer_location.c_str(),
+					netblock);
+				free(netblock);
+				continue;
+			}
+			if (token_request.m_request_time > rule.m_expiry_time) {
+				dprintf(D_SECURITY|D_FULLDEBUG, "Cannot auto-approve request"
+					" because request time (%ld) is after rule expiration (%ld).\n",
+					token_request.m_request_time, rule.m_expiry_time);
+				continue;
+			}
+				// Approve requests that came in up to 60s before the
+				// auto-approval rule was installed.
+			if (token_request.m_request_time < rule.m_issue_time - 60) {
+				dprintf(D_SECURITY|D_FULLDEBUG, "Cannot auto-approve request"
+					" because it is too old");
+				continue;
+			}
+			std::unique_ptr<char> netblock(rule.m_approval_netblock->print_to_string());
+			std::stringstream ss;
+			ss << "[netblock = " << netblock.get() << "; lifetime_left = "
+				<< (rule.m_expiry_time - now) << "]";
+			rule_text = ss.str();
+			return true;
+		}
+		return false;
+	}
+
+	static bool addApprovalRule(std::string netblock, time_t lifetime, CondorError & error ) {
+		if( lifetime <= 0 ) {
+			error.push( "DAEMON", -1, "Auto-approval rule lifetimes must be greater than zero." );
+			return false;
+		}
+
+		condor_netaddr na;
+		if(! na.from_net_string(netblock.c_str())) {
+			error.push( "DAEMON", -2, "Auto-approval rule netblock invalid." );
+			return false;
+		}
+
+		m_approval_rules.emplace_back();
+		auto &rule = m_approval_rules.back();
+		rule.m_approval_netblock.reset(new NetStringList(netblock.c_str()));
+		rule.m_issue_time = time(NULL);
+		rule.m_expiry_time = rule.m_issue_time + lifetime;
+		return true;
+	}
+
+	static void clearApprovalRules() {m_approval_rules.clear();}
+
+	static void cleanupApprovalRules() {
+		auto now = time(NULL);
+		m_approval_rules.erase(
+			std::remove_if(m_approval_rules.begin(), m_approval_rules.end(),
+				[=](const ApprovalRule &rule) {return rule.m_expiry_time < now;}),
+			m_approval_rules.end()
+		);
+	}
+
+		// Callbacks for collector updates; determine whether a token request would be useful!
+	static void
+	daemonUpdateCallback(bool success, Sock *sock, CondorError *, const std::string &trust_domain, bool should_try_token_request, void *miscdata) {
+		if (success || !should_try_token_request || !sock) return;
+
+		auto data = reinterpret_cast<DCTokenRequester::DCTokenRequesterData*>(miscdata);
+		if (!data) {
+			return;
+		}
+
+			// Avoiding requesting tokens for already-pending requests.
+		for (const auto &pending_request : m_token_requests) {
+			if (pending_request.m_identity != data->m_identity) {
+				continue;
+			}
+			if (pending_request.m_trust_domain == trust_domain) {
+				return;
+			}
+		}
+
+		dprintf(D_ALWAYS, "Collector update failed; will try to get a token request for trust domain %s"
+			", identity %s.\n", trust_domain.c_str(),
+			data->m_identity == DCTokenRequester::default_identity ?
+				"(default)" : data->m_identity.c_str());
+		m_token_requests.emplace_back();
+		auto &back = m_token_requests.back();
+		back.m_identity = data->m_identity;
+		back.m_trust_domain = trust_domain;
+		back.m_authz_name = data->m_authz_name;
+		back.m_daemon.reset(new DCCollector(data->m_addr.c_str()));
+		back.m_daemon->setOwner(data->m_identity);
+			// Unprivileged requests can only use SSL or TOKEN.
+		if (data->m_identity != DCTokenRequester::default_identity) {
+			back.m_daemon->setAuthenticationMethods({"SSL", "TOKEN"});
+		}
+		back.m_callback_fn = &DCTokenRequester::tokenRequestCallback;
+		back.m_callback_data = data;
+
+		if (m_token_requests_tid == -1) {
+			m_token_requests_tid = daemonCore->Register_Timer( 0,
+			(TimerHandler)&TokenRequest::tryTokenRequests,
+			"TokenRequest::tryTokenRequests" );
+		}
+
+	}
+
+	static void
+	clearTokenRequests() {m_token_requests.clear();}
+
 private:
+	struct PendingRequest {
+			// Request ID sent to the remote server.
+		std::string m_request_id;
+			// My auto-generated client ID; an empty
+			// client ID indicates the token request has not
+			// been sent to the remote daemon yet.
+		std::string m_client_id;
+			// Identity requested for this token
+		std::string m_identity;
+		std::string m_trust_domain;
+			// Authorization level name
+		std::string m_authz_name;
+		std::unique_ptr<Daemon> m_daemon{nullptr};
+		RequestCallbackFn *m_callback_fn{nullptr};
+			// Callback data must be guaranteed to outlive the request;
+			// borrowed reference.
+		void *m_callback_data{nullptr};
+	};
+
+	static void
+	tryTokenRequests() {
+		bool should_reschedule = false;
+		dprintf(D_SECURITY|D_FULLDEBUG, "There are %lu token requests remaining.\n",
+		m_token_requests.size());
+		for (auto & request : m_token_requests)
+		{
+			should_reschedule |= tryTokenRequest(request);
+		}
+		if (should_reschedule) {
+			daemonCore->Reset_Timer(m_token_requests_tid, 5, 1);
+			dprintf(D_SECURITY|D_FULLDEBUG, "Will reschedule another poll of requests.\n");
+		} else {
+			daemonCore->Cancel_Timer(m_token_requests_tid);
+			m_token_requests_tid = -1;
+		}
+		m_token_requests.erase(
+			std::remove_if(m_token_requests.begin(),
+				m_token_requests.end(),
+				[](const PendingRequest &req) {return req.m_client_id.empty();}),
+					m_token_requests.end()
+			);
+	};
+
+	static bool
+	tryTokenRequest(PendingRequest &req) {
+		std::string subsys_name = get_mySubSystemName();
+
+		dprintf(D_SECURITY, "Trying token request to remote host %s for user %s.\n",
+			req.m_daemon->name() ? req.m_daemon->name() : req.m_daemon->addr(),
+			req.m_identity == DCTokenRequester::default_identity ? "(default)" : req.m_identity.c_str());
+		if (!req.m_daemon) {
+			dprintf(D_FAILURE, "Logic error!  Token request without associated daemon.\n");
+			return false;
+		}
+		std::string token;
+		if (req.m_client_id.empty()) {
+			req.m_request_id = "";
+			std::vector<char> hostname;
+			hostname.reserve(MAXHOSTNAMELEN);
+			if (condor_gethostname(&hostname[0], MAXHOSTNAMELEN)) {
+				dprintf(D_ALWAYS, "Unable to determine hostname; cannot start token request.\n");
+				(*req.m_callback_fn)(false, req.m_callback_data);
+				return false;
+			}
+			req.m_client_id = subsys_name + "-" + std::string(&hostname[0]) + "-" +
+			std::to_string(get_csrng_uint() % 100000);
+
+			std::string request_id;
+			std::vector<std::string> authz_list;
+			authz_list.push_back(req.m_authz_name);
+			int lifetime = -1;
+			CondorError err;
+			if (!req.m_daemon->startTokenRequest(req.m_identity, authz_list, lifetime,
+				req.m_client_id, token, request_id, &err))
+			{
+				dprintf(D_ALWAYS, "Failed to request a new token: %s\n", err.getFullText().c_str());
+				req.m_client_id = "";
+				(*req.m_callback_fn)(false, req.m_callback_data);
+				return false;
+			}
+			if (token.empty()) {
+				req.m_request_id = request_id;
+				dprintf(D_ALWAYS, "Token requested; please ask collector %s admin to approve request ID %s.\n", req.m_daemon->name(), request_id.c_str());
+				return true;
+			} else {
+				dprintf(D_ALWAYS, "Token request auto-approved.\n");
+				Condor_Auth_Passwd::retry_token_search();
+				daemonCore->getSecMan()->reconfig();
+				(*req.m_callback_fn)(true, req.m_callback_data);
+				req.m_client_id = "";
+			}
+		} else {
+			CondorError err;
+			if (!req.m_daemon->finishTokenRequest(req.m_client_id, req.m_request_id, token, &err)) {
+				dprintf(D_ALWAYS, "Failed to retrieve a new token: %s\n", err.getFullText().c_str());
+				req.m_client_id = "";
+				(*req.m_callback_fn)(false, req.m_callback_data);
+				return false;
+			}
+			if (token.empty()) {
+				dprintf(D_FULLDEBUG|D_SECURITY, "Token request not approved; will retry in 5 seconds.\n");
+				dprintf(D_ALWAYS, "Token requested not yet approved; please ask collector %s admin to approve request ID %s.\n", req.m_daemon->name(), req.m_request_id.c_str());
+				return true;
+			} else {
+				dprintf(D_ALWAYS, "Token request approved.\n");
+					// Flush the cached result of the token search.
+				Condor_Auth_Passwd::retry_token_search();
+					// Flush out the security sessions; will need to force a re-auth.
+				auto sec_man = daemonCore->getSecMan();
+				sec_man->reconfig();
+				if (!req.m_identity.empty()) {
+					std::string orig_tag = sec_man->getTag();
+					sec_man->setTag(req.m_identity);
+					sec_man->invalidateAllCache();
+					sec_man->setTag(orig_tag);
+				} else {
+					sec_man->invalidateAllCache();
+				}
+					// Invoke the daemon-provided callback to do daemon-specific cleanups.
+				(*req.m_callback_fn)(true, req.m_callback_data);
+			}
+			req.m_client_id = "";
+		}
+		if (!token.empty()) {
+			htcondor::write_out_token(subsys_name + "_auto_generated_token", token, req.m_identity);
+		}
+		return false;
+	}
+
 	// The initial state of a request should always be pending.
 	State m_state{State::Pending};
 
@@ -206,7 +518,27 @@ private:
 	std::vector<std::string> m_authz_bounding_set;
 	std::string m_client_id;
 	std::string m_token;
+
+	struct ApprovalRule
+	{
+		std::unique_ptr<NetStringList> m_approval_netblock;
+		time_t m_issue_time;
+		time_t m_expiry_time;
+	};
+
+	static std::vector<ApprovalRule> m_approval_rules;
+
+	static std::vector<PendingRequest> m_token_requests;
+	static int m_token_requests_tid;
 };
+
+
+int TokenRequest::m_token_requests_tid{-1};
+
+
+std::vector<TokenRequest::ApprovalRule> TokenRequest::m_approval_rules;
+
+std::vector<TokenRequest::PendingRequest> TokenRequest::m_token_requests;
 
 typedef std::unordered_map<int, std::unique_ptr<TokenRequest>> TokenMap;
 
@@ -282,9 +614,45 @@ void cleanup_request_map() {
 			g_request_map.erase(iter);
 		}
 	}
+
+	TokenRequest::cleanupApprovalRules();
 }
 
 }
+
+
+void*
+DCTokenRequester::createCallbackData(const std::string &daemon_addr, const std::string &identity,
+	const std::string &authz_name)
+{
+	DCTokenRequesterData *data = new DCTokenRequesterData();
+	data->m_addr = daemon_addr;
+	data->m_identity = identity;
+	data->m_authz_name = authz_name;
+	data->m_callback_fn = m_callback;
+	data->m_callback_data = m_callback_data;
+
+	return data;
+}
+
+
+void
+DCTokenRequester::tokenRequestCallback(bool success, void *miscdata)
+{
+	auto data = reinterpret_cast<DCTokenRequester::DCTokenRequesterData *>(miscdata);
+	std::unique_ptr<DCTokenRequester::DCTokenRequesterData> data_uptr(data);
+
+	(*data->m_callback_fn)(success, data->m_callback_data);
+}
+
+
+void
+DCTokenRequester::daemonUpdateCallback(bool success, Sock *sock, CondorError *errstack, const std::string &trust_domain,
+                bool should_try_token_request, void *miscdata)
+{
+	TokenRequest::daemonUpdateCallback(success, sock, errstack, trust_domain, should_try_token_request, miscdata);
+}
+
 
 #ifndef WIN32
 // This function polls our parent process; if it is gone, shutdown.
@@ -445,7 +813,7 @@ DC_Exit( int status, const char *shutdown_program )
 	}
 
 		// Free up the memory from the config hash table, too.
-	clear_config();
+	clear_global_config_table();
 
 		// and deallocate the memory from the passwd_cache (uids.C)
 	delete_passwd_cache();
@@ -913,11 +1281,33 @@ unix_sig_coredump(int signum, siginfo_t *s_info, void *)
 	sigaction(signum, &sa, NULL);
 	sigprocmask(SIG_SETMASK, &sa.sa_mask, NULL);
 
+	// On linux, raise() calls tgkill() with values for tgid and tid that
+	// are cached in memory by glibc. If clone() was previously called with
+	// the CLONE_VM flag, glibc sets these cached values to -1. This will
+	// cause the tgkill() call in raise() to fail. raise() then returns
+	// failure with errno EINVAL.
+	// We use clonse() with CLONE_VM in Create_Process() in the schedd to
+	// make spawning of child processes more efficient.
+	// tgkill() isn't exposed by glibc, but we can call kill() on ourselves
+	// to re-raise the signal.
+	// There's a possibility that the signal will be delivered to another
+	// thread while this thread continues execution. For this case, add a
+	// short sleep to prevent _exit() from happening before the signal is.
+	// acted upon.
+#if defined(LINUX)
+	if ( kill(getpid(),signum) != 0) {
+#else
 	if ( raise(signum) != 0 ) {
+#endif
 		log_args[0] = (unsigned long)signum;
 		log_args[1] = (unsigned long)errno;
 		dprintf_async_safe("Error: raise(%0) failed: errno %1\n", log_args, 2);
 	}
+#if defined(LINUX)
+	else {
+		sleep(1);
+	}
+#endif
 
 	// If for whatever reason the second raise doesn't kill us properly, 
 	// we shall exit with a non-zero code so if anything depends on us,
@@ -1452,6 +1842,28 @@ handle_dc_query_instance( Service*, int, Stream* stream)
 }
 
 
+static std::string
+get_token_signing_key(CondorError &err) {
+	std::string key_name = "POOL";
+	param(key_name, "SEC_TOKEN_ISSUER_KEY");
+	std::string final_key_name;
+	std::vector<std::string> creds;
+	if (!listNamedCredentials(creds, &err)) {
+		return "";
+	}
+	for (const auto &cred : creds) {
+		if (cred == key_name) {
+			final_key_name = key_name;
+			break;
+		}
+	}
+	if (final_key_name.empty()) {
+		err.push("DAEMON", 4, "Server does not have a signing key configured.");
+	}
+	return final_key_name;
+}
+
+
 static int
 handle_dc_start_token_request( Service*, int, Stream* stream)
 {
@@ -1538,6 +1950,54 @@ handle_dc_start_token_request( Service*, int, Stream* stream)
 			// Note we currently store this as a string; this way we can come back later
 			// and introduce alphanumeric characters if we so wish.
 		result_ad.InsertAttr(ATTR_SEC_REQUEST_ID, request_id_str);
+
+		iter = g_request_map.find(request_id);
+		time_t now = time(NULL);
+
+		CondorError err;
+		std::string final_key_name = get_token_signing_key(err);
+		if (final_key_name.empty()) {
+			result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+			result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+			iter = g_request_map.end();
+		}
+
+		std::string rule_text;
+		if ((iter != g_request_map.end()) && TokenRequest::ShouldAutoApprove(*(iter->second), now, rule_text)) {
+			auto token_request = *(iter->second);
+			CondorError err;
+			std::string token;
+			if (!Condor_Auth_Passwd::generate_token(
+				token_request.getRequestedIdentity(),
+				final_key_name,
+				token_request.getBoundingSet(),
+				token_request.getLifetime(),
+				token,
+				&err))
+			{
+				result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+				result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+				token_request.setFailed();
+			} else {
+				g_request_map.erase(iter);
+				if (token.empty()) {
+					error_code = 6;
+					error_string = "Internal state error.";
+				}
+				result_ad.InsertAttr(ATTR_SEC_TOKEN, token);
+				dprintf(D_ALWAYS, "Token request %s approved via auto-approval rule %s.\n",
+					token_request.getPublicString().c_str(), rule_text.c_str());
+			}
+			// Auto-approval rules are effectively host-based security; if we trust the network
+			// blindly, the lack of encryption does not bother us.
+			//
+			// In all other cases, encryption is a hard requirement.
+		} else if (!stream->get_encryption()) {
+			g_request_map.erase(iter);
+			result_ad.Clear();
+			result_ad.InsertAttr(ATTR_ERROR_STRING, "Request to server was not encrypted.");
+			result_ad.InsertAttr(ATTR_ERROR_CODE, 7);
+		}
 	}
 
 	stream->encode();
@@ -1661,6 +2121,10 @@ handle_dc_list_token_request( Service*, int, Stream* stream)
 	int error_code = 0;
 	std::string error_string;
 
+	bool has_admin = daemonCore->Verify("list request", ADMINISTRATOR,
+		static_cast<ReliSock*>(stream)->peer_addr(),
+		static_cast<Sock*>(stream)->getFullyQualifiedUser());
+
 	// While it looks like we could use EvaluateAttrInt() here, we're storing
 	// request IDs as strings in case in turns out people don't like random
 	// 7-digit integers.  The std::stol() call is an optimization which we'll
@@ -1668,7 +2132,7 @@ handle_dc_list_token_request( Service*, int, Stream* stream)
 	//
 	// The filter is optional; if it's absent, we'll list all pending requests.
 	std::string request_filter_str;
-	if (ad.EvaluateAttrString(ATTR_SEC_REQUEST_ID, request_filter_str) && !request_filter_str.empty()) {
+	if (!error_code && (ad.EvaluateAttrString(ATTR_SEC_REQUEST_ID, request_filter_str) && !request_filter_str.empty())) {
 		try {
 			std::stol(request_filter_str);
 		} catch (...) {
@@ -1701,6 +2165,14 @@ handle_dc_list_token_request( Service*, int, Stream* stream)
 			bounds = "";
 		} else {
 			bounds = bounds.substr(0, bounds.size()-1);
+		}
+
+			// If we do not have ADMINISTRATOR privileges, the requested identity
+			// and the authenticated identity must match!
+		if (!has_admin && strcmp(token_request->getRequestedIdentity().c_str(),
+			static_cast<Sock*>(stream)->getFullyQualifiedUser()))
+		{
+			continue;
 		}
 
 		if (!result_ad.InsertAttr(ATTR_SEC_REQUEST_ID, request_id_str) ||
@@ -1766,9 +2238,12 @@ handle_dc_approve_token_request( Service*, int, Stream* stream)
 	int error_code = 0;
 	std::string error_string;
 
+	bool has_admin = daemonCore->Verify("approve request", ADMINISTRATOR, static_cast<ReliSock*>(stream)->peer_addr(),
+		static_cast<Sock*>(stream)->getFullyQualifiedUser());
+
 	// See comment in handle_dc_list_token_request().
 	std::string request_id_str;
-	if (!ad.EvaluateAttrString(ATTR_SEC_REQUEST_ID, request_id_str) || request_id_str.empty())
+	if (!error_code && (!ad.EvaluateAttrString(ATTR_SEC_REQUEST_ID, request_id_str) || request_id_str.empty()))
 	{
 		error_code = 1;
 		error_string = "Request ID not provided.";
@@ -1777,8 +2252,10 @@ handle_dc_approve_token_request( Service*, int, Stream* stream)
 	try {
 		request_id = std::stol(request_id_str);
 	} catch (...) {
-		error_code = 2;
-		error_string = "Unable to convert request ID to integer.";
+		if (!error_code) {
+			error_code = 2;
+			error_string = "Unable to convert request ID to integer.";
+		}
 	}
 
 	auto iter = g_request_map.find(request_id);
@@ -1790,7 +2267,7 @@ handle_dc_approve_token_request( Service*, int, Stream* stream)
 	}
 
 	std::string client_id;
-	if (!ad.EvaluateAttrString(ATTR_SEC_CLIENT_ID, client_id) || client_id.empty())
+	if (!error_code && (!ad.EvaluateAttrString(ATTR_SEC_CLIENT_ID, client_id) || client_id.empty()))
 	{
 		error_code = 1;
 		error_string = "Client ID not provided.";
@@ -1809,24 +2286,21 @@ handle_dc_approve_token_request( Service*, int, Stream* stream)
 		request_id = -1;
 	}
 
-	std::string key_name = "POOL";
-	param(key_name, "SEC_TOKEN_ISSUER_KEY");
-	std::string final_key_name;
-	std::vector<std::string> creds;
+		// If we do not have ADMINISTRATOR privileges, the requested identity
+		// and the authenticated identity must match!
+	if (!has_admin && strcmp(iter->second->getRequestedIdentity().c_str(),
+		static_cast<Sock*>(stream)->getFullyQualifiedUser()))
+	{
+		error_code = 6;
+		error_string = "Insufficient privilege to approve request.";
+		request_id = -1;
+	}
+
 	CondorError err;
-	if (!listNamedCredentials(creds, &err)) {
+	std::string final_key_name = get_token_signing_key(err);
+	if ((request_id != -1) && final_key_name.empty()) {
 		error_string = err.getFullText();
 		error_code = err.code();
-	}
-	for (const auto &cred : creds) {
-		if (cred == key_name) {
-			final_key_name = key_name;
-			break;
-		}
-	}
-	if (request_id != -1 && final_key_name.empty()) {
-		error_code = 4;
-		error_string = "Server does not have a signing key configured.";
 	}
 
 	stream->encode();
@@ -1871,6 +2345,96 @@ handle_dc_approve_token_request( Service*, int, Stream* stream)
 
 
 static int
+handle_dc_auto_approve_token_request( Service*, int, Stream* stream )
+{
+	classad::ClassAd ad;
+	if (!getClassAd(stream, ad) || !stream->end_of_message())
+	{
+		dprintf(D_FULLDEBUG, "handle_dc_auto_approve_token_request: failed to read input from client\n");
+		return false;
+	}
+
+	std::string netblock;
+	time_t lifetime = -1;
+	ad.EvaluateAttrString(ATTR_SUBNET, netblock);
+	ad.EvaluateAttrInt(ATTR_SEC_LIFETIME, lifetime);
+	int max_lifetime = param_integer("TOKEN_REQUEST_AUTO_APPROVE_MAX_LIFETIME", 3600);
+	if (lifetime > max_lifetime) lifetime = max_lifetime;
+
+	stream->encode();
+	classad::ClassAd result_ad;
+
+	CondorError err;
+	int error_code = 0;
+	std::string error_string;
+
+	if( TokenRequest::addApprovalRule(netblock, lifetime, err) ) {
+		dprintf(D_SECURITY|D_FULLDEBUG, "Added a new auto-approve rule for netblock %s"
+			" with lifetime %ld.\n", netblock.c_str(), lifetime);
+
+		std::string final_key_name = get_token_signing_key(err);
+		if (final_key_name.empty()) {
+			error_string = err.getFullText();
+			error_code = err.code();
+		}
+
+		time_t now = time(NULL);
+		// We otherwise only evaluate each request as it comes in, so we have to
+		// check all of them now if we want to approve ones that came in recently.
+		dprintf(D_SECURITY|D_FULLDEBUG, "Evaluating %lu existing requests for "
+			"auto-approval.\n", g_request_map.size());
+		for (auto &iter : g_request_map) {
+			if (error_code) {break;}
+
+			std::string rule_text;
+			if (!TokenRequest::ShouldAutoApprove(*(iter.second), now, rule_text)) {
+				continue;
+			}
+			auto &token_request = *(iter.second);
+			CondorError err;
+			std::string token;
+			if (!Condor_Auth_Passwd::generate_token(
+				token_request.getRequestedIdentity(),
+				final_key_name,
+				token_request.getBoundingSet(),
+				token_request.getLifetime(),
+				token,
+				&err))
+			{
+				error_string = err.getFullText();
+				error_code = err.code();
+				token_request.setFailed();
+			} else {
+				token_request.setToken(token);
+				dprintf(D_SECURITY|D_FULLDEBUG,
+					"Auto-approved existing request %d.\n",
+					iter.first);
+				dprintf(D_ALWAYS, "Token request %s passed via auto-approval rule %s.\n",
+					token_request.getPublicString().c_str(), rule_text.c_str());
+			}
+		}
+	} else {
+		dprintf(D_FULLDEBUG, "Rejected new auto-approve rule for netblock %s "
+			"with lifetime %ld: %s\n", netblock.c_str(), lifetime, err.getFullText().c_str());
+		error_string = err.getFullText();
+		error_code = err.code();
+	}
+
+	result_ad.InsertAttr(ATTR_ERROR_CODE, error_code);
+	if (error_code) {
+		result_ad.InsertAttr(ATTR_ERROR_STRING, error_string);
+	}
+
+	if (!putClassAd(stream, result_ad) || !stream->end_of_message())
+	{
+		dprintf(D_FULLDEBUG, "handle_dc_auto_approve_token_request: failed to send final response ad to client\n");
+		return false;
+	}
+	return true;
+}
+
+
+static int
 handle_dc_session_token( Service*, int, Stream* stream)
 {
 	classad::ClassAd ad;
@@ -1904,20 +2468,8 @@ handle_dc_session_token( Service*, int, Stream* stream)
 	} else {
 		requested_lifetime = -1;
 	}
-	std::string key_name = "POOL";
-	param(key_name, "SEC_TOKEN_ISSUER_KEY");
-	std::vector<std::string> creds;
-	std::string final_key_name;
-	if (!listNamedCredentials(creds, &err)) {
-		result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
-		result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
-	}
-	for (const auto &cred : creds) {
-		if (cred == key_name) {
-			final_key_name = key_name;
-			break;
-		}
-	}
+
+	std::string final_key_name = get_token_signing_key(err);
 
 	classad::ClassAd policy_ad;
 	static_cast<ReliSock*>(stream)->getPolicyAd(policy_ad);
@@ -1947,6 +2499,8 @@ handle_dc_session_token( Service*, int, Stream* stream)
 	} else if (final_key_name.empty()) {
 		result_ad.InsertAttr(ATTR_ERROR_STRING, "Server does not have access to requested key.");
 		result_ad.InsertAttr(ATTR_ERROR_CODE, 1);
+		std::string key_name = "POOL";
+		param(key_name, "SEC_TOKEN_ISSUER_KEY");
 		dprintf(D_SECURITY, "Daemon configured to sign with key named %s; this is not available.\n",
 			key_name.c_str());
 	}
@@ -2478,6 +3032,13 @@ dc_reconfig()
 			// should never make it to here!
 			EXCEPT("FAILED TO DROP CORE");	
 	}
+
+		// On reconfig, reset token requests to a pristine state.
+	TokenRequest::clearApprovalRules();
+	for (auto &entry : g_request_map) {
+		entry.second->setFailed();
+	}
+	TokenRequest::clearTokenRequests();
 
 	// call this daemon's specific main_config()
 	dc_main_config();
@@ -3515,19 +4076,32 @@ int dc_main( int argc, char** argv )
 								"handle_dc_finish_token_request()", 0, ALLOW );
 
 		//
-		// List the outstanding token requests
+		// List the outstanding token requests.
+		//
+		// In the handler, we further restrict the returned information based on
+		// the user authorization.
 		//
 	daemonCore->Register_Command( DC_LIST_TOKEN_REQUEST, "DC_LIST_TOKEN_REQUEST",
 		(CommandHandler)handle_dc_list_token_request,
-		"handle_dc_list_token_request", 0, ADMINISTRATOR );
+		"handle_dc_list_token_request", 0, ALLOW, D_COMMAND, true );
 
 		//
 		// Approve a token request.
 		//
+		// In the handler, we further restrict the returned information based on
+		// the user authorization; non-ADMINISTRATORs can only approve their own
+		// requests..
+		//
 	daemonCore->Register_Command( DC_APPROVE_TOKEN_REQUEST, "DC_APPROVE_TOKEN_REQUEST",
 		(CommandHandler)handle_dc_approve_token_request,
-		"handle_dc_approve_token_request", 0, ADMINISTRATOR );
+		"handle_dc_approve_token_request", 0, ALLOW, D_COMMAND, true );
 
+		//
+		// Install an auto-approval rule
+		//
+	daemonCore->Register_Command( DC_AUTO_APPROVE_TOKEN_REQUEST, "DC_AUTO_APPROVE_TOKEN_REQUEST",
+		(CommandHandler)handle_dc_auto_approve_token_request,
+		"handle_dc_auto_approve_token_request", 0, ADMINISTRATOR );
 
 	// Call daemonCore's reconfig(), which reads everything from
 	// the config file that daemonCore cares about and initializes

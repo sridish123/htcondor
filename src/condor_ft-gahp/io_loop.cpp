@@ -370,7 +370,8 @@ stdin_pipe_handler(Service*, int) {
 										claimid.secSessionInfo(),
 										CONDOR_PARENT_FQU,
 										NULL,
-										0 ) ) {
+										0,
+										nullptr ) ) {
 					gahp_output_return_error();
 				} else {
 					sec_session_id = claimid.secSessionId();
@@ -1026,9 +1027,9 @@ int do_command_download_sandbox(void *arg, Stream*) {
 	}
 
 	// rewrite the IWD to the newly created sandbox dir
-	ad.Assign(ATTR_JOB_IWD, iwd.c_str());
+	ad.Assign(ATTR_JOB_IWD, iwd);
 	char ATTR_SANDBOX_ID[] = "SandboxId";
-	ad.Assign(ATTR_SANDBOX_ID, sid.c_str());
+	ad.Assign(ATTR_SANDBOX_ID, sid);
 
 	// directory was created, let's set up the FileTransfer object
 	FileTransfer ft;
@@ -1091,9 +1092,9 @@ int do_command_upload_sandbox(void *arg, Stream*) {
 	// rewrite the IWD to the actual sandbox dir
 	std::string iwd;
 	define_sandbox_path(sid, iwd);
-	ad.Assign(ATTR_JOB_IWD, iwd.c_str());
+	ad.Assign(ATTR_JOB_IWD, iwd);
 	char ATTR_SANDBOX_ID[] = "SandboxId";
-	ad.Assign(ATTR_SANDBOX_ID, sid.c_str());
+	ad.Assign(ATTR_SANDBOX_ID, sid);
 
 	// directory was created, let's set up the FileTransfer object
 	FileTransfer ft;

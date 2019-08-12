@@ -30,6 +30,7 @@
 #include "openssl/rand.h"
 #include "condor_netdb.h"
 #include "condor_sinful.h"
+#include "condor_secman.h"
 
 #if defined(DLOPEN_SECURITY_LIBS)
 #include <dlfcn.h>
@@ -359,7 +360,7 @@ bool Condor_Auth_SSL::Initialize()
 int
 Condor_Auth_SSL::authenticate_continue(CondorError *errstack, bool non_blocking)
 {
-	if (!m_auth_state.get()) {
+	if (!m_auth_state) {
 		ouch("Trying to ontinue authentication after failure!\n");
 		return static_cast<int>(CondorAuthSSLRetval::Fail);
 	}
@@ -382,7 +383,7 @@ Condor_Auth_SSL::authenticate_continue(CondorError *errstack, bool non_blocking)
 int Condor_Auth_SSL::authenticate(const char * /* remoteHost */, CondorError* errstack,
 	bool non_blocking)
 {
-	if (!m_auth_state.get()) {
+	if (!m_auth_state) {
 		m_auth_state.reset(new AuthState);
 	}
 
@@ -1187,7 +1188,7 @@ Condor_Auth_SSL::authenticate_finish(CondorError * /*errstack*/, bool /*non_bloc
 	}
 
     dprintf(D_SECURITY,"SSL authentication succeeded to %s\n", getAuthenticatedName());
-	m_auth_state.release();
+	m_auth_state.reset();
     return retval;
 }
 
@@ -1195,7 +1196,7 @@ Condor_Auth_SSL::authenticate_finish(CondorError * /*errstack*/, bool /*non_bloc
 Condor_Auth_SSL::CondorAuthSSLRetval
 Condor_Auth_SSL::authenticate_fail()
 {
-	m_auth_state.release();
+	m_auth_state.reset();
 	return CondorAuthSSLRetval::Fail;
 }
 
@@ -1730,7 +1731,10 @@ SSL_CTX *Condor_Auth_SSL :: setup_ssl_ctx( bool is_server )
 		cadir      = param( AUTH_SSL_CLIENT_CADIR_STR );
 		if (m_scitokens_mode) {
 			param( m_scitokens_file, "SCITOKENS_FILE" );
-		} else {
+			// Only load the provided cert if we're not overriding the
+			// default credential.  All non-default credential owners
+			// will auth anonymously.
+		} else if (SecMan::getTagCredentialOwner().empty()) {
 			certfile   = param( AUTH_SSL_CLIENT_CERTFILE_STR );
 			keyfile    = param( AUTH_SSL_CLIENT_KEYFILE_STR );
 		}

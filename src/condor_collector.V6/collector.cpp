@@ -256,6 +256,11 @@ void CollectorDaemon::Init()
 		(CommandHandler)receive_update,"receive_update",NULL,DAEMON);
 	daemonCore->Register_CommandWithPayload(UPDATE_ACCOUNTING_AD,"UPDATE_ACCOUNTING_AD",
 		(CommandHandler)receive_update,"receive_update",NULL,NEGOTIATOR);
+		// Users may advertise their own submitter ads.  If they do, there are additional
+		// restrictions to their contents (such as the user must be authenticated, not
+		// unmapped, and must match the Owner attribute).
+	daemonCore->Register_CommandWithPayload(UPDATE_OWN_SUBMITTOR_AD,"UPDATE_OWN_SUBMITTOR_AD",
+		(CommandHandler)receive_update,"receive_update",NULL,ALLOW);
 
     // install command handlers for updates with acknowledgement
 
@@ -2064,17 +2069,17 @@ void CollectorDaemon::init_classad(int interval)
         free( tmp );
     }
 
-    MyString id;
+    std::string id;
     if( CollectorName ) {
             if( strchr( CollectorName, '@' ) ) {
-               id.formatstr( "%s", CollectorName );
+               formatstr( id, "%s", CollectorName );
             } else {
-               id.formatstr( "%s@%s", CollectorName, get_local_fqdn().Value() );
+               formatstr( id, "%s@%s", CollectorName, get_local_fqdn().Value() );
             }
     } else {
-            id.formatstr( "%s", get_local_fqdn().Value() );
+            formatstr( id, "%s", get_local_fqdn().Value() );
     }
-    ad->Assign( ATTR_NAME, id.Value() );
+    ad->Assign( ATTR_NAME, id );
 
     ad->Assign( ATTR_COLLECTOR_IP_ADDR, global_dc_sinful() );
 

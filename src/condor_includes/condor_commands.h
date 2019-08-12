@@ -336,6 +336,7 @@ const int UPDATE_ACCOUNTING_AD = 77;
 const int QUERY_ACCOUNTING_ADS = 78;
 const int INVALIDATE_ACCOUNTING_ADS = 79;
 
+const int UPDATE_OWN_SUBMITTOR_AD = 80;
 
 /* these comments are used to control command_table_generator.pl
 NAMETABLE_DIRECTIVE:END_SECTION:collector
@@ -413,6 +414,7 @@ NAMETABLE_DIRECTIVE:END_SECTION:collector
 #define DC_FINISH_TOKEN_REQUEST (DC_BASE+48) // Poll remote daemon for available token.
 #define DC_LIST_TOKEN_REQUEST (DC_BASE+49) // Poll for the existing token requests.
 #define DC_APPROVE_TOKEN_REQUEST (DC_BASE+50) // Approve a token request.
+#define DC_AUTO_APPROVE_TOKEN_REQUEST (DC_BASE+51) // Auto-approve token requests.
 
 /*
 *** Log type supported by DC_FETCH_LOG

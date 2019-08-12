@@ -19,10 +19,11 @@ TOKEN_FILE_EXT = '.use'
 
 DEFAULT_TIMEOUT = 30
 
-DRIVE_PLUGIN_VERSION = '1.0.0'
+ONEDRIVE_PLUGIN_VERSION = '1.0.0'
 
-DRIVE_API_VERSION = 'v3'
-DRIVE_API_BASE_URL = 'https://www.googleapis.com/drive/' + DRIVE_API_VERSION
+ONEDRIVE_API_VERSION = 'v1.0'
+
+ONEDRIVE_API_BASE_URL = "https://graph.microsoft.com/" + ONEDRIVE_API_VERSION + "/me/drive/root"
 
 def print_help(stream = sys.stderr):
     help_msg = '''Usage: {0} -infile <input-filename> -outfile <output-filename>
@@ -40,8 +41,8 @@ def print_capabilities():
     capabilities = {
          'MultipleFileSupport': True,
          'PluginType': 'FileTransfer',
-         'SupportedMethods': 'drive',
-         'Version': DRIVE_PLUGIN_VERSION,
+         'SupportedMethods': 'onedrive',
+         'Version': ONEDRIVE_PLUGIN_VERSION,
     }
     sys.stdout.write(classad.ClassAd(capabilities).printOld())
     
@@ -127,7 +128,7 @@ def get_error_dict(error, url = ''):
 
     return error_dict
 
-class DrivePlugin:
+class OneDrivePlugin:
 
     def __init__(self, token_path):
         self.token = self.get_token(token_path)
@@ -139,7 +140,7 @@ class DrivePlugin:
         return access_token
 
     def api_call(self, endpoint, method = 'GET', params = None, data = {}):
-        url = DRIVE_API_BASE_URL + endpoint
+        url = ONEDRIVE_API_BASE_URL + endpoint
         kwargs = {
             'headers': self.headers,
             'timeout': DEFAULT_TIMEOUT,
@@ -152,110 +153,29 @@ class DrivePlugin:
         response.raise_for_status()
         return response.json()
 
-    def format_query(self, q):
-        folder_comparison = ['!=', '=']
-        query_strings = []
-
-        if 'name' in q:
-            query_strings.append("name = '{0}'".format(q['name']))
-
-        if 'is_folder' in q:
-            query_strings.append(
-                "mimeType {0} 'application/vnd.google-apps.folder'".format(
-                    folder_comparison[q['is_folder']]))
-        else: # assume not a folder
-            query_strings.append(
-                "mimeType != 'application/vnd.google-apps.folder'")
-
-        if 'parents' in q:
-            query_strings.append("'{0}' in parents".format(q['parents']))
-
-        query = " and ".join(query_strings)
-        return query
-    
     def get_file_info(self, url):
         
         # Build the folder tree
         parsed_url = urlparse(url)
-        folder_tree = []
-        if parsed_url.netloc != '':
-            folder_tree.append(parsed_url.netloc)
-        if parsed_url.path != '':
-            path = posixpath.split(parsed_url.path)
-            while path[1] != '':
-                folder_tree.insert(1, path[1])
-                path = posixpath.split(path[0])
-
-        # The file is the last item in the tree
-        filename = folder_tree.pop() 
-
-        # Traverse the folder tree, starting at the root
-        folder_endpoint = '/files'
-        folder_id = 'root'
-
-        searched_path = ''
-        for folder in folder_tree:
-            searched_path += '/{0}'.format(folder)
-
-            query = {
-                'parents': folder_id,
-                'name': folder,
-                'is_folder': True
-            }
-            params = {'q': self.format_query(query)}
-            
-            folder_info = self.api_call(folder_endpoint, params = params)
-            if 'files' in folder_info:
-                if len(folder_info['files']) == 1:
-                    folder_id = folder_info['files'][0]['id']
-                elif len(folder_info['files']) > 1:
-                    raise IOError(5, 'Multiple folders found in Drive matching', searched_path)
-                else:
-                    raise IOError(2, 'Folder not found in Drive', searched_path)
-            else:
-                raise IOError(2, 'Folder not found in Drive', searched_path)
-
-        # Get the file info
-        file_endpoint = '/files'
-
-        searched_path += '/{0}'.format(filename)
-
-        query = {
-            'parents': folder_id,
-            'name': filename,
-            'is_folder': False
-        }
-        params = {'q': self.format_query(query)}
-
-        file_info = self.api_call(file_endpoint, params = params)
-        if 'files' in file_info:
-            if len(file_info['files']) == 1:
-                pass
-            elif len(file_info['files']) > 1:
-                raise IOError(5, 'Multiple files found in Drive matching', searched_path)
-            else:
-                raise IOError(2, 'File not found in Drive', searched_path)
-        else:
-            raise IOError(2, 'File not found in Drive', searched_path)
-
-        return file_info['files'][0]
+        file_info = {}
+        file_info['path'] = parsed_url.path
+        return file_info
 
     def download_file(self, url, local_file_path):
 
         start_time = time.time()
         
         file_info = self.get_file_info(url)
-        file_id = file_info['id']
-        
-        endpoint = '/files/{0}'.format(file_id)
-        url = DRIVE_API_BASE_URL + endpoint
-        params = {'alt': 'media'} # https://developers.google.com/drive/api/v3/manage-downloads
+        file_path = file_info['path']
+
+        endpoint = ':/{0}:/content'.format(file_path)
+        url = ONEDRIVE_API_BASE_URL + endpoint
 
         # Stream the data to disk, chunk by chunk,
         # instead of loading it all into memory.
         connection_start_time = time.time()
-        response = requests.get(url, headers = self.headers, params = params,
-                                    stream = True, timeout = DEFAULT_TIMEOUT)
+        response = requests.get(url, headers = self.headers, stream = True,
+                                    timeout = DEFAULT_TIMEOUT)
 
         try:
             response.raise_for_status()
@@ -332,9 +252,9 @@ if __name__ == '__main__':
                 try:
                     token_name = get_token_name(ad['Url'])
                     token_path = get_token_path(token_name)
-                    box = DrivePlugin(token_path)
+                    onedrive = OneDrivePlugin(token_path)
 
-                    outfile_dict = box.download_file(ad['Url'], ad['LocalFileName'])
+                    outfile_dict = onedrive.download_file(ad['Url'], ad['LocalFileName'])
                     outfile.write(str(classad.ClassAd(outfile_dict)))
                 
                 except Exception as err:

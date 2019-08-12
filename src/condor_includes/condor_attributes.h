@@ -49,6 +49,7 @@
 #define ATTR_ALL_REMOTE_HOSTS  "AllRemoteHosts"
 #define ATTR_ANNEX_NAME  "AnnexName"
 #define ATTR_APPEND_FILES  "AppendFiles"
+#define ATTR_DONT_APPEND "EraseOutputAndErrorOnRestart"
 #define ATTR_ARCH  "Arch"
 #define ATTR_AVAIL_BANDWIDTH_TO_SUBMIT_MACHINE  "AvailBandwidthToSubmitMachine"
 #define ATTR_AVAIL_BANDWIDTH_TO_LAST_CKPT_SERVER  "AvailBandwidthToLastCkptServer"
@@ -200,6 +201,7 @@
 #define ATTR_CLOUD_LABEL_PREFIX "CloudLabel"
 #define ATTR_FILE_SEEK_COUNT  "FileSeekCount"
 #define ATTR_FLOCKED_JOBS  "FlockedJobs"
+#define ATTR_FLOCK_TO "FlockTo"
 #define ATTR_FLAVOR  "Flavor"
 #define ATTR_FORCE  "Force"
 #define ATTR_GAHP_PID "GahpPid"
@@ -886,6 +888,7 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_SEC_TRUST_DOMAIN "TrustDomain"
 #define ATTR_SEC_CLIENT_ID "ClientId"
 #define ATTR_SEC_REQUEST_ID "RequestId"
+#define ATTR_SEC_LIFETIME "Lifetime"
 
 #define ATTR_MULTIPLE_TASKS_PER_PVMD  "MultipleTasksPerPvmd"
 

@@ -1,14 +1,14 @@
 /***************************************************************
  *
- * Copyright (C) 1990-2007, Condor Team, Computer Sciences Department,
+ * Copyright (C) 2019, HTCondor Team, Computer Sciences Department,
  * University of Wisconsin-Madison, WI.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License.  You may
  * obtain a copy of the License at
- * 
+ *
  *    http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,18 +17,19 @@
  *
  ***************************************************************/
 
-#ifndef JAVA_CONFIG_H
-#define JAVA_CONFIG_H
+#include <string>
 
-#include "condor_arglist.h"
+#ifndef __TOKEN_UTILS_H
+#define __TOKEN_UTILS_H
 
-/*
-Extract the java configuration from the local config files.
-The name of the java executable gets put in 'cmd', and the necessary
-arguments get put in 'args'.  If you have other dirs or jarfiles
-that should be placed in the classpath, provide them in 'extra_classpath'.
-*/
+namespace htcondor {
 
-int java_config( std::string &cmd, ArgList *args, StringList *extra_classpath );
+	// Append a given token's contents to a given token file.
+	// The correct directory is automatically determined from the
+	// HTCondor configuration.
+int
+write_out_token(const std::string &token_name, const std::string &token, const std::string &identity);
+
+}
 
 #endif

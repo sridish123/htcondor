@@ -10,6 +10,7 @@ except ImportError:
     from urlparse import urlparse # Python 2
 import posixpath
 import json
+import mimetypes
 
 import requests
 import classad
@@ -19,10 +20,10 @@ TOKEN_FILE_EXT = '.use'
 
 DEFAULT_TIMEOUT = 30
 
-BOX_PLUGIN_VERSION = '1.0.0'
+GDRIVE_PLUGIN_VERSION = '1.0.0'
 
-BOX_API_VERSION = '2.0'
-BOX_API_BASE_URL = 'https://api.box.com/' + BOX_API_VERSION
+GDRIVE_API_VERSION = 'v3'
+GDRIVE_API_BASE_URL = 'https://www.googleapis.com/drive/' + GDRIVE_API_VERSION
 
 def print_help(stream = sys.stderr):
     help_msg = '''Usage: {0} -infile <input-filename> -outfile <output-filename>
@@ -41,11 +42,11 @@ def print_capabilities():
     capabilities = {
          'MultipleFileSupport': True,
          'PluginType': 'FileTransfer',
-         'SupportedMethods': 'box',
-         'Version': BOX_PLUGIN_VERSION,
+         'SupportedMethods': 'gdrive',
+         'Version': GDRIVE_PLUGIN_VERSION,
     }
     sys.stdout.write(classad.ClassAd(capabilities).printOld())
-
+    
 def parse_args():
     '''The optparse library can't handle the types of arguments that the file
     transfer plugin sends, the argparse library can't be expected to be
@@ -62,7 +63,7 @@ def parse_args():
         sys.exit(-1)
 
     # If -classad, print the capabilities of the plugin and exit early
-    if (len(sys.argv) == 2) and (sys.argv[1] == '-classad'):
+    elif (len(sys.argv) == 2) and (sys.argv[1] == '-classad'):
         print_capabilities()
         sys.exit(0)
 
@@ -70,7 +71,7 @@ def parse_args():
     is_upload = False
     if '-upload' in sys.argv[1:]:
         is_upload = True
-        sys.argv.remove('-upload')
+        sys.argv.remove('-upload')        
 
     # -infile and -outfile must be in the first and third position
     if not (
@@ -133,13 +134,13 @@ def get_error_dict(error, url = ''):
 
     return error_dict
 
-class BoxPlugin:
+class GDrivePlugin:
 
     def __init__(self, token_path):
-        self.token_path = token_path
+        self.token_path = token_path        
         self.token = self.get_token(self.token_path)
         self.headers = {'Authorization': 'Bearer {0}'.format(self.token)}
-        self.path_ids = {'/': u'0'}
+        self.path_ids = {'/': u'root'}
 
     def get_token(self, token_path):
         with open(token_path, 'r') as f:
@@ -149,6 +150,11 @@ class BoxPlugin:
     def reload_token(self):
         self.token = self.get_token(self.token_path)
         self.headers['Authorization'] = 'Bearer {0}'.format(self.token)
+        
+    def get_headers_copy(self):
+        self.reload_token()
+        headers = {'Authorization': 'Bearer {0}'.format(self.token)}
+        return headers
 
     def parse_url(self, url):
 
@@ -169,21 +175,22 @@ class BoxPlugin:
 
         return (filename, folder_tree)
 
-    def api_call(self, endpoint, method = 'GET', params = None, data = {}):
-        self.reload_token()
-        url = BOX_API_BASE_URL + endpoint
-
+    def api_call(self, endpoint, method = 'GET', params = None, data = {}, headers = None):
+        url = GDRIVE_API_BASE_URL + endpoint
+        if headers is None:
+            headers = self.get_headers_copy()
+        
         kwargs = {
-            'headers': self.headers,
+            'headers': headers,
             'timeout': DEFAULT_TIMEOUT,
         }
-
+            
         if params is not None:
             kwargs['params'] = params
 
         if method in ['POST', 'PUT', 'PATCH']:
             kwargs['data'] = data
-
+            
         response = requests.request(method, url, **kwargs)
         response.raise_for_status()
 
@@ -191,44 +198,63 @@ class BoxPlugin:
 
     def create_folder(self, folder_name, parent_id):
 
-        endpoint = '/folders'
+        endpoint = '/files'
         data = json.dumps({
             'name': folder_name,
-            'parent': {'id': parent_id}
+            'parents': [parent_id],
+            'mimeType': 'application/vnd.google-apps.folder',
         })
+        headers = self.get_headers_copy()
+        headers['Content-Type'] = 'application/json'
+        
+        folder_info = self.api_call(endpoint, 'POST', data = data, headers = headers)
 
-        try:
-            folder_info = self.api_call(endpoint, 'POST', data = data)
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 409: # folder already exists
-                folder_info = e.response.json()['context_info']['conflicts'][0]
-            else:
-                raise e
         return folder_info['id']
 
+    def format_query(self, q):
+        folder_comparison = ['!=', '=']
+        query_strings = ['trashed = false']
+
+        if 'name' in q:
+            query_strings.append("name = '{0}'".format(q['name']))
+
+        if 'is_folder' in q:
+            query_strings.append(
+                "mimeType {0} 'application/vnd.google-apps.folder'".format(
+                    folder_comparison[q['is_folder']]))
+        else: # assume not a folder
+            query_strings.append(
+                "mimeType != 'application/vnd.google-apps.folder'")
+
+        if 'parents' in q:
+            query_strings.append("'{0}' in parents".format(q['parents']))
+
+        query = " and ".join(query_strings)
+        return query
+
     def get_object_id(self, object_name, object_type, object_parents):
-        endpoint = '/folders/{0}/items'.format(object_parents[-1])
-        fields = ['id', 'name', 'type', 'path_collection']
+        endpoint = '/files'
+        fields = ['id', 'name']
         limit = 1000
 
+        query = {
+            'parents': object_parents,
+            'name': object_name,
+            'is_folder': object_type == 'folder',
+        }
+        
         params = {
-            'fields': ','.join(fields),
-            'limit': limit,
+            'q': self.format_query(query),
+            'fields': 'files(' + ','.join(fields) + '),nextPageToken',
+            'pageSize': limit,
         }
 
-        folder_items = self.api_call(endpoint, params = params)
+        file_items = self.api_call(endpoint, params = params)
 
         object_found = False
         while not object_found:
-            for entry in folder_items['entries']:
-
-                # First do a quick check against the name and type
-                if (entry['name'] != object_name) or (entry['type'] != object_type):
-                    continue
-
-                # Then compare parents
-                entry_parents = [p['id'] for p in entry['path_collection']['entries']]
-                if set(entry_parents) == set(object_parents):
+            for entry in file_items['files']:
+                if entry['name'] == object_name:
                     object_id = entry['id']
                     object_found = True
                     break
@@ -236,10 +262,10 @@ class BoxPlugin:
             # Go to next page if it exists and if haven't found object yet
             if object_found:
                 pass
-            elif (('next_marker' in folder_items) and
-                    (folder_items['next_marker'] not in [None, ''])):
-                params['next_marker'] = folder_items['next_marker']
-                folder_items = self.api_call(endpoint, params = params)
+            elif (('nextPageToken' in file_items) and
+                    (file_items['nextPageToken'] not in [None, ''])):
+                params['pageToken'] = file_items['nextPageToken']
+                file_items = self.api_call(endpoint, params = params)
             else:
                 raise IOError(2, 'Object not found', object_name)
 
@@ -248,7 +274,7 @@ class BoxPlugin:
     def get_parent_folders_ids(self, folder_tree, create_if_missing = False):
 
         # Traverse the folder tree, starting at the root (id = 0)
-        parent_ids = [u'0']
+        parent_ids = [u'root']
         searched_path = ''
         for folder_name in folder_tree:
             searched_path += '/{0}'.format(folder_name)
@@ -256,60 +282,61 @@ class BoxPlugin:
                 parent_id = self.path_ids[searched_path]
             else:
                 try:
-                    parent_id = self.get_object_id(folder_name, 'folder', parent_ids)
+                    parent_id = self.get_object_id(folder_name, 'folder', parent_ids[-1])
                 except IOError:
                     if create_if_missing:
                         parent_id = self.create_folder(folder_name, parent_id = parent_ids[-1])
                     else:
-                        raise IOError(2, 'Folder not found in Box', searched_path)
+                        raise IOError(2, 'Folder not found in Google Drive', searched_path)
                 self.path_ids[searched_path] = parent_id # Update the cached ids
             parent_ids.append(parent_id)
 
         return parent_ids
-
+    
     def get_file_id(self, url):
-
+        
         # Parse out the filename and folder_tree and get folder_ids
         (filename, folder_tree) = self.parse_url(url)
         parent_ids = self.get_parent_folders_ids(folder_tree)
-
+        
         try:
-            file_id = self.get_object_id(filename, 'file', parent_ids)
+            file_id = self.get_object_id(filename, 'file', parent_ids[-1])
         except IOError:
-            raise IOError(2, 'File not found in Box', '{0}/{1}'.format('/'.join(folder_tree), filename))
+            raise IOError(2, 'File not found in Google Drive', '{0}/{1}'.format('/'.join(folder_tree), filename))
 
         return file_id
 
     def download_file(self, url, local_file_path):
 
         start_time = time.time()
-
+        
         file_id = self.get_file_id(url)
-
-        endpoint = '/files/{0}/content'.format(file_id)
-        download_url = BOX_API_BASE_URL + endpoint
+        
+        endpoint = '/files/{0}'.format(file_id)
+        url = GDRIVE_API_BASE_URL + endpoint
+        params = {'alt': 'media'} # https://developers.google.com/drive/api/v3/manage-downloads
 
         # Stream the data to disk, chunk by chunk,
         # instead of loading it all into memory.
         self.reload_token()
         connection_start_time = time.time()
-        response = requests.get(download_url, headers = self.headers, stream = True,
-                                    timeout = DEFAULT_TIMEOUT)
+        response = requests.get(url, headers = self.headers, params = params,
+                                    stream = True, timeout = DEFAULT_TIMEOUT)
 
         try:
             response.raise_for_status()
-
+            
             try:
                 content_length = int(response.headers['Content-Length'])
             except (ValueError, KeyError):
                 content_length = False
-
+                
             with open(local_file_path, 'wb') as f:
                 file_size = 0
                 for chunk in response.iter_content(chunk_size = 8192):
                     file_size += len(chunk)
                     f.write(chunk)
-
+                    
         except Exception as err:
             # Since we're streaming, we should
             # free the connection before raising the exception.
@@ -346,37 +373,44 @@ class BoxPlugin:
         file_id = None
         try:
             file_id = self.get_file_id(url)
+            metadata = None
         except IOError:
             (filename, folder_tree) = self.parse_url(url)
             parent_ids = self.get_parent_folders_ids(folder_tree, create_if_missing = True)
             parent_id = parent_ids[-1]
+            metadata = {
+                'name': filename,
+                'parents': [parent_id]
+            }
+                
+        # Not actually "files" but requests will turn these tuples into
+        # multipart/form-data in the correct order (metadata, then file).
+        params = {'uploadType': 'multipart'}
+        files = (
+            ('metadata', (
+                None,
+                json.dumps(metadata),
+                'application/json; charset=UTF-8')),
+            ('file', (
+                os.path.basename(local_file_path),
+                open(local_file_path, 'rb'),
+                mimetypes.guess_type(local_file_path)[0] or 'application/octet-stream'))
+            )
 
-        files = {
-            'file': open(local_file_path, 'rb'),
-        }
-
+        self.reload_token()
         if file_id is None:
 
             # Upload a new file
-            data = {
-            'attributes': json.dumps({
-                'name': filename,
-                'parent': {'id': parent_id},
-                }),
-            }
-
-            upload_url = 'https://upload.box.com/api/2.0/files/content'
-            self.reload_token()
+            upload_url = 'https://www.googleapis.com/upload/drive/v3/files'
             connection_start_time = time.time()
-            response = requests.post(upload_url, headers = self.headers, data = data, files = files)
+            response = requests.post(upload_url, headers = self.headers, params = params, files = files)
 
         else:
 
             # Upload a new version of the file
-            upload_url = 'https://upload.box.com/api/2.0/files/{0}/content'.format(file_id)
-            self.reload_token()
+            upload_url = 'https://www.googleapis.com/upload/drive/v3/files/{0}'.format(file_id)
             connection_start_time = time.time()
-            response = requests.post(upload_url, headers = self.headers, files = files)
+            response = requests.patch(upload_url, headers = self.headers, params = params, files = files)
 
         response.raise_for_status()
 
@@ -384,7 +418,14 @@ class BoxPlugin:
             content_length = int(response.request.headers['Content-Length'])
         except (ValueError, KeyError):
             content_length = False
-        file_size = response.json()['entries'][0]['size']
+
+        try:
+            file_id = response.json()['id']
+            endpoint = '/files/{0}'.format(file_id)
+            params = {'fields': 'size'}
+            file_size = int(self.api_call(endpoint, params = params)['size'])
+        except Exception:
+            file_size = os.stat(local_file_path).st_size
 
         end_time = time.time()
 
@@ -401,11 +442,11 @@ class BoxPlugin:
             'ConnectionTimeSeconds': end_time - connection_start_time,
             'TransferHostName': urlparse(upload_url).netloc,
             'TransferLocalMachineName': socket.gethostname(),
-            'TransferUrl': 'https://upload.box.com/api/2.0/files',
+            'TransferUrl': 'https://www.googleapis.com/upload/drive/v3/files',
         }
 
         return transfer_stats
-
+            
 
 if __name__ == '__main__':
     # Per the design doc, all failures should result in exit code -1.
@@ -416,7 +457,7 @@ if __name__ == '__main__':
     # Exiting -1 without an outfile thus means one of two things:
     # 1. Couldn't parse arguments.
     # 2. Couldn't open outfile for writing.
-
+    
     try:
         args = parse_args()
     except Exception:
@@ -445,18 +486,18 @@ if __name__ == '__main__':
                     # cached object ids, which make path lookups much faster in
                     # the case of multiple file downloads/uploads.
                     if token_path in running_plugins:
-                        box = running_plugins[token_path]
+                        gdrive = running_plugins[token_path]
                     else:
-                        box = BoxPlugin(token_path)
-                        running_plugins[token_path] = box
+                        gdrive = GDrivePlugin(token_path)
+                        running_plugins[token_path] = gdrive
 
                     if not args['upload']:
-                        outfile_dict = box.download_file(ad['Url'], ad['LocalFileName'])
+                        outfile_dict = gdrive.download_file(ad['Url'], ad['LocalFileName'])
                     else:
-                        outfile_dict = box.upload_file(ad['Url'], ad['LocalFileName'])
-
+                        outfile_dict = gdrive.upload_file(ad['Url'], ad['LocalFileName'])
+                        
                     outfile.write(str(classad.ClassAd(outfile_dict)))
-
+                
                 except Exception as err:
                     try:
                         outfile_dict = get_error_dict(err, url = ad['Url'])

@@ -589,7 +589,7 @@ CStarter::createJobOwnerSecSession( int /*cmd*/, Stream* s )
 	getJobOwnerFQUOrDummy(fqu);
 	ASSERT( !fqu.empty() );
 
-	MyString error_msg;
+	std::string error_msg;
 	ClassAd input;
 	s->decode();
 	if( !getClassAd(s, input) || !s->end_of_message() ) {
@@ -645,7 +645,8 @@ CStarter::createJobOwnerSecSession( int /*cmd*/, Stream* s )
 			session_info.c_str(),
 			fqu.c_str(),
 			NULL,
-			0 );
+			0,
+			nullptr );
 	}
 	if( rc ) {
 			// get the final session parameters that were chosen
@@ -660,13 +661,13 @@ CStarter::createJobOwnerSecSession( int /*cmd*/, Stream* s )
 	ClassAd response;
 	response.Assign(ATTR_VERSION,CondorVersion());
 	if( !rc ) {
-		if( error_msg.IsEmpty() ) {
+		if( error_msg.empty() ) {
 			error_msg = "Failed to create security session.";
 		}
 		response.Assign(ATTR_RESULT,false);
 		response.Assign(ATTR_ERROR_STRING,error_msg);
 		dprintf(D_ALWAYS,
-				"createJobOwnerSecSession failed: %s\n", error_msg.Value());
+				"createJobOwnerSecSession failed: %s\n", error_msg.c_str());
 	}
 	else {
 		// We use a "claim id" string to hold the security session info,
@@ -695,14 +696,14 @@ CStarter::createJobOwnerSecSession( int /*cmd*/, Stream* s )
 int
 CStarter::vMessageFailed(Stream *s,bool retry, const std::string &prefix,char const *fmt,va_list args)
 {
-	MyString error_msg;
-	error_msg.vformatstr( fmt, args );
+	std::string error_msg;
+	vformatstr( error_msg, fmt, args );
 
 		// old classads cannot handle a string ending in a double quote
 		// followed by a newline, so strip off any trailing newline
-	error_msg.trim();
+	trim(error_msg);
 
-	dprintf(D_ALWAYS,"%s failed: %s\n", prefix.c_str(), error_msg.Value());
+	dprintf(D_ALWAYS,"%s failed: %s\n", prefix.c_str(), error_msg.c_str());
 
 	ClassAd response;
 	response.Assign(ATTR_RESULT,false);
@@ -786,7 +787,7 @@ static bool extract_delimited_data_as_base64(
 	int input_len,
 	char const *begin_marker,
 	char const *end_marker,
-	MyString &output_buffer,
+	std::string &output_buffer,
 	MyString *error_msg)
 {
 	int start = find_str_in_buffer(input_buffer,input_len,begin_marker);
@@ -818,7 +819,7 @@ static bool extract_delimited_data(
 	int input_len,
 	char const *begin_marker,
 	char const *end_marker,
-	MyString &output_buffer,
+	std::string &output_buffer,
 	MyString *error_msg)
 {
 	int start = find_str_in_buffer(input_buffer,input_len,begin_marker);
@@ -838,7 +839,7 @@ static bool extract_delimited_data(
 		}
 		return false;
 	}
-	output_buffer.formatstr("%.*s",end-start,input_buffer+start);
+	formatstr(output_buffer,"%.*s",end-start,input_buffer+start);
 	return true;
 }
 
@@ -1474,7 +1475,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 		// from the pipe to sshd_setup.
 
 	bool rc = true;
-	MyString session_dir;
+	std::string session_dir;
 	if( rc ) {
 		rc = extract_delimited_data(
 			setup_output,
@@ -1485,7 +1486,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 			&error_msg);
 	}
 
-	MyString sshd_user;
+	std::string sshd_user;
 	if( rc ) {
 		rc = extract_delimited_data(
 			setup_output,
@@ -1496,7 +1497,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 			&error_msg);
 	}
 
-	MyString public_host_key;
+	std::string public_host_key;
 	if( rc ) {
 		rc = extract_delimited_data_as_base64(
 			setup_output,
@@ -1507,7 +1508,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 			&error_msg);
 	}
 
-	MyString private_client_key;
+	std::string private_client_key;
 	if( rc ) {
 		rc = extract_delimited_data_as_base64(
 			setup_output,
@@ -1527,17 +1528,17 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 			error_msg.Value());
 	}
 
-	dprintf(D_FULLDEBUG,"StartSSHD: session_dir='%s'\n",session_dir.Value());
+	dprintf(D_FULLDEBUG,"StartSSHD: session_dir='%s'\n",session_dir.c_str());
 
 	MyString sshd_config_file;
-	sshd_config_file.formatstr("%s%csshd_config",session_dir.Value(),DIR_DELIM_CHAR);
+	sshd_config_file.formatstr("%s%csshd_config",session_dir.c_str(),DIR_DELIM_CHAR);
 
 
 
-	MyString sshd;
+	std::string sshd;
 	param(sshd,"SSH_TO_JOB_SSHD","/usr/sbin/sshd");
-	if( access(sshd.Value(),X_OK)!=0 ) {
-		return SSHDFailed(s,"Failed, because sshd not correctly configured (SSH_TO_JOB_SSHD=%s): %s.",sshd.Value(),strerror(errno));
+	if( access(sshd.c_str(),X_OK)!=0 ) {
+		return SSHDFailed(s,"Failed, because sshd not correctly configured (SSH_TO_JOB_SSHD=%s): %s.",sshd.c_str(),strerror(errno));
 	}
 
 	ArgList sshd_arglist;
@@ -1581,7 +1582,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 
 
 	ClassAd *sshd_ad = new ClassAd(*jobad);
-	sshd_ad->Assign(ATTR_JOB_CMD,sshd.Value());
+	sshd_ad->Assign(ATTR_JOB_CMD,sshd);
 	CondorVersionInfo ver_info;
 	if( !sshd_arglist.InsertArgsIntoClassAd(sshd_ad,&ver_info,&error_msg) ) {
 		return SSHDFailed(s,
@@ -1606,8 +1607,8 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 	ClassAd response;
 	response.Assign(ATTR_RESULT,true);
 	response.Assign(ATTR_REMOTE_USER,sshd_user);
-	response.Assign(ATTR_SSH_PUBLIC_SERVER_KEY,public_host_key.Value());
-	response.Assign(ATTR_SSH_PRIVATE_CLIENT_KEY,private_client_key.Value());
+	response.Assign(ATTR_SSH_PUBLIC_SERVER_KEY,public_host_key);
+	response.Assign(ATTR_SSH_PRIVATE_CLIENT_KEY,private_client_key);
 
 	s->encode();
 	if( !putClassAd(s, response) || !s->end_of_message() ) {
@@ -1619,7 +1620,7 @@ CStarter::startSSHD( int /*cmd*/, Stream* s )
 
 	MyString sshd_log_fname;
 	sshd_log_fname.formatstr(
-		"%s%c%s",session_dir.Value(),DIR_DELIM_CHAR,"sshd.log");
+		"%s%c%s",session_dir.c_str(),DIR_DELIM_CHAR,"sshd.log");
 
 
 	int std[3];
@@ -2740,6 +2741,15 @@ CStarter::PeriodicCkpt( void )
 	return true;
 }
 
+void copyProcList( List<UserProc> & from, List<UserProc> & to ) {
+	to.Clear();
+	from.Rewind();
+	UserProc * job = NULL;
+	while( (job = from.Next()) != NULL ) {
+		to.Append( job );
+	}
+}
+
 
 int
 CStarter::Reaper(int pid, int exit_status)
@@ -2827,16 +2837,36 @@ CStarter::Reaper(int pid, int exit_status)
 		return TRUE;
 	}
 
+	//
+	// The ToE tag code, via CStarter::publishUpdateAd() -- and in the
+	// future, maybe other features via and/or means in the future --
+	// calls Rewind() on m_job_list as well.  Rather than fixing only
+	// the ToE tag code and leaving this landmine, copy m_job_list
+	// before calling any of the JobReaper()s.  Because of this problem,
+	// we know that none of the other existing JobReaper() methods
+	// look at m_job_list or m_reaped_job_list, since they'd have the
+	// same problem, so it's safe to save updating those for the end.
+	//
 
-	m_job_list.Rewind();
-	while ((job = m_job_list.Next()) != NULL) {
+	// Is there a good reason to have neither assignment nor copy ctor?
+	List<UserProc> stable_job_list;
+	List<UserProc> stable_reaped_job_list;
+
+	copyProcList( m_job_list, stable_job_list );
+	copyProcList( m_reaped_job_list, stable_reaped_job_list );
+
+	stable_job_list.Rewind();
+	while ((job = stable_job_list.Next()) != NULL) {
 		all_jobs++;
 		if( job->GetJobPid()==pid && job->JobReaper(pid, exit_status) ) {
 			handled_jobs++;
-			m_job_list.DeleteCurrent();
-			m_reaped_job_list.Append(job);
+			stable_job_list.DeleteCurrent();
+			stable_reaped_job_list.Append(job);
 		}
 	}
+
+	copyProcList( stable_reaped_job_list, m_reaped_job_list );
+	copyProcList( stable_job_list, m_job_list );
 
 	dprintf( D_FULLDEBUG, "Reaper: all=%d handled=%d ShuttingDown=%d\n",
 			 all_jobs, handled_jobs, ShuttingDown );

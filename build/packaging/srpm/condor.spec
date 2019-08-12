@@ -203,6 +203,7 @@ BuildRequires: python-devel
 BuildRequires: boost-devel
 BuildRequires: redhat-rpm-config
 BuildRequires: sqlite-devel
+BuildRequires: perl(Data::Dumper)
 
 %if %uw_build
 BuildRequires: cmake >= 2.8
@@ -230,8 +231,8 @@ BuildRequires: nss-devel
 BuildRequires: openssl-devel
 BuildRequires: libxml2-devel
 BuildRequires: expat-devel
-BuildRequires: perl-Archive-Tar
-BuildRequires: perl-XML-Parser
+BuildRequires: perl(Archive::Tar)
+BuildRequires: perl(XML::Parser)
 BuildRequires: perl(Digest::MD5)
 BuildRequires: python-devel
 BuildRequires: libcurl-devel
@@ -285,6 +286,7 @@ BuildRequires: gridsite-devel
 
 %if 0%{?rhel} >= 7
 %ifarch x86_64
+BuildRequires: python36-devel
 BuildRequires: boost169-devel
 BuildRequires: boost169-static
 %endif
@@ -328,7 +330,7 @@ Requires: blahp >= 1.16.1
 Requires: %name-external-libs%{?_isa} = %version-%release
 %endif
 
-# Box file transfer plugin requires python-requests
+# Box and Google Drive file transfer plugins require python-requests
 Requires: python-requests
 
 Requires: initscripts
@@ -676,9 +678,13 @@ on a non-EC2 image.
 
 %preun annex-ec2
 %if %systemd
-/bin/systemctl disable condor-annex-ec2
+if [ $1 == 0 ]; then
+    /bin/systemctl disable condor-annex-ec2
+fi
 %else
-/sbin/chkconfig --del condor-annex-ec2 > /dev/null 2>&1 || :
+if [ $1 == 0 ]; then
+    /sbin/chkconfig --del condor-annex-ec2 > /dev/null 2>&1 || :
+fi
 %endif
 
 %package all
@@ -860,7 +866,6 @@ make install DESTDIR=%{buildroot}
 # The install target puts etc/ under usr/, let's fix that.
 mv %{buildroot}/usr/etc %{buildroot}/%{_sysconfdir}
 
-populate %_sysconfdir/condor %{buildroot}/%{_usr}/lib/condor_ssh_to_job_sshd_config_template
 
 # Things in /usr/lib really belong in /usr/share/condor
 populate %{_datadir}/condor %{buildroot}/%{_usr}/lib/*
@@ -868,6 +873,9 @@ populate %{_datadir}/condor %{buildroot}/%{_usr}/lib/*
 populate %{_libdir}/ %{buildroot}/%{_datadir}/condor/libclassad.so*
 rm -f %{buildroot}/%{_datadir}/condor/libclassad.a
 mv %{buildroot}%{_datadir}/condor/lib*.so %{buildroot}%{_libdir}/
+populate %{_libdir}/condor %{buildroot}/%{_datadir}/condor/condor_ssh_to_job_sshd_config_template
+# Drop in a symbolic link for backward compatability
+ln -s %{_libdir}/condor/condor_ssh_to_job_sshd_config_template %{buildroot}/%_sysconfdir/condor/condor_ssh_to_job_sshd_config_template
 
 # Only trigger on 32-bit RHEL6
 if [ -d %{buildroot}%{_datadir}/condor/python2.6 ]; then
@@ -1136,7 +1144,7 @@ rm -rf %{buildroot}
 %defattr(-,root,root,-)
 %doc LICENSE-2.0.txt NOTICE.txt examples
 %dir %_sysconfdir/condor/
-%config(noreplace) %_sysconfdir/condor/condor_config
+%config %_sysconfdir/condor/condor_config
 %if %systemd
 %{_tmpfilesdir}/%{name}.conf
 %{_unitdir}/condor.service
@@ -1161,6 +1169,7 @@ rm -rf %{buildroot}
 %_datadir/condor/htcondor.pp
 %endif
 %dir %_sysconfdir/condor/config.d/
+%_libdir/condor/condor_ssh_to_job_sshd_config_template
 %_sysconfdir/condor/condor_ssh_to_job_sshd_config_template
 %_sysconfdir/bash_completion.d/condor
 %_libdir/libchirp_client.so
@@ -1217,6 +1226,12 @@ rm -rf %{buildroot}
 %_libexecdir/condor/box_plugin.py
 %_libexecdir/condor/box_plugin.pyc
 %_libexecdir/condor/box_plugin.pyo
+%_libexecdir/condor/gdrive_plugin.py
+%_libexecdir/condor/gdrive_plugin.pyc
+%_libexecdir/condor/gdrive_plugin.pyo
+%_libexecdir/condor/onedrive_plugin.py
+%_libexecdir/condor/onedrive_plugin.pyc
+%_libexecdir/condor/onedrive_plugin.pyo
 %_libexecdir/condor/curl_plugin
 %_libexecdir/condor/legacy_curl_plugin
 %_libexecdir/condor/condor_shared_port
@@ -1336,6 +1351,7 @@ rm -rf %{buildroot}
 %_bindir/condor_token_fetch
 %_bindir/condor_token_request
 %_bindir/condor_token_request_approve
+%_bindir/condor_token_request_auto_approve
 %_bindir/condor_token_request_list
 %_bindir/condor_token_list
 %_bindir/condor_drain
@@ -1780,6 +1796,14 @@ fi
 %endif
 
 %changelog
+* Tue Jul 09 2019 Tim Theisen <tim@cs.wisc.edu> - 8.8.4-1
+- Python 3 bindings - see version history for details (requires EPEL on EL7)
+- Can configure DAGMan to dramatically reduce memory usage on some DAGs
+- Improved scalability when using the python bindings to qedit jobs
+- Fixed infrequent schedd crashes when removing scheduler universe jobs
+- The condor_master creates run and lock directories when systemd doesn't
+- The condor daemon obituary email now contains the last 200 lines of log
+
 * Tue Jun 04 2019 Tim Theisen <tim@cs.wisc.edu> - 8.9.2-1
 - The HTTP/HTTPS file transfer plugin will timeout and retry transfers
 - A new multi-file box.com file transfer plugin to download files

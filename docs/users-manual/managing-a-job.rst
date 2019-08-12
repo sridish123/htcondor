@@ -635,16 +635,14 @@ These are all of the events that can show up in a job log file:
   tables would become corrupted.
 
 | **Event Number:** 035
-| **Event Name:** Factory Submit
+| **Event Name:** Cluster Submit
 | **Event Description:** This event occurs when a user submits a cluster
-  using late materialization.
+  with multiple procs.
 
 | **Event Number:** 036
-| **Event Name:** Cluster Removed
-| **Event Description:** Only written for clusters using late
-  materialization. This event occurs after all the jobs in a cluster
-  submitted using late materialization have materialized and completed, or
-  when the cluster is removed (by *condor_rm*).
+| **Event Name:** Cluster Remove
+| **Event Description:** This event occurs after all the jobs in a multi-proc 
+  cluster have completed, or when the cluster is removed (by *condor_rm*).
 
 | **Event Number:** 037
 | **Event Name:** Factory Paused
@@ -668,6 +666,42 @@ These are all of the events that can show up in a job log file:
   occurs: transfer queued, transfer started, or transfer finished, for
   both the input and output sandboxes.
 
+Job Termination
+---------------
+
+:index:`termination<single: termination, job>`
+
+From time to time, and for a variety of reasons, HTCondor may terminate
+a job before it completes.  For instance, a job could be removed (via
+*condor_rm*), preempted (by a user a with higher priority), or killed
+(for using more memory than it requested).  In these cases, it might be
+helpful to know why HTCondor terminated the job.  HTCondor calls its
+records of these reasons "Tickets of Execution".
+
+A ticket of execution is usually issued by the *condor_startd*, and
+includes:
+
+- when the *condor_startd* was told, or otherwise decided, to terminate the job;
+- who made the decision to terminate, usually a Sinful string;
+- and what method was employed to command the termination, as both as
+  string and an integer.
+
+The relevant log events include a human-readable rendition of the ToE,
+and the job ad is updated with the ToE after the usual delay.
+
+As of version 8.9.3, HTCondor only issues ToE in two cases:
+
+- when the job terminates of its own accord (issued by the starter);
+- and when the startd terminates the job because it received a
+  ``DEACTIVATE_CLAIM`` command.
+
+In both cases, HTCondor records the ToE in the job ad.  In the event
+log(s), event 005 (job completion) includes the ToE for the first case,
+and event 009 (job aborted) includes the ToE for the second case.
+
+Future HTCondor releases will issue ToEs in additional cases and include
+them in additional log events.
+
 Job Completion
 --------------
 
@@ -679,7 +713,8 @@ queue. That is, the job will no longer appear in the output of
 *condor_q*, and the job will be inserted into the job history file.
 Examine the job history file with the *condor_history* command. If
 there is a log file specified in the submit description file for the
-job, then the job exit status will be recorded there as well.
+job, then the job exit status will be recorded there as well, along with
+other information described below.
 :index:`notification<single: notification; submit commands>`
 
 By default, HTCondor does not send an email message when the job
@@ -723,4 +758,39 @@ time given in the form ``<days> <hours>:<minutes>:<seconds>``.
 And, statistics about the bytes sent and received by the last run of the
 job and summed over all attempts at running the job are given.
 
+The job terminated event includes the type of termination (normal or by
+signal), then return value (or signal number), locate and remote usage
+for the last (most recent) run, the same summed over all runs, bytes sent and
+received by the job's last (most recent) run, the same summed over all runs,
+and a report on which partitionable resources were used, if any.  Resources
+include CPUs, disk, and memory; disk and memory are peak values.  Your
+administrator may have configured HTCondor to report on other resources,
+particularly GPUs and GPU memory usage.
 
+Local and remote usage numbers are in CPU-seconds (where using 100% of 1 CPU
+for 1 second = 1 usage, but so does using 25% of 2 CPUs for 2 seconds).  In
+the partitionable resource usage report, memory and disk include their units
+(KB and MB, presently and respectively); CPU usage is reported by dividing
+the total CPU-second usage by the run duration, so that a job using 100% of
+1 CPU for its entire run reports a usage of 1. GPU usage and GPU memory
+usage have corresponding definitions, if reported, with the caveat that
+HTCondor currently assigns all the usage of a GPU to the job running in
+the slot to which the GPU is assigned; if the admin allows more than one job
+to run on the same GPU, or non-HTCondor jobs to use the GPU, GPU usage will be
+misreported accordingly.
+
+When configured to report GPU usage, HTCondor sets the following two
+attributes in the job:
+
+:index:`GPUsUsage<single: GPUsUsage; ClassAd job attribute>`
+:index:`job ClassAd attribute<single: job ClassAd attribute; GPUsUsage>`
+
+  ``GPUsUsage``
+    GPU usage over the lifetime of the job, reported as above (fraction of
+    the maximum possible utilization of one GPU).
+
+:index:`GPUsMemoryUsage<single: GPUsMemoryUsage; ClassAd job attribute>`
+:index:`job ClassAd attribute<single: job ClassAd attribute; GPUsMemoryUsage>`
+
+  ``GPUsMemoryUsage``
+    Peak memory usage over the lifetime of the job, in megabytes.

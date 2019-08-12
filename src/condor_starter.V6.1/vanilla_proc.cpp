@@ -589,9 +589,18 @@ VanillaProc::StartJob()
 			filename = Starter->GetWorkingDir();
 			filename += "/.condor_pid_ns_status";
 		
-			env.MergeFrom(JobAd, &env_errors);
+			if (!env.MergeFrom(JobAd, &env_errors)) {
+				dprintf(D_ALWAYS, "Cannot merge environ from classad so cannot run condor_pid_ns_init\n");
+				delete fs_remap;
+				return 0;
+			}
 			env.SetEnv("_CONDOR_PID_NS_INIT_STATUS_FILENAME", filename);
-			env.InsertEnvIntoClassAd(JobAd, &env_errors);
+
+			if (!env.InsertEnvIntoClassAd(JobAd, &env_errors)) {
+				dprintf(D_ALWAYS, "Cannot Insert environ from classad so cannot run condor_pid_ns_init\n");
+				delete fs_remap;
+				return 0;
+			}
 
 			Starter->jic->removeFromOutputFiles(condor_basename(filename.c_str()));
 			this->m_pid_ns_status_filename = filename;
@@ -604,8 +613,15 @@ VanillaProc::StartJob()
 
 			JobAd->LookupString(ATTR_JOB_CMD, cmd);
 			args.AppendArg(cmd);
-			args.AppendArgsFromClassAd(JobAd, &arg_errors);
-			args.InsertArgsIntoClassAd(JobAd, NULL, & arg_errors);
+			if (!args.AppendArgsFromClassAd(JobAd, &arg_errors)) {
+				dprintf(D_ALWAYS, "Cannot Append args from classad so cannot run condor_pid_ns_init\n");
+				return 0;
+			}
+
+			if (!args.InsertArgsIntoClassAd(JobAd, NULL, & arg_errors)) {
+				dprintf(D_ALWAYS, "Cannot Insert args into classad so cannot run condor_pid_ns_init\n");
+				return 0;
+			}
 	
 			std::string libexec;
 			if( !param(libexec,"LIBEXEC") ) {
@@ -1414,7 +1430,9 @@ int VanillaProc::outputOpenFlags() {
 	JobAd->LookupBool( ATTR_WANT_CHECKPOINT_SIGNAL, wantCheckpoint );
 	bool wantsFileTransferOnCheckpointExit = false;
 	JobAd->LookupBool( ATTR_WANT_FT_ON_CHECKPOINT, wantsFileTransferOnCheckpointExit );
-	if( wantCheckpoint || wantsFileTransferOnCheckpointExit ) {
+	bool dontAppend = true;
+	JobAd->LookupBool( ATTR_DONT_APPEND, dontAppend );
+	if( wantCheckpoint || wantsFileTransferOnCheckpointExit || (!dontAppend) ) {
 		return O_WRONLY | O_CREAT | O_APPEND | O_LARGEFILE;
 	} else {
 		return this->OsProc::outputOpenFlags();
@@ -1426,7 +1444,9 @@ int VanillaProc::streamingOpenFlags( bool isOutput ) {
 	JobAd->LookupBool( ATTR_WANT_CHECKPOINT_SIGNAL, wantCheckpoint );
 	bool wantsFileTransferOnCheckpointExit = false;
 	JobAd->LookupBool( ATTR_WANT_FT_ON_CHECKPOINT, wantsFileTransferOnCheckpointExit );
-	if( wantCheckpoint || wantsFileTransferOnCheckpointExit ) {
+	bool dontAppend = true;
+	JobAd->LookupBool( ATTR_DONT_APPEND, dontAppend );
+	if( wantCheckpoint || wantsFileTransferOnCheckpointExit || (!dontAppend) ) {
 		return isOutput ? O_CREAT | O_APPEND | O_WRONLY : O_RDONLY;
 	} else {
 		return this->OsProc::streamingOpenFlags( isOutput );

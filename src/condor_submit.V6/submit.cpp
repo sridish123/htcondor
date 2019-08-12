@@ -43,7 +43,6 @@
 #include "my_hostname.h"
 #include "domain_tools.h"
 #include "get_daemon_name.h"
-//#include "condor_qmgr.h"  // only submit_protocol.cpp is allowed to access the schedd's Qmgt functions
 #include "sig_install.h"
 #include "access.h"
 #include "daemon.h"
@@ -77,6 +76,7 @@
 
 //uncomment this to have condor_submit use the new for 8.5 submit_utils classes
 #define USE_SUBMIT_UTILS 1
+#include "condor_qmgr.h"
 #include "submit_internal.h"
 
 #include "list.h"
@@ -126,6 +126,7 @@ int 	dash_interactive = 0; /* true if job submitted with -interactive flag */
 int 	InteractiveSubmitFile = 0; /* true if using INTERACTIVE_SUBMIT_FILE */
 bool	verbose = false; // formerly: int Quiet = 1;
 bool	terse = false; // generate parsable output
+bool	debug = false;
 SetAttributeFlags_t setattrflags = 0; // flags to SetAttribute()
 bool	CmdFileIsStdin = false;
 bool	NoCmdFileNeeded = false; // set if there is no need for a commmand file (i.e. -queue was specified on command line and at least 1 key=value pair)
@@ -597,6 +598,7 @@ main( int argc, const char *argv[] )
 			} else if (is_dash_arg_prefix(ptr[0], "debug", 2)) {
 				// dprintf to console
 				dprintf_set_tool_debug("TOOL", 0);
+				debug = true;
 			} else if (is_dash_arg_colon_prefix(ptr[0], "dry-run", &pcolon, 3)) {
 				DashDryRun = 1;
 				bool needs_file_arg = true;
@@ -1073,7 +1075,10 @@ main( int argc, const char *argv[] )
 	//  Parse the file and queue the jobs
 	int as_factory = 0;
 	if (has_late_materialize) {
-		as_factory = (dash_factory ? 1 : 0) | (default_to_factory ? 2 : 0);
+		// turn dash_factory command line option and default_to_factory flag as bits
+		// so submit_jobs can be clever about defaults
+		// 0=not factory, 1=always factory, 2=smart factory (max_materialize), 3=smart factory (all but single-proc)
+		as_factory = (dash_factory ? 1 : 0) | (default_to_factory ? (1|2) : 0);
 	}
 	int rval = submit_jobs(fp, FileMacroSource, as_factory, extraLines, queueCommandLine);
 	if( rval < 0 ) {
@@ -1161,13 +1166,13 @@ main( int argc, const char *argv[] )
     bool isStandardUni = false;
 	isStandardUni = submit_hash.getUniverse() == CONDOR_UNIVERSE_STANDARD;
 
-	if ( !DisableFileChecks || isStandardUni) {
+	if ( MySchedd && (!DisableFileChecks || isStandardUni)) {
 		TestFilePermissions( MySchedd->addr() );
 	}
 
 	// we don't want to spool jobs if we are simply writing the ClassAds to 
 	// a file, so we just skip this block entirely if we are doing this...
-	if ( !DumpClassAdToFile ) {
+	if ( MySchedd && !DumpClassAdToFile ) {
 		if ( dash_remote && JobAdsArray.size() > 0 ) {
 			bool result;
 			CondorError errstack;
@@ -1296,6 +1301,9 @@ main( int argc, const char *argv[] )
 		sshargs[i++] = "-auto-retry";
 		sshargs[i++] = "-remove-on-interrupt";
 		sshargs[i++] = "-X";
+		if (debug) {
+			sshargs[i++] = "-debug";
+		}
 		if (PoolName) {
 			sshargs[i++] = "-pool";
 			sshargs[i++] = PoolName;
@@ -1425,10 +1433,13 @@ int check_sub_file(void* /*pv*/, SubmitHash * sub, _submit_file_role role, const
 			}
 
 			if (is_crlf_shebang(ename)) {
-				fprintf( stderr, "\n%s: Executable file %s is a script with CRLF (DOS/Win) line endings\n",
+				fprintf( stderr, "\n%s: Executable file %s is a script with "
+					"CRLF (DOS/Windows) line endings.\n",
 					allow_crlf_script ? "WARNING" : "ERROR", ename );
 				if (!allow_crlf_script) {
-					fprintf( stderr, "Run with -allow-crlf-script if this is really what you want\n");
+					fprintf( stderr, "This generally doesn't work, and you "
+						"should probably run 'dos2unix %s' -- or a similar "
+						"tool -- before you resubmit.\n", ename );
 					return 1; // abort
 				}
 			}
@@ -1864,6 +1875,12 @@ int submit_jobs (
 		// if this is the first queue command, and we don't yet know if this is a job factory, decide now.
 		// we do this after we parse the first queue command so that we can use the size of the queue statement
 		// to decide whether this is a factory or not.
+		if (as_factory == 3) {
+			// if as_factory == 3, then we want 'smart' factory, where we use late materialize
+			// for multi-proc and non-factory for single proc
+			want_factory = (selected_item_count > 1 || o.queue_num > 1) ? 1 : 0;
+			need_factory = want_factory;
+		}
 		if (GotQueueCommand == 1) {
 			if (submit_hash.submit_param_long_exists(SUBMIT_KEY_JobMaterializeLimit, ATTR_JOB_MATERIALIZE_LIMIT, max_materialize, true)) {
 				want_factory = 1;
@@ -2937,6 +2954,8 @@ int process_job_credentials()
 				fprintf( stderr, "\nERROR: locate(credd) failed!\n");
 				exit( 1 );
 			}
+			free(ut64);
+			free(zkmbuf);
 		}
 	}  // end of block to run a credential producer
 
@@ -2970,7 +2989,7 @@ int SendLastExecutable()
 												true);
 		}
 
-		MyString hash;
+		std::string hash;
 		if (try_ickpt_sharing) {
 			Condor_MD_MAC cmm;
 			unsigned char* hash_raw;
@@ -2987,16 +3006,16 @@ int SendLastExecutable()
 			}
 			else {
 				for (int i = 0; i < MAC_SIZE; i++) {
-					hash.formatstr_cat("%02x", static_cast<int>(hash_raw[i]));
+					formatstr_cat(hash, "%02x", static_cast<int>(hash_raw[i]));
 				}
 				free(hash_raw);
 			}
 		}
 		int ret;
-		if ( ! hash.IsEmpty()) {
+		if ( ! hash.empty()) {
 			ClassAd tmp_ad;
 			tmp_ad.Assign(ATTR_OWNER, owner);
-			tmp_ad.Assign(ATTR_JOB_CMD_CHECKSUM, hash.Value());
+			tmp_ad.Assign(ATTR_JOB_CMD_CHECKSUM, hash);
 			ret = MyQ->send_SpoolFileIfNeeded(tmp_ad);
 		}
 		else {
