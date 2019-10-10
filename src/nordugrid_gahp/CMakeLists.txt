@@ -16,7 +16,7 @@
  # 
  ############################################################### 
 
-if (HAVE_EXT_GLOBUS)
+if (HAVE_EXT_GLOBUS AND NOT CONDA_BUILD)
 
 	if (NOT HAVE_LDAP_H OR NOT LDAP_FOUND)
 		message(FATAL_ERROR "Can't find ldap.h, needed to build nordugrid_gahp")
@@ -56,6 +56,6 @@ if (HAVE_EXT_GLOBUS)
 
 else()
 
-	message( STATUS "NOTE: *nordugrid* targets will not be built HAVE_EXT_GLOBUS=${HAVE_EXT_GLOBUS}" )
+	message( STATUS "NOTE: *nordugrid* targets will not be built HAVE_EXT_GLOBUS=${HAVE_EXT_GLOBUS} CONDA_BUILD=${CONDA_BUILD}" )
 
 endif ()
