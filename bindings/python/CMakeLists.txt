@@ -69,3 +69,7 @@ endif()
 if (NOT WINDOWS AND WANT_PYTHON_WHEELS)
   add_custom_target(bdist_wheel ALL DEPENDS python_bindings wheel_classad_module wheel_htcondor COMMAND ${PYTHON_EXECUTABLE} ${SETUP_PY} bdist_wheel)
 endif()
+
+if (NOT WINDOWS AND CONDA_BUILD)
+  add_custom_target(conda_build ALL DEPENDS python_bindings wheel_classad_module wheel_htcondor COMMAND ${PYTHON_EXECUTABLE} -m pip install . -vv)
+endif()
