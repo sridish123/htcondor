@@ -166,7 +166,7 @@ set ( CPACK_GENERATOR "TGZ" )
 # include both paths, as we build the externals once for both types. The
 # settings for EXTERNALS_RPATH must be kept in synch with the C_LIB
 # settings made below for package builds.
-if ( ${OS_NAME} STREQUAL "LINUX" AND NOT CONDA_BUILD)
+if ( ${OS_NAME} STREQUAL "LINUX" )
 	set( EXTERNALS_LIB "${C_LIB}/condor" )
 	if (${BIT_MODE} MATCHES "32" OR ${SYS_ARCH} MATCHES "IA64" )
 		set( CONDOR_RPATH "$ORIGIN/../lib:/lib:/usr/lib:$ORIGIN/../lib/condor:/usr/lib/condor" )
