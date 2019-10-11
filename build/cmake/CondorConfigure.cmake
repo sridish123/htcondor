@@ -756,7 +756,9 @@ elseif(${OS_NAME} STREQUAL "LINUX")
 	set(HAVE_PSS ON)
 
 	#The following checks are for std:u only.
-	glibc_detect( GLIBC_VERSION )
+	if (NOT CONDA_BUILD)
+	  glibc_detect( GLIBC_VERSION )
+	endif()
 
 	set(HAVE_GNU_LD ON)
     option(HAVE_HTTP_PUBLIC_FILES "Support for public input file transfer via HTTP" ON)
