@@ -1,4 +1,4 @@
-if( LINUX )
+if( LINUX AND NOT CONDA_BUILD )
 
 	if( NOT LIBUUID_FOUND )
 		message( FATAL_ERROR "annexd requires uuid library" )
