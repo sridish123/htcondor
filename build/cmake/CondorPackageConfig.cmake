@@ -120,6 +120,10 @@ option(CONDOR_PACKAGE_BUILD "Enables a package build" OFF)
 #option used to control RPATH when using rpmbuild directly
 option(CONDOR_RPMBUILD "Whether rpmbuild is being used to build HTCondor" OFF)
 
+#options used for different Python packages
+option(WANT_PYTHON_WHEELS "Build python bindings for python wheel packaging" OFF)
+option(CONDA_BUILD "Build python bindings for anaconda packaging" OFF)
+
 # 1st set the location of the install targets, these are the defaults for
 set( C_BIN			bin)
 set( C_LIB			lib)
@@ -162,7 +166,7 @@ set ( CPACK_GENERATOR "TGZ" )
 # include both paths, as we build the externals once for both types. The
 # settings for EXTERNALS_RPATH must be kept in synch with the C_LIB
 # settings made below for package builds.
-if ( ${OS_NAME} STREQUAL "LINUX" )
+if ( ${OS_NAME} STREQUAL "LINUX" AND NOT CONDA_BUILD)
 	set( EXTERNALS_LIB "${C_LIB}/condor" )
 	if (${BIT_MODE} MATCHES "32" OR ${SYS_ARCH} MATCHES "IA64" )
 		set( CONDOR_RPATH "$ORIGIN/../lib:/lib:/usr/lib:$ORIGIN/../lib/condor:/usr/lib/condor" )

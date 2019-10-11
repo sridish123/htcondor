@@ -81,8 +81,6 @@ message(STATUS "********* BEGINNING CONFIGURATION *********")
 ##################################################
 
 # To find python in Windows we will use alternate technique
-option(WANT_PYTHON_WHEELS "Build python bindings for python wheel packaging" OFF)
-option(CONDA_BUILD "Build python bindings for anaconda packaging" OFF)
 if(NOT WINDOWS)
     if((${OS_NAME} STREQUAL "DARWIN") OR WANT_PYTHON_WHEELS OR CONDA_BUILD)
         include (FindPythonInterp)
