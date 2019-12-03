@@ -83,119 +83,147 @@ class DataReuseDirectory;
 class FileTransfer final: public Service {
 
   public:
+    // Used by the Condor-C GAHP, the job router, and the submit utils to
+    // avoid certain problems when dealing with spooling files.
+	static bool ExpandInputFileList( ClassAd *job, MyString &error_msg );
+	static bool ExpandInputFileList( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg );
+
+    // Used by the shadow.
+	static bool IsDataflowJob(ClassAd *job_ad);
+
+
 
 	FileTransfer();
 
 	~FileTransfer();
 
-	/** Initialize the object.  Must be called before any other methods.
-		@param Ad ClassAd containing all attributes needed by the object,
-		such as the list of files to transfer.  If this ad does not contain
-		a transfer key, then one is generated and this object is considered
-		to be a server.  If a transfer key exists in the ad, this object is
-		considered to be a client.
-		The FileTransfer Object will look up the following attributes
-		from the ClassAd passed in via parameter 1:
-				ATTR_CLUSTER_ID
-				ATTR_JOB_CMD
-				ATTR_JOB_ERROR
-				ATTR_JOB_INPUT
-				ATTR_JOB_IWD
-				ATTR_JOB_OUTPUT
-				ATTR_NT_DOMAIN
-				ATTR_OWNER
-				ATTR_PROC_ID
-				ATTR_TRANSFER_EXECUTABLE
-				ATTR_TRANSFER_INPUT_FILES
-				ATTR_TRANSFER_INTERMEDIATE_FILES
-				ATTR_TRANSFER_KEY
-				ATTR_TRANSFER_OUTPUT_FILES
-				ATTR_TRANSFER_SOCKET
-		@param check_file_perms If true, before reading or writing to any file,
-		a check is perfomed to see if the ATTR_OWNER attribute defined in the
-		ClassAd has the neccesary read/write permission.
-		@return 1 on success, 0 on failure */
+    // ...
 	int Init( ClassAd *Ad, bool check_file_perms = false,
 			  priv_state priv = PRIV_UNKNOWN,
 			  bool use_file_catalog = true);
 
+    // ...
 	int SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
-						 ReliSock *sock_to_use = NULL, 
+						 ReliSock *sock_to_use = NULL,
 						 priv_state priv = PRIV_UNKNOWN,
 						 bool use_file_catalog = true,
 						 bool is_spool = false);
 
-	/** @param Ad contains filename remaps for downloaded files.
-		       If NULL, turns off remaps.
-		@return 1 on success, 0 on failure */
-	int InitDownloadFilenameRemaps(ClassAd *Ad);
+    // ...
+	int DownloadFiles(bool blocking=true);
 
-	/** Determine if this is a dataflow transfer (where the output files are 
-	/ * newer than input files)
-	 * 
-	 * @return True if newer, False otherwse
-	 */
-	static bool IsDataflowJob(ClassAd *job_ad);
+	// ...
+	int UploadFiles(bool blocking=true, bool final_transfer=true);
 
-	/** @param session_id NULL (if should auto-negotiate) or
-		       security session id to use for outgoing file transfer
-		       commands */
-	void setSecuritySession(char const *session_id);
 
-	/** @param cred_dir The location of the credentials directory to be used
-	 *  with the file transfer plugins.
-	 */
-	void setCredsDir(const std::string &cred_dir) {m_cred_dir = cred_dir;}
 
-	/** @param reuse_dir: The DataReuseDirectory object to utilize for data reuse
-	 *  lookups
-	 */
-	void setDataReuseDirectory(htcondor::DataReuseDirectory &reuse_dir) {m_reuse_dir = &reuse_dir;}
+    // Used by the starter to advertise its capabilities.
+    MyString GetSupportedMethods();
 
-	/** Set the location of various ads describing the runtime environment.
-	 *  Used by the file transfer plugins.
-	 *
-	 *  @param job_ad The location of the job ad.
-	 *  @param machine_ad The location of the machine ad.
-	 */
+    // Used by the starter.  Should probably be included in init().
+	int InitializePlugins(CondorError &e);
+
+    // Used by the starter to include (renamed) core files.  This also
+    // seems way more general than it needs to be.  [FIXME?]
+	bool addOutputFile( const char* filename );
+
+    // Used by the starter for file transfer plug-ins.
 	void setRuntimeAds(const std::string &job_ad, const std::string &machine_ad)
 	{m_job_ad = job_ad; m_machine_ad = machine_ad;}
 
-		/** Set limits on how much data will be sent/received per job
-			(i.e. per call to DoUpload() or DoDownload()).  The job is
-			put on hold if the limit is exceeded.  The files are sent
-			in the usual order, and the file that hit the limit will
-			be missing its tail.
-		 */
-	void setMaxUploadBytes(filesize_t MaxUploadBytes);
-	void setMaxDownloadBytes(filesize_t MaxUploadBytes);
+    // Used by the starter.
+	void setCredsDir(const std::string &cred_dir) {m_cred_dir = cred_dir;}
 
-	/** @return 1 on success, 0 on failure */
-	int DownloadFiles(bool blocking=true);
+    // Used by the starter.
+	void setDataReuseDirectory(htcondor::DataReuseDirectory &reuse_dir) {m_reuse_dir = &reuse_dir;}
 
-	/** @return 1 on success, 0 on failure */
-	int UploadFiles(bool blocking=true, bool final_transfer=true);
+    // Used by the starter during reconnect.
+	bool changeServer( const char* transkey, const char* transsock );
 
-		/** For non-blocking (i.e., multithreaded) transfers, the registered
-			handler function will be called on each transfer completion.  The
-			handler can call FileTransfer::GetInfo() for statistics on the
-			last transfer.  It is safe for the handler to deallocate the
-			FileTransfer object.
-		*/
+    // Used by the starter to tolerate long i/o delays.
+	int	setClientSocketTimeout(int timeout);
+
+    // Used by the starter to clean up the transfer output list.
+	bool addFileToExceptionList( const char* filename );
+
+    // Used by the starter when catching DC_SIGSUSPEND.
+	int Suspend();
+
+    // Used by the starter when catching DC_SIGCONTINUE.
+	int Continue();
+
+    // Used by the shadow and the starter.
 	void RegisterCallback(FileTransferHandler handler, bool want_status_updates=false)
-		{ 
-			ClientCallback = handler; 
+		{
+			ClientCallback = handler;
 			ClientCallbackWantsStatusUpdates = want_status_updates;
 		}
+
+    // Used by the shadow and the starter.
 	void RegisterCallback(FileTransferHandlerCpp handler, Service* handlerclass, bool want_status_updates=false)
-		{ 
-			ClientCallbackCpp = handler; 
+		{
+			ClientCallbackCpp = handler;
 			ClientCallbackClass = handlerclass;
 			ClientCallbackWantsStatusUpdates = want_status_updates;
 		}
 
-	enum TransferType { NoType, DownloadFilesType, UploadFilesType };
+    // Used by the shadow.
+	void setMaxUploadBytes(filesize_t MaxUploadBytes);
+	void setMaxDownloadBytes(filesize_t MaxUploadBytes);
 
+    // Used by the shadow for reporting.
+	int GetUploadTimestamps(time_t * pStart, time_t * pEnd = NULL) {
+		if (uploadStartTime < 0)
+			return false;
+		if (pEnd) *pEnd = (time_t)uploadEndTime;
+		if (pStart) *pStart = (time_t)uploadStartTime;
+		return true;
+	}
+
+    // Used by the shadow for reporting.
+	bool GetDownloadTimestamps(time_t * pStart, time_t * pEnd = NULL) {
+		if (downloadStartTime < 0)
+			return false;
+		if (pEnd) *pEnd = (time_t)downloadEndTime;
+		if (pStart) *pStart = (time_t)downloadStartTime;
+		return true;
+	}
+
+    // Used by the shadow and the starter for reporting.
+	float TotalBytesSent() { return bytesSent; }
+	float TotalBytesReceived() { return bytesRcvd; };
+
+    // Used by the shadow for unknown reasons.
+	void setTransferQueueContactInfo(char const *contact);
+
+    // Used by the shadow to see if it's safe to shut down.
+	bool transferIsInProgress() { return ActiveTransferTid != -1; }
+
+    // Used by the shadow when aborting file transfers.
+	void stopServer();
+
+    // Used by the grid manager for INFN batch jobs to remap stdout & stderr.
+    // Should be replaced by commands specifically for that.  [FIXME?]
+	void AddDownloadFilenameRemap(char const *source_name,char const *target_name);
+
+    // Used by the shadow on Windows, because it doesn't have fork().
+    // Used by the grid manager for INFN batch jobs for unknown reasons.
+	static bool SetServerShouldBlock( bool block );
+
+    // Used by the starter when dealing with shadow reconnects, and in
+    // some (unknown) cases in the FT GAHP.
+	void setSecuritySession(char const *session_id);
+
+    // Used by dc_schedd, dc_transferd, and jic_shadow.  Activates the
+    // output file remaps, since we don't always use them (e.g., for
+    // intermediate file transfer).
+	int InitDownloadFilenameRemaps(ClassAd *Ad);
+
+    // Why isn't this always handled internally?
+	void setPeerVersion( const char *peer_version );
+	void setPeerVersion( const CondorVersionInfo &peer_version );
+
+	enum TransferType { NoType, DownloadFilesType, UploadFilesType };
 	struct FileTransferInfo {
 		FileTransferInfo() : bytes(0), duration(0), type(NoType),
 		    success(true), in_progress(false), xfer_status(XFER_STATUS_UNKNOWN),
@@ -214,7 +242,6 @@ class FileTransfer final: public Service {
 			error_desc = rhs.error_desc;
 			spooled_files = rhs.spooled_files;
 			tcp_stats = rhs.tcp_stats;
-			
 		}
 		void addSpooledFile(char const *name_in_spool);
 
@@ -233,9 +260,9 @@ class FileTransfer final: public Service {
 		MyString spooled_files;
 		MyString tcp_stats;
 	};
-
 	FileTransferInfo GetInfo() { return Info; }
 
+  private:
 	inline bool IsServer() {return user_supplied_key == FALSE;}
 
 	inline bool IsClient() {return user_supplied_key == TRUE;}
@@ -244,100 +271,25 @@ class FileTransfer final: public Service {
 
 	static int Reaper(Service *, int pid, int exit_status);
 
-	static bool SetServerShouldBlock( bool block );
-
-		// Stop accepting new transfer requests for this instance of
-		// the file transfer object.
-		// Also abort this object's active transfer, if any.
-	void stopServer();
-
 		// If this file transfer object has a transfer running in
 		// the background, kill it.
 	void abortActiveTransfer();
 
-	int Suspend();
-
-	int Continue();
-
-	float TotalBytesSent() { return bytesSent; }
-
-	float TotalBytesReceived() { return bytesRcvd; };
-
 	void RemoveInputFiles(const char *sandbox_path = NULL);
-
-		/** Add the given filename to our list of output files to
-			transfer back.  If we're not managing a list of output
-			files, we return failure.  If we already have this file,
-			we immediately return success.  Otherwise, we append the
-			given filename to our list and return success.
-			@param filename Name of file to add to our list
-			@return false if we don't have a list, else true
-		*/
-	bool addOutputFile( const char* filename );
-
-		/** Add the given filename to our list of exceptions.  These
-			files to will not be transfer back, even if they meet the
-			criteria to be returned.  If we already have this file,
-			we immediately return success.  Otherwise, we append the
-			given filename to our list and return success.
-			NOTE: This list trumps any the addition of any file in it,
-			meaning dynamically added files, modified files, etc. that
-			are listed in it will be completely ignored.
-			@param filename Name of file to add to our list
-			@return always true
-			*/
-	bool addFileToExceptionList( const char* filename );
-
-		/** Allows the client side of the filetransfer object to 
-			point to a different server.
-			@param transkey Value of ATTR_TRANSFER_KEY set by server
-			@param transsock Value of ATTR_TRANSFER_SOCKET set by server
-			@return true on success, false on failure
-		*/
-	bool changeServer( const char* transkey, const char* transsock );
-
-		/** Specify the socket timeout to use on the client (starter)
-			side of the FileTransfer.  Defaults to 30 seconds if
-			unspecified.
-			@param timeout Specified in seconds, a value of 0 means disable
-			@return Previous timeout value
-		*/
-	int	setClientSocketTimeout(int timeout);
 
 	void setTransferFilePermissions( bool value )
 		{ TransferFilePermissions = value; }
 
-	void setPeerVersion( const char *peer_version );
-	void setPeerVersion( const CondorVersionInfo &peer_version );
-
 	priv_state getDesiredPrivState( void ) { return desired_priv_state; };
-
-	void setTransferQueueContactInfo(char const *contact);
 
 	void InsertPluginMappings(MyString methods, MyString p);
 	void SetPluginMappings( CondorError &e, const char* path );
-	int InitializePlugins(CondorError &e);
 	int InitializeJobPlugins(const ClassAd &job, CondorError &e, StringList &infiles);
 	MyString DetermineFileTransferPlugin( CondorError &error, const char* source, const char* dest );
 	int InvokeFileTransferPlugin(CondorError &e, const char* URL, const char* dest, ClassAd* plugin_stats, const char* proxy_filename = NULL);
 	int InvokeMultipleFileTransferPlugin(CondorError &e, const std::string &plugin_path, const std::string &transfer_files_string, const char* proxy_filename, bool do_upload, std::vector<std::unique_ptr<ClassAd>> *);
 	ssize_t InvokeMultiUploadPlugin(const std::string &plugin_path, const std::string &transfer_files_string, ReliSock &sock, bool send_trailing_eom, CondorError &err);
     int OutputFileTransferStats( ClassAd &stats );
-	MyString GetSupportedMethods();
-
-		// Convert directories with a trailing slash to a list of the contents
-		// of the directory.  This is used so that ATTR_TRANSFER_INPUT_FILES
-		// can be correctly interpreted by the schedd when handling spooled
-		// inputs.  See the lengthy comment in the function body for additional
-		// explanation of why this is necessary.
-		// Returns false on failure and sets error_msg.
-	static bool ExpandInputFileList( ClassAd *job, MyString &error_msg );
-		// use this function when you don't want to party on the job ad like the above function does 
-	static bool ExpandInputFileList( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg );
-
-	// When downloading files, store files matching source_name as the name
-	// specified by target_name.
-	void AddDownloadFilenameRemap(char const *source_name,char const *target_name);
 
 	// Add any number of download remaps, encoded in the form:
 	// "source1 = target1; source2 = target2; ..."
@@ -345,25 +297,7 @@ class FileTransfer final: public Service {
 	// filename_remap_find().
 	void AddDownloadFilenameRemaps(char const *remaps);
 
-	int GetUploadTimestamps(time_t * pStart, time_t * pEnd = NULL) {
-		if (uploadStartTime < 0)
-			return false;
-		if (pEnd) *pEnd = (time_t)uploadEndTime;
-		if (pStart) *pStart = (time_t)uploadStartTime;
-		return true;
-	}
-
-	bool GetDownloadTimestamps(time_t * pStart, time_t * pEnd = NULL) {
-		if (downloadStartTime < 0)
-			return false;
-		if (pEnd) *pEnd = (time_t)downloadEndTime;
-		if (pStart) *pStart = (time_t)downloadStartTime;
-		return true;
-	}
-
 	ClassAd *GetJobAd();
-
-	bool transferIsInProgress() { return ActiveTransferTid != -1; }
 
   protected:
 
