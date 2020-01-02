@@ -2175,8 +2175,8 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 		if( !strcmp(filename.Value(),NULL_FILE) ) {
 			fullname = filename;
 		}
-   		else if( final_transfer || IsClient() ) {
-    		MyString remap_filename;
+		else if( final_transfer || IsClient() ) {
+			MyString remap_filename;
 			int res = filename_remap_find(download_filename_remaps.Value(),filename.Value(),remap_filename,0);
 			dprintf(D_FULLDEBUG, "REMAP: res is %i -> %s !\n", res, remap_filename.Value());
 			if (res == -1) {
@@ -2750,16 +2750,16 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 				}
 			}
 		} else if ( TransferFilePermissions ) {
-		    // We don't want ReliSock::get_file() to create non-existent
-		    // directories; other parts of HTCondor might expect or depend
-		    // on the behavior that it doesn't.
-		    //
-		    // Instead, go ahead and create directories that don't exist;
-		    // we've already verified that the path we've been given was
-		    // either relative or in the sandbox (LegalPathInSandbox()).
-		    char * dn = condor_dirname( fullname.Value() );
-		    mkdir_and_parents_if_needed( dn, 0700 );
-		    free(dn);
+			// We don't want ReliSock::get_file() to create non-existent
+			// directories; other parts of HTCondor might expect or depend
+			// on the behavior that it doesn't.
+			//
+			// Instead, go ahead and create directories that don't exist;
+			// we've already verified that the path we've been given was
+			// either relative or in the sandbox (LegalPathInSandbox()).
+			char * dn = condor_dirname( fullname.Value() );
+			mkdir_and_parents_if_needed( dn, 0700 );
+			free(dn);
 			rc = s->get_file_with_permissions( &bytes, fullname.Value(), false, this_file_max_bytes, &xfer_queue );
 			CondorError err;
 			if (rc == 0 && should_reuse && !m_reuse_dir->CacheFile(fullname.Value(), iter->checksum(),
@@ -2769,9 +2769,9 @@ FileTransfer::DoDownload( filesize_t *total_bytes, ReliSock *s)
 					err.getFullText().c_str());
 			}
 		} else {
-		    char * dn = condor_dirname( fullname.Value() );
-		    mkdir_and_parents_if_needed( dn, 0700 );
-		    free(dn);
+			char * dn = condor_dirname( fullname.Value() );
+			mkdir_and_parents_if_needed( dn, 0700 );
+			free(dn);
 			rc = s->get_file( &bytes, fullname.Value(), false, false, this_file_max_bytes, &xfer_queue );
 		}
 
@@ -3597,8 +3597,11 @@ FileTransfer::DoUpload(filesize_t *total_bytes, ReliSock *s)
 	// record the state it was in when we started... the "default" state
 	bool socket_default_crypto = s->get_encryption();
 
+	bool preserveRelativePaths = false;
+	jobAd.LookupBool( "PreserveRelativePaths", preserveRelativePaths );
+
 	FileTransferList filelist;
-	ExpandFileTransferList( FilesToSend, filelist );
+	ExpandFileTransferList( FilesToSend, filelist, preserveRelativePaths );
 
 	filesize_t sandbox_size = 0;
 	FileTransferList::iterator filelist_it;
@@ -3913,13 +3916,21 @@ FileTransfer::DoUpload(filesize_t *total_bytes, ReliSock *s)
 				dest_filename.formatstr("%s%c",dest_dir.c_str(),DIR_DELIM_CHAR);
 			}
 
-			// condor_basename works for URLs
-			// If we signed the URL, we added a bunch of garbage to the query
-			// string.  Strip it out to get better base name.
-			auto idx = filename.find("?");
-			std::string tmp_filename = filename.substr(0, idx);
-//			dest_filename.formatstr_cat( "%s", condor_basename(tmp_filename.c_str()) );
-			dest_filename.formatstr_cat( "%s", tmp_filename.c_str() );
+			if( IsUrl( filename.c_str() ) ) {
+				// If we signed the URL, we added a bunch of garbage to the
+				// query string.  Strip it out to get better base name.
+				auto idx = filename.find("?");
+				std::string tmp_filename = filename.substr(0, idx);
+
+				// FIXME: We want to preserve the relative paths of files
+				// that are getting uploaded to URLs.
+				dest_filename.formatstr_cat( "%s", tmp_filename.c_str() );
+			} else {
+				// Strip any path information; if we wanted to keep it, it
+				// would have been set in dest_dir.
+				dest_filename.formatstr_cat( "%s", condor_basename(filename.c_str()));
+			}
+
 			dprintf(D_FULLDEBUG, "DoUpload: will transfer to filename %s.\n", dest_filename.c_str() );
 		}
 
@@ -5845,7 +5856,7 @@ FileTransfer::InsertPluginMappings(MyString methods, MyString p)
 }
 
 bool
-FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &expanded_list )
+FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths )
 {
 	bool rc = true;
 
@@ -5855,7 +5866,7 @@ FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &
 
 	// if this exists and is in the list do it first
 	if (X509UserProxy && input_list->contains(X509UserProxy)) {
-		if( !ExpandFileTransferList( X509UserProxy, "", Iwd, -1, expanded_list ) ) {
+		if( !ExpandFileTransferList( X509UserProxy, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
 			rc = false;
 		}
 	}
@@ -5868,7 +5879,7 @@ FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &
 		// everything else gets expanded.  this if would short-circuit
 		// true if X509UserProxy is not defined, but i made it explicit.
 		if(!X509UserProxy || (X509UserProxy && strcmp(path, X509UserProxy) != 0)) {
-			if( !ExpandFileTransferList( path, "", Iwd, -1, expanded_list ) ) {
+			if( !ExpandFileTransferList( path, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
 				rc = false;
 			}
 		}
@@ -5877,7 +5888,7 @@ FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &
 }
 
 bool
-FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list )
+FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list, bool preserveRelativePaths )
 {
 	ASSERT( src_path );
 	ASSERT( dest_dir );
@@ -5905,9 +5916,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 	}
 	full_src_path += src_path;
 
-dprintf( D_ALWAYS, "src_path = %s, full_src_path = %s\n", src_path, full_src_path.c_str() );
 	StatInfo st( full_src_path.c_str() );
-
 	if( st.Error() != 0 ) {
 		return false;
 	}
@@ -5936,8 +5945,22 @@ dprintf( D_ALWAYS, "src_path = %s, full_src_path = %s\n", src_path, full_src_pat
 
 	if( !file_xfer_item.isDirectory() ) {
 		file_xfer_item.setFileSize(st.GetFileSize());
+
+		if( preserveRelativePaths ) {
+			char * dirname = condor_dirname( file_xfer_item.srcName().c_str() );
+			if( strcmp( dirname, "." ) != 0 ) {
+				file_xfer_item.setDestDir( dirname );
+			}
+			free( dirname );
+		}
+
 		return true;
 	}
+
+	//
+	// FIXME: I'm not at all sure that this code properly handles entries
+	// like 'subdirectory1/subdirectory2'.
+	//
 
 		// do not follow symlinks to directories unless we are just
 		// fetching the contents of the directory
@@ -5986,7 +6009,7 @@ dprintf( D_ALWAYS, "src_path = %s, full_src_path = %s\n", src_path, full_src_pat
 		}
 		file_full_path += file_in_dir;
 
-		if( !ExpandFileTransferList( file_full_path.c_str(), dest_dir, iwd, max_depth, expanded_list ) ) {
+		if( !ExpandFileTransferList( file_full_path.c_str(), dest_dir, iwd, max_depth, expanded_list, preserveRelativePaths ) ) {
 			rc = false;
 		}
 	}
@@ -6011,7 +6034,6 @@ FileTransfer::ExpandInputFileList( char const *input_list, char const *iwd, MySt
 			needs_expansion = true;
 		}
 
-dprintf( D_ALWAYS, "path = %s\n", path );
 		if( !needs_expansion ) {
 				// We intentionally avoid the need to stat any of the entries
 				// that don't need to be expanded in case stat is expensive.
@@ -6019,7 +6041,9 @@ dprintf( D_ALWAYS, "path = %s\n", path );
 		}
 		else {
 			FileTransferList filelist;
-			if( !ExpandFileTransferList( path, "", iwd, 1, filelist ) ) {
+			// N.B.: It's only safe to flatten relative paths here because
+			// this code never calls destDir().
+			if( !ExpandFileTransferList( path, "", iwd, 1, filelist, false ) ) {
 				error_msg.formatstr_cat("Failed to expand '%s' in transfer input file list. ",path);
 				result = false;
 			}
