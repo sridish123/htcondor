@@ -3130,7 +3130,18 @@ FileTransfer::SendTransferAck(Stream *s,bool success,bool try_again,int hold_cod
 		ad.Assign(ATTR_HOLD_REASON_CODE,hold_code);
 		ad.Assign(ATTR_HOLD_REASON_SUBCODE,hold_subcode);
 		if(hold_reason) {
-			ad.Assign(ATTR_HOLD_REASON,hold_reason);
+				// If we include a newline character in the hold reason, then internal schedd
+				// circuit breakers will drop the whole update.
+				//
+				// HTCondor code shouldn't generate newlines - but potentially file transfer
+				// plugins could!
+			if (strchr(hold_reason, '\n')) {
+				MyString hold_reason_str(hold_reason);
+				hold_reason_str.replaceString("\n", "\\n");
+				ad.InsertAttr(ATTR_HOLD_REASON, hold_reason_str.c_str());
+			} else {
+				ad.Assign(ATTR_HOLD_REASON,hold_reason);
+			}
 		}
 	}
 	s->encode();
@@ -3561,20 +3572,25 @@ FileTransfer::DoUpload(filesize_t *total_bytes, ReliSock *s)
 	MyString first_failed_error_desc;
 	int first_failed_line_number = 0;
 
-	bool should_invoke_output_plugins, tmp;
-	if (!jobAd.EvaluateAttrBool("OutputPluginsOnlyOnExit", tmp)) {
-		should_invoke_output_plugins = m_final_transfer_flag;
-	} else {
-		if (!InitDownloadFilenameRemaps(&jobAd)) {
+	bool should_invoke_output_plugins = m_final_transfer_flag;
+	bool tmp;
+	if (jobAd.EvaluateAttrBool("OutputPluginsOnlyOnExit", tmp) && !tmp) {
+			// InitDownloadFilenameRemaps is always called by the server
+			// (the function name is a misnomer) for final transfers.  However,
+			// in this case, we also want output files to be remapped to URLs
+			// when spooling.  Hence, we call it here.
+		if (!m_final_transfer_flag && !InitDownloadFilenameRemaps(&jobAd)) {
 			return -1;
 		}
-		should_invoke_output_plugins = !tmp;
+		should_invoke_output_plugins = true;
 	}
 
 	uploadStartTime = condor_gettimestamp_double();
 
 	*total_bytes = 0;
 	dprintf(D_FULLDEBUG,"entering FileTransfer::DoUpload\n");
+	dprintf(D_FULLDEBUG,"DoUpload: Output URL plugins %s be run\n",
+		should_invoke_output_plugins ? "will" : "will not");
 
 	priv_state saved_priv = PRIV_UNKNOWN;
 	if( want_priv_change ) {
@@ -5349,11 +5365,12 @@ int FileTransfer::InvokeFileTransferPlugin(CondorError &e, const char* source, c
 
 	if (!m_job_ad.empty()) {
 		plugin_env.SetEnv("_CONDOR_JOB_AD", m_job_ad.c_str());
+		dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime job ad to %s\n", m_job_ad.c_str());
 	}
 	if (!m_machine_ad.empty()) {
 		plugin_env.SetEnv("_CONDOR_MACHINE_AD", m_machine_ad.c_str());
+		dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime machine ad to %s\n", m_machine_ad.c_str());
 	}
-	dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime ads to %s and %s\n", m_job_ad.c_str(), m_machine_ad.c_str());
 
 	// prepare args for the plugin
 	ArgList plugin_args;
@@ -5456,11 +5473,12 @@ int FileTransfer::InvokeMultipleFileTransferPlugin( CondorError &e,
 	}
 	if (!m_job_ad.empty()) {
 		plugin_env.SetEnv("_CONDOR_JOB_AD", m_job_ad.c_str());
+		dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime job ad to %s\n", m_job_ad.c_str());
 	}
 	if (!m_machine_ad.empty()) {
 		plugin_env.SetEnv("_CONDOR_MACHINE_AD", m_machine_ad.c_str());
+		dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime machine ad to %s\n", m_machine_ad.c_str());
 	}
-	dprintf(D_FULLDEBUG, "FILETRANSFER: setting runtime ads to %s and %s\n", m_job_ad.c_str(), m_machine_ad.c_str());
 
 
 	// Determine if we want to run the plugin with root priv (if available).

@@ -62,11 +62,6 @@
 #include <string>
 #include <set>
 
-#ifdef WIN32
-#define CLIPPED 1
-//#undef CLIPPED
-#endif
-
 /* Disable gcc warnings about floating point comparisons */
 GCC_DIAG_OFF(float-equal)
 
@@ -539,19 +534,15 @@ void SubmitHash::push_error(FILE * fh, const char* format, ... ) //CHECK_PRINTF_
 	va_start(ap, format);
 	int cch = vprintf_length(format, ap);
 	char * message = (char*)malloc(cch + 1);
-	if (message) {
-		vsprintf ( message, format, ap );
-	}
+	vsprintf ( message, format, ap );
 	va_end(ap);
 
 	if (SubmitMacroSet.errors) {
 		SubmitMacroSet.errors->push("Submit", -1, message);
 	} else {
-		fprintf(fh, "\nERROR: %s", message ? message : "");
+		fprintf(fh, "\nERROR: %s", message);
 	}
-	if (message) {
-		free(message);
-	}
+	free(message);
 }
 
 void SubmitHash::push_warning(FILE * fh, const char* format, ... ) //CHECK_PRINTF_FORMAT(3,4);
@@ -4733,17 +4724,11 @@ int SubmitHash::SetUniverse()
 	}
 
 	if (JobUniverse == CONDOR_UNIVERSE_STANDARD) {
-#if defined( CLIPPED )
 		push_error(stderr, "You are trying to submit a \"%s\" job to Condor. "
 				 "However, this installation of Condor does not support the "
 				 "Standard Universe.\n%s\n%s\n",
 				 univ.ptr(), CondorVersion(), CondorPlatform() );
 		ABORT_AND_RETURN( 1 );
-#else
-		// Standard universe needs file checks disabled to create stdout and stderr
-		DisableFileChecks = 0;
-		return 0;
-#endif
 	};
 
 

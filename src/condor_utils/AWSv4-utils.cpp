@@ -4,6 +4,7 @@
 
 #include <string>
 #include <map>
+#include <algorithm>
 #include <openssl/hmac.h>
 #include "classad/classad.h"
 #include "CondorError.h"
@@ -213,8 +214,19 @@ AWSv4Impl::createSignature( const std::string & secretAccessKey,
 }
 
 bool
+isPathStyleBucket( const std::string & bucket ) {
+    if( bucket.find( "_" ) != std::string::npos ) { return true; }
+    if( std::find_if( bucket.begin(), bucket.end(),
+      [](const char c){return isupper(c); } ) != bucket.end() ) {
+        return true;
+    }
+    return false;
+}
+
+bool
 generate_presigned_url( const std::string & accessKeyID,
   const std::string & secretAccessKey,
+  const std::string & securityToken,
   const std::string & s3url,
   const std::string & input_region,
   const std::string & verb,
@@ -222,7 +234,7 @@ generate_presigned_url( const std::string & accessKeyID,
   CondorError & err ) {
 
     time_t now; time( & now );
-        // Allow for modest clock skews.
+    // Allow for modest clock skews.
     now -= 5;
     struct tm brokenDownTime; gmtime_r( & now, & brokenDownTime );
     char dateAndTime[] = "YYYYMMDDThhmmssZ";
@@ -230,6 +242,10 @@ generate_presigned_url( const std::string & accessKeyID,
         & brokenDownTime );
     char date[] = "YYYYMMDD";
     strftime( date, sizeof(date), "%Y%m%d", & brokenDownTime );
+
+    // If the named bucket isn't valid as part of a DNS name,
+    // we assume it's an old "path-style"-only bucket.
+    std::string canonicalURI( "/" );
 
     // Extract the S3 bucket and key from the S3 URL.
     std::string bucket, key;
@@ -261,6 +277,15 @@ generate_presigned_url( const std::string & accessKeyID,
             host = bucket + ".s3-" + region + ".amazonaws.com";
         } else {
             host = bucket + ".s3.amazonaws.com";
+
+            // If the bucket name isn't valid for DNS, assume it's an
+            // old "path-style" bucket.
+            if( isPathStyleBucket( bucket ) ) {
+                host = "s3.amazonaws.com";
+                region = "us-east-1";
+                formatstr_cat( canonicalURI, "%s/",
+                  AWSv4Impl::pathEncode(bucket).c_str() );
+            }
         }
     // URLs of the form s3://<bucket>.s3-<region>.amazonaws.com/<object>
     } else if (bucket_or_hostname.substr(bucket_or_hostname.size() - 14) == ".amazonaws.com") {
@@ -299,8 +324,7 @@ generate_presigned_url( const std::string & accessKeyID,
 
     // Part 1: The canonical URI.  Note that we don't have to worry about
     // path normalization, because S3 keys aren't actually path names.
-    std::string canonicalURI;
-    formatstr( canonicalURI, "/%s", AWSv4Impl::pathEncode(key).c_str() );
+    formatstr_cat( canonicalURI, "%s", AWSv4Impl::pathEncode(key).c_str() );
 
     // Part 4: The signed headers.
     std::string signedHeaders = "host";
@@ -321,6 +345,9 @@ generate_presigned_url( const std::string & accessKeyID,
     queries["X-Amz-Date"] = dateAndTime;
     queries["X-Amz-Expires"] = "3600";
     queries["X-Amz-SignedHeaders"] = signedHeaders;
+    if(! securityToken.empty()) {
+        queries["X-Amz-Security-Token"] = securityToken;
+    }
 
     std::string buffer;
     for( const auto & i : queries ) {
@@ -365,8 +392,8 @@ generate_presigned_url( const std::string & accessKeyID,
     }
 
     formatstr( presignedURL,
-        "https://%s/%s?%s&X-Amz-Signature=%s",
-        host.c_str(), key.c_str(), canonicalQueryString.c_str(),
+        "https://%s%s?%s&X-Amz-Signature=%s",
+        host.c_str(), canonicalURI.c_str(), canonicalQueryString.c_str(),
         signature.c_str() );
 
     return true;
@@ -392,6 +419,7 @@ htcondor::generate_presigned_url( const classad::ClassAd & jobAd,
 	}
 	trim( accessKeyID );
 
+
 	std::string secretAccessKeyFile;
 	jobAd.EvaluateAttrString( ATTR_EC2_SECRET_ACCESS_KEY, secretAccessKeyFile );
 	if( secretAccessKeyFile.empty() ) {
@@ -406,9 +434,23 @@ htcondor::generate_presigned_url( const classad::ClassAd & jobAd,
 	}
 	trim( secretAccessKey );
 
+
+	// AWS calls it the "session token" in the user documentation and the
+	// "security token" in the API.  We translate between the two here.
+	std::string securityToken;
+	std::string securityTokenFile;
+	jobAd.EvaluateAttrString( ATTR_EC2_SESSION_TOKEN, securityTokenFile );
+	if(! securityTokenFile.empty()) {
+		if(! AWSv4Impl::readShortFile( securityTokenFile, securityToken )) {
+			dprintf( D_ALWAYS, "Unable to read from security token file.\n" );
+			return false;
+		}
+		trim( securityToken );
+	}
+
 	std::string region;
 	jobAd.EvaluateAttrString( ATTR_AWS_REGION, region );
 
-	return generate_presigned_url( accessKeyID, secretAccessKey,
+	return generate_presigned_url( accessKeyID, secretAccessKey, securityToken,
 		s3url, region, verb, presignedURL, err );
 }

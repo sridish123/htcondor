@@ -504,6 +504,12 @@ type=string
 tags=dagman,condor_submit_dag
 restart=never
 
+[DAGMAN_REMOVE_JOBS_AFTER_LIMIT_CHANGE]
+default=false
+type=bool
+tags=dagman
+restart=never
+
 [DAGMAN_CONFIG_FILE]
 default=
 type=path
@@ -548,6 +554,12 @@ default=true
 type=bool
 customization=expert
 tags=dagman,dagman_main
+restart=never
+
+[DAGMAN_ALLOW_ANY_NODE_NAME_CHARACTERS]
+default=false
+type=bool
+tags=dagman
 restart=never
 
 [DAGMAN_PROHIBIT_MULTI_JOBS]
@@ -1084,11 +1096,6 @@ default=1
 type=int
 tags=sysapi,reconfig
 
-[CKPT_PROBE]
-default=$(LIBEXEC)/condor_ckpt_probe
-win32_default=$(LIBEXEC)\condor_ckpt_probe.exe
-type=path
-
 [RELEASE_DIR]
 default=/tmp/condorinstall0
 win32_default=c:\condor
@@ -1420,6 +1427,18 @@ tags=collector
 default=
 type=string
 tags=collector
+
+[COLLECTOR_FORWARD_WATCH_LIST]
+default=State,Cpus,Memory,IdleJobs,ClaimId,Capability,ClaimIdList,ChildClaimIds
+type=string
+
+[COLLECTOR_FORWARD_FILTERING]
+default=false
+type=bool
+
+[COLLECTOR_FORWARD_CLAIMED_PRIVATE_ADS]
+default=$(NEGOTIATOR_CONSIDER_PREEMPTION)
+type=string
 
 [COLLECTOR_STATS_SWEEP]
 default=14400
@@ -1782,7 +1801,7 @@ type=string
 tags=startd,Resource
 
 [STARTER_LIST]
-default=STARTER, STARTER_STANDARD
+default=STARTER
 win32_default=STARTER
 type=string
 tags=startd,starter_mgr
@@ -2509,6 +2528,18 @@ description=Maximum age of accepted tokens.
 type=int
 tags=condor_auth_passwd
 
+[SEC_TOKEN_REQUEST_LIMITS]
+default=
+description=Authorization limits for token requests
+type=string
+tags=condor_auth_passwd
+
+[SEC_TOKEN_BLACKLIST_EXPR]
+default=
+description=Expression describing token blacklist.
+type=string
+tags=condor_auth_passwd
+
 [SEC_ISSUED_TOKEN_EXPIRATION]
 default=
 description=Default max expiration time of issued session tokens.
@@ -2651,7 +2682,7 @@ type=string
 tags=starter
 
 [STARTER_NUM_THREADS_ENV_VARS]
-default=OMP_NUM_THREADS NUMEXPR_NUM_THREADS MKL_NUM_THREADS CUBACORES JULIA_NUM_THREADS
+default=OMP_NUM_THREADS NUMEXPR_NUM_THREADS MKL_NUM_THREADS CUBACORES JULIA_NUM_THREADS GOMAXPROCS
 type=string
 tags=starter
 
@@ -3182,7 +3213,7 @@ type=string
 tags=schedd,dedicated_scheduler
 
 [SHADOW_LIST]
-default=SHADOW, SHADOW_STANDARD
+default=SHADOW
 win32_default=SHADOW
 type=string
 tags=schedd,shadow_mgr
@@ -3191,13 +3222,6 @@ tags=schedd,shadow_mgr
 default=$(SBIN)/condor_shadow
 win32_default=$(SBIN)\condor_shadow.exe
 description=Path to vanilla shadow binary
-type=path
-tags=schedd
-
-[SHADOW_STANDARD]
-default=$(SBIN)/condor_shadow.std
-win32_default=
-description=Path to standard universe shadow binary
 type=path
 tags=schedd
 
@@ -5302,12 +5326,6 @@ win32_default=$(SBIN)\condor_starter.exe
 description=Path to Vanilla Starter binary
 type=path
 
-[STARTER_STANDARD]
-default=$(SBIN)/condor_starter.std
-win32_default=
-description=Path to the Standard Universe Starter binary
-type=path
-
 [MASTER_ADDRESS_FILE]
 default=$(LOG)/.master_address
 description=Path to the master address file
@@ -5469,6 +5487,10 @@ default=$(SBIN)/gce_gahp
 [GCE_GAHP_LOG]
 default=/tmp/GceGahpLog.$(USERNAME)
 win32_default=NUL
+
+[GCE_GAHP_LIFETIME]
+default=86400
+type=int
 
 [ANNEX_GAHP]
 default=$(EC2_GAHP)
