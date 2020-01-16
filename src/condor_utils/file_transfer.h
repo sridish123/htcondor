@@ -275,8 +275,6 @@ class FileTransfer final: public Service {
 		// the background, kill it.
 	void abortActiveTransfer();
 
-	void RemoveInputFiles(const char *sandbox_path = NULL);
-
 	void setTransferFilePermissions( bool value )
 		{ TransferFilePermissions = value; }
 
