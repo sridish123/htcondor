@@ -29,7 +29,8 @@ if(WINDOWS)
 else()
   file( GLOB RmvSrcs y.tab* lex.yy* ckpt_server_api_stubs* libcondorapi_stubs* 
   testingd.cpp sinful-tool.cpp test_user_mapping.cpp
-  test_* *.t.cpp *test.cpp cat_url.cpp *Test* param_info_hash.cpp param_info_init.c )
+  test_* *.t.cpp *test.cpp cat_url.cpp *Test* param_info_hash.cpp param_info_init.c
+  explicit_file_transfer.* )
 endif()
 
 condor_glob( HeaderFiles SourceFiles "${RmvSrcs}" )

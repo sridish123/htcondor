@@ -815,6 +815,11 @@
 #define ATTR_ENCRYPT_OUTPUT_FILES  "EncryptOutputFiles"
 #define ATTR_DONT_ENCRYPT_INPUT_FILES  "DontEncryptInputFiles"
 #define ATTR_DONT_ENCRYPT_OUTPUT_FILES  "DontEncryptOutputFiles"
+
+#define ATTR_V2FT_INPUT_LIST "FTv2_InputList"
+#define ATTR_V2FT_CHECKPOINT_LIST "FTv2_CheckpointList"
+#define ATTR_V2FT_OUTPUT_LIST "FTv2_OutputList"
+
 #define ATTR_TRANSFER_SOCKET  "TransferSocket"
 #define ATTR_SERVER_TIME  "ServerTime"
 #define ATTR_SHADOW_BIRTHDATE  "ShadowBday"

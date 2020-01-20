@@ -115,7 +115,8 @@ class FileTransfer final: public Service {
 	// ...
 	int UploadFiles(bool blocking=true, bool final_transfer=true);
 
-
+    // ...
+    int UploadCheckpointFiles( bool blocking = true );
 
     // Used by the starter to advertise its capabilities.
     MyString GetSupportedMethods();
@@ -317,7 +318,14 @@ class FileTransfer final: public Service {
 	double downloadStartTime{-1}, downloadEndTime{-1};
 
 	void CommitFiles();
-	void ComputeFilesToSend();
+
+	void FindChangedFiles();
+	void DetermineWhichFilesToSend();
+	void setV2InputFiles();
+	void setV2OutputFiles();
+	void setV2CheckpointFiles();
+	void setV2FilesFromAttribute( const char * attr );
+
 #ifdef HAVE_HTTP_PUBLIC_FILES
 	int AddInputFilenameRemaps(ClassAd *Ad);
 #endif
@@ -326,6 +334,8 @@ class FileTransfer final: public Service {
 
   private:
 
+	bool anyV2AttributeIsSet{false};
+	bool uploadCheckpointFiles{false};
 	bool TransferFilePermissions{false};
 	bool DelegateX509Credentials{false};
 	bool PeerDoesTransferAck{false};
@@ -346,6 +356,11 @@ class FileTransfer final: public Service {
 	StringList* FilesToSend{nullptr};
 	StringList* EncryptFiles{nullptr};
 	StringList* DontEncryptFiles{nullptr};
+
+	StringList* v2Files{nullptr};
+	StringList* v2EncryptFiles{nullptr};
+	StringList* v2DontEncryptFiles{nullptr};
+
 	char* OutputDestination{nullptr};
 	char* SpooledIntermediateFiles{nullptr};
 	char* ExecFile{nullptr};
@@ -379,7 +394,7 @@ class FileTransfer final: public Service {
 	bool multifile_plugins_enabled{false};
 #ifdef WIN32
 	perm* perm_obj{nullptr};
-#endif		
+#endif
 	priv_state desired_priv_state{PRIV_UNKNOWN};
 	bool want_priv_change{false};
 	static TranskeyHashTable* TranskeyTable;
