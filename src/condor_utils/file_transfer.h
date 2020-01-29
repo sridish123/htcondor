@@ -326,6 +326,12 @@ class FileTransfer final: public Service {
 	void setV2CheckpointFiles();
 	void setV2FilesFromAttribute( const char * attr );
 
+    std::map< StringList *, std::vector< std::string > > appends;
+    std::map< StringList *, std::vector< std::string > > deletes;
+    void appendWithoutDuplicating( StringList * list, const char * file );
+    void appendWithoutDuplicating( StringList * list, StringList * tail );
+    void deleteURLs( StringList * list );
+
 #ifdef HAVE_HTTP_PUBLIC_FILES
 	int AddInputFilenameRemaps(ClassAd *Ad);
 #endif

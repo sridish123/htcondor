@@ -412,24 +412,19 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 	}
 	StringList PubInpFiles;
 	if (Ad->LookupString(ATTR_PUBLIC_INPUT_FILES, &dynamic_buf) == 1) {
-	      // Add PublicInputFiles to InputFiles list.
-	      // If these files will be transferred via web server cache,
-	      // they will be removed from InputFiles.
-	      PubInpFiles.initializeFromString(dynamic_buf);
-	      free(dynamic_buf);
-	      dynamic_buf = NULL;
-	      const char *path;
-	      PubInpFiles.rewind();
-	      while ((path = PubInpFiles.next()) != NULL) {
-		  if (!InputFiles->file_contains(path))
-		      InputFiles->append(path);
-	      }
+		// Add PublicInputFiles to InputFiles list.
+		// If these files will be transferred via web server cache,
+		// they will be removed from InputFiles.
+		PubInpFiles.initializeFromString(dynamic_buf);
+		free(dynamic_buf);
+		dynamic_buf = NULL;
+
+		appendWithoutDuplicating( InputFiles, & PubInpFiles );
 	}
+
 	if (Ad->LookupString(ATTR_JOB_INPUT, buf, sizeof(buf)) == 1) {
-		// only add to list if not NULL_FILE (i.e. /dev/null)
 		if ( ! nullFile(buf) ) {
-			if ( !InputFiles->file_contains(buf) )
-				InputFiles->append(buf);
+			appendWithoutDuplicating( InputFiles, buf );
 		}
 	}
 
@@ -437,21 +432,24 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 	// We want the file transfer plugin to be invoked at the starter, not the schedd.
 	// See https://condor-wiki.cs.wisc.edu/index.cgi/tktview?tn=2162
 	if (IsClient() && simple_init && is_spool) {
-		InputFiles->rewind();
-		const char *x;
-		while ((x = InputFiles->next())) {
-			if (IsUrl(x)) {
-				InputFiles->deleteCurrent();
-			}
-		}
+		deleteURLs( InputFiles );
+
 		char *list = InputFiles->print_to_string();
 		dprintf(D_FULLDEBUG, "Input files: %s\n", list ? list : "" );
 		free(list);
 	}
 #ifdef HAVE_HTTP_PUBLIC_FILES
 	else if (IsServer() && !is_spool && param_boolean("ENABLE_HTTP_PUBLIC_FILES", false)) {
-		// For files to be cached, change file names to URLs
-		ProcessCachedInpFiles(Ad, InputFiles, PubInpFiles);
+		if(! anyV2AttributeIsSet) {
+			// For files to be cached, change file names to URLs
+			ProcessCachedInpFiles(Ad, InputFiles, PubInpFiles);
+		} else {
+			// It shouldn't be hard to implement ProcessCachedInpFiles() for
+			// v2, but it's something we'd want to do once we've expanded the
+			// input list, rather than record the changes and play them back.
+			dprintf( D_ALWAYS, "FileTransfer::SimpleInit(): public transfer files not supported in version 2.\n" );
+			return 0;
+		}
 	}
 #endif
 
@@ -462,14 +460,14 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 		// At this point, we don't know what version our peer is,
 		// so we have to delay this decision until UploadFiles().
 	}
+
 	if ( Ad->LookupString(ATTR_X509_USER_PROXY, buf, sizeof(buf)) == 1 ) {
 		X509UserProxy = strdup(buf);
-			// add to input files
-		if ( !nullFile(buf) ) {
-			if ( !InputFiles->file_contains(buf) )
-				InputFiles->append(buf);
+		if ( ! nullFile(buf) ) {
+			appendWithoutDuplicating( InputFiles, buf );
 		}
 	}
+
 	if ( Ad->LookupString(ATTR_OUTPUT_DESTINATION, buf, sizeof(buf)) == 1 ) {
 		OutputDestination = strdup(buf);
 		dprintf(D_FULLDEBUG, "FILETRANSFER: using OutputDestination %s\n", buf);
@@ -548,10 +546,14 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 			xferExec=true;
 		}
 
-		if ( xferExec && !InputFiles->file_contains(ExecFile) &&
-		  !PubInpFiles.file_contains(ExecFile)) {
-			// Don't add exec file if it already is in cached list
-			InputFiles->append(ExecFile);
+		if( anyV2AttributeIsSet ) {
+			appendWithoutDuplicating( InputFiles, ExecFile );
+		} else {
+			if ( xferExec && !InputFiles->file_contains(ExecFile) &&
+			  !PubInpFiles.file_contains(ExecFile)) {
+				// Don't add exec file if it already is in cached list
+				InputFiles->append(ExecFile);
+			}
 		}
 	} else if ( IsClient() && !simple_init ) {
 		ExecFile = strdup( CONDOR_EXEC );
@@ -1345,6 +1347,31 @@ FileTransfer::setV2FilesFromAttribute( const char * attr ) {
 }
 
 void
+FileTransfer::appendWithoutDuplicating( StringList * list, const char * file ) {
+    appends[list].emplace_back(file);
+}
+
+void
+FileTransfer::appendWithoutDuplicating( StringList * list, StringList * tail ) {
+    const char * p;
+    list->rewind();
+    while( (p = tail->next()) != NULL ) {
+        appendWithoutDuplicating( list, p );
+    }
+}
+
+void
+FileTransfer::deleteURLs( StringList * list ) {
+    const char * p;
+    list->rewind();
+    while( (p = list->next()) != NULL ) {
+        if( IsUrl(p) ) {
+            deletes[list].emplace_back( p );
+        }
+    }
+}
+
+void
 FileTransfer::DetermineWhichFilesToSend() {
 	// IntermediateFiles is dynamically allocated (some jobs never use it).
 	if (IntermediateFiles) delete(IntermediateFiles);
@@ -1358,11 +1385,15 @@ FileTransfer::DetermineWhichFilesToSend() {
 	if( anyV2AttributeIsSet ) {
 		if( uploadCheckpointFiles ) {
 			setV2CheckpointFiles();
-
-			FilesToSend = v2Files;
-			EncryptFiles = v2EncryptFiles;
-			DontEncryptFiles = v2DontEncryptFiles;
+		} else if( simple_init && IsClient() ) {
+			setV2InputFiles();
+		} else {
+			setV2OutputFiles();
 		}
+
+		FilesToSend = v2Files;
+		EncryptFiles = v2EncryptFiles;
+		DontEncryptFiles = v2DontEncryptFiles;
 		return;
 	}
 
@@ -1426,8 +1457,7 @@ FileTransfer::UploadFiles(bool blocking, bool final_transfer)
 	// If we're a client talking to a 7.5.6 or older schedd, we want
 	// to send the user log as an input file.
 	if ( UserLogFile && TransferUserLog && simple_init && !nullFile( UserLogFile ) ) {
-		if ( !InputFiles->file_contains( UserLogFile ) )
-			InputFiles->append( UserLogFile );
+		appendWithoutDuplicating( InputFiles, UserLogFile );
 	}
 
 	// set flag saying if this is the last upload (i.e. job exited)
@@ -1558,12 +1588,12 @@ FileTransfer::HandleCommands(Service *, int command, Stream *s)
 				} else {
 						// We aren't looking at the userlog file... ship it!
 					const char *filename = spool_space.GetFullPath();
-					if ( !transobject->InputFiles->file_contains(filename) &&
-						 !transobject->InputFiles->file_contains(condor_basename(filename)) ) {
-						transobject->InputFiles->append(filename);
+					if( !transobject->InputFiles->file_contains(condor_basename(filename)) ) {
+						transobject->appendWithoutDuplicating( transobject->InputFiles, filename );
 					}
 				}
 			}
+
 			transobject->FilesToSend = transobject->InputFiles;
 			transobject->EncryptFiles = transobject->EncryptInputFiles;
 			transobject->DontEncryptFiles = transobject->DontEncryptInputFiles;
@@ -5713,9 +5743,7 @@ int FileTransfer::InitializeJobPlugins(const ClassAd &job, CondorError &e, Strin
 			// add the plugin to the front of the input files list
 			MyString plugin_path(colon + 1);
 			plugin_path.trim();
-			if (! infiles.file_contains(plugin_path.c_str())) {
-				infiles.insert(plugin_path.c_str());
-			}
+			appendWithoutDuplicating( & infiles, plugin_path.c_str() );
 			// use the file basename as the plugin name, so that when we invoke it
 			// we will invoke the copy in the input sandbox
 			MyString plugin(condor_basename(plugin_path.c_str()));
