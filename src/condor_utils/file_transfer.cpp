@@ -659,11 +659,7 @@ FileTransfer::SimpleInit(ClassAd *Ad, bool want_check_perms, bool is_server,
 		DontEncryptOutputFiles = new StringList(NULL,",");
 	}
 
-	std::string dummy;
-	anyV2AttributeIsSet =
-		Ad->LookupString( ATTR_V2FT_INPUT_LIST, dummy ) ||
-		Ad->LookupString( ATTR_V2FT_CHECKPOINT_LIST, dummy ) ||
-		Ad->LookupString( ATTR_V2FT_OUTPUT_LIST, dummy );
+	anyV2AttributeIsSet = IsAnyV2AttributeSet(Ad);
 
 	// We need to know whether to apply output file remaps or not.
 	// The case where we want to apply them is when we are the shadow
@@ -1334,16 +1330,16 @@ FileTransfer::setV2FilesFromAttribute( const char * attr ) {
 	std::string buffer;
 	if( jobAd.LookupString( attr, buffer ) ) {
 		if( v2Files ) { delete v2Files; }
-		v2Files = new StringList( buffer.c_str(), "," );
+		v2Files = new StringList( buffer.c_str(), NULL );
 	}
 
 	// We may support requiring encryption for individual files later.
 	if( v2EncryptFiles ) { delete v2EncryptFiles; }
-	v2EncryptFiles = new StringList( NULL, "," );
+	v2EncryptFiles = new StringList( NULL, NULL );
 
 	// We may support avoiding encryption for individual files later.
 	if( v2DontEncryptFiles) { delete v2DontEncryptFiles; }
-	v2DontEncryptFiles = new StringList( NULL, "," );
+	v2DontEncryptFiles = new StringList( NULL, NULL );
 }
 
 void
@@ -5900,7 +5896,403 @@ FileTransfer::InsertPluginMappings(MyString methods, MyString p)
 }
 
 bool
-FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths )
+FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths ) {
+	if(! anyV2AttributeIsSet) {
+		return ExpandFileTransferListV1( input_list, expanded_list, preserveRelativePaths );
+	} else {
+		return ExpandFileTransferListV2( input_list, expanded_list );
+	}
+}
+
+void
+addDirectoryToQueue( const char * iwd, const std::string & partialPath,
+  const std::string & parent, FileTransferList & expanded_list ) {
+	ASSERT( iwd );
+
+	std::string onDiskPath;
+	formatstr( onDiskPath, "%s%s%s", iwd, DIR_DELIM_CHAR, partialPath.c_str() );
+
+	StatInfo si( onDiskPath.c_str() );
+	if( si.Error() != 0 ) { return false; }
+	if( si.IsDomainSocket() ) { return false; }
+	if( si.IsSymlink() ) { return false; }
+
+	expanded_list.emplace_back();
+	FileTransferItem & fti = expanded_list.back();
+
+	fti.setDirectory( true );
+	fti.setSrcName( partialPath.c_str() );
+	fti.setDestDir( parent.c_str() );
+#ifndef WIN32
+	fti.setFileMode( (condor_mode_t)si.GetMode() );
+#endif
+
+	return true;
+}
+
+bool
+addDirectoryContentsToQueue( const char * source, const char * destination, FileTransferList & expandedList, const char * iwd ) {
+	std::string pathOnDisk = source;
+	if(! fullpath( source )) {
+		if( strlen(iwd) > 0 ) {
+			formatstr( pathOnDisk, "%s%s%s", iwd, DIR_DELIM_CHAR, source );
+		}
+	}
+
+	StatInfo si( pathOnDisk.c_str() );
+	if( si.Error() != 0 ) { return false; }
+
+	Directory dir(& si);
+	dir.rewind();
+
+	const char * f;
+	std::string fOnDisk;
+	while( (f = dir.Next()) != NULL ) {
+		formatstr( fOnDisk, "%s%s%s", pathOnDisk, DIR_DELIM_CHAR, f );
+
+		StatInfo si( fOnDisk.c_str() );
+		if( si.Error() != 0 ) { return false; }
+
+		// For the convenience of our users, we ignore domain sockets.
+		if( si.IsDomainSocket() ) { continue; }
+
+		// We also ignore symlinks to directories, oddly enough.
+		if( si.IsDirrectory() && si.IsSymlink() ) { continue; }
+
+		expanded_list.emplace_back();
+		FileTransferItem & fti = expanded_list.back();
+		std::string s;
+		formatstr( s, "%s%s%s", source, DIR_DELIM_CHAR, f );
+		fti.setSrcName( s.c_str() );
+		fti.setDestName( destination );
+#ifndef WIN32
+		fti.setFileMode( (condor_mode_t)si.GetMode() );
+#endif
+
+		if( si.IsDirectory() ) {
+			fti.setDirectory( true );
+
+			std::string d;
+			formatstr( d, "%s%s%s", destination, DIR_DELIM_CHAR, f );
+			if(! addDirectoryContents( s.c_str(), d, expanded_list, iwd )) {
+				return false;
+			}
+		} else {
+			fti.setSymlink( si.IsSymlink() );
+			fti.setFileSize( si.GetFileSize() );
+		}
+	}
+
+	return true;
+}
+
+bool
+handleV2Entry( char * source, const char * destination, FileTransferList & expandedList, const char * iwd ) {
+	dprintf( D_ALWAYS, "FIXME -- handleV2Entry(%s, %s, %p, %s )\n", source, destination, &expandedList, iwd );
+
+	ASSERT( source );
+	ASSERT( iwd );
+
+	//
+	// Deal with URLs.  They can be renamed, but are always required.
+	//
+	if( IsUrl( source ) ) {
+		expanded_list.emplace_back();
+		FileTransferItem & fti = expanded_list.back();
+
+		fti.setSrcName( source );
+		fti.setDestName( destination );
+		// FIXME: set destination (path, not just directory); will
+		// require changes to FileTransferItem and DoUpload().
+		return true;
+	}
+
+
+	//
+	// Determine and remove the suffix from the entry, if any.
+	//
+	char suffix = '+';
+	unsigned length = strlen(source);
+	if( length == 0 ) { return true; }
+	if( length >= 2 ) {
+		switch(source[length-1]) {
+			// required
+			case '+':
+			// changed
+			case '@':
+			// optional
+			case '?':
+			// forbidden
+			case '!':
+				suffix = source[length-1];
+				source[length - 1] = '\0';
+				break;
+
+			default:
+				break;
+		}
+	}
+
+	//
+	// If the source is a glob...
+	//
+	/* FIXME */
+
+	// If the source is not a glob, it must be a file or a directory.  We
+	// needs it on-disk path to determine which.
+	std::string pathOnDisk = source;
+	if(! fullpath( source )) {
+		if( strlen(iwd) > 0 ) {
+			formatstr( pathOnDisk, "%s%s%s", iwd, DIR_DELIM_CHAR, source );
+		}
+	}
+
+	StatInfo si( pathOnDisk.c_str() );
+	if( si.Error() != 0 ) { return false; }
+	// For the convenience of our users, we ignore domain sockets.
+	if( si.isDomainSocket() ) { return true; }
+
+	//
+	// Whether the source is a file or a directory, if it's a relative path,
+	// add its parent directories to the transfer queue (which preserves the
+	// mode bits).
+	//
+	// We don't do this for the destination because the destination isn't
+	// a thing on the sending machine.
+	//
+	if(! fullpath( source )) {
+		char * dirname = condor_dirname( source );
+		if( strcmp( dirname, "." ) != 0 ) {
+			std::string dir, file;
+			std::string path( source );
+			std::vector< std::string > splitPath;
+
+			while( filename_split( path.c_str(), dir, file ) ) {
+				splitPath.emplace_back( file );
+				path = path.substr( 0, path.length() - file.length() - 1 );
+			}
+
+			std::string parent;
+			while( splitPath.size() != 0 ) {
+				std::string partialpath = parent;
+				if( partialPath.length() > 0 ) {
+					partialPath += DIR_DELIM_CHAR;
+				}
+				partialPath += splitPath.back(); splitPath.pop_back();
+
+				if(! addDirectoryToQueue( iwd, partialPath, parent, expanded_list )) {
+					return false;
+				}
+				parent = partialPath;
+			}
+		}
+		free( dirname );
+	}
+
+	//
+	// if the source is a file...
+	//
+	if(! si.IsDirectory() ) {
+		expanded_list.emplace_back();
+		FileTransferItem & fti = expanded_list.back();
+
+		fti.setSrcName( source );
+		fti.setDestName( destination );
+#ifndef WIN32
+		fti.setFileMode( (condor_mode_t)si.GetMode() );
+#endif
+		fti.setSymlink( si.IsSymlink() );
+		fti.setFileSize( si.GetFileSize() );
+		return true;
+	}
+
+
+	//
+	// if the source is a directory...
+	//
+	if( si.IsDirectory() ) {
+		// In v1, we would follow symlinks to directories if and only if
+		// the entry ended with a trailing slash, which mean to transfer
+		// the contents of the named directory to the sandbox root.
+		if( si.IsSymlink() ) {
+			return false;
+		}
+
+		expanded_list.emplace_back();
+		FileTransferItem & fti = expanded_list.back();
+
+		fti.setSrcName( source );
+		fti.setDestName( destination );
+#ifndef WIN32
+		fti.setFileMode( (condor_mode_t)st.GetMode() );
+#endif
+		fti.setDirectory( true );
+
+		// Instead of distinguishing between oddly-named files and entries,
+		// recursively transfer the directory's contents with another function.
+		if(! AddDirectoryContents( source, destination, expanded_path, iwd ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	//
+	// Otherwise, we don't know what it is.
+	//
+	dprintf( D_ALWAYS, "Unable to discern type of entry '%s', failing.\n", source );
+	return false;
+
+	return true;
+}
+
+bool
+FileTransfer::eftl_v2_impl( StringList * list, FileTransferList & expandedList,
+  const char * iwd, const ChangesByList & appends, const ChangesByList & deletes ) {
+	// Using a StringList with NULL delimiters means that the first entry will
+	// be raw characters, excepting that the leading and trailing whitespace
+	// will have been removed.  Assume for now that no one will ever want to
+	// specify a V2 list whose last entry has trailing escaped whitespace.
+	const char * l = list->first();
+	if( l == NULL ) { return false; }
+
+	unsigned int length = strlen( l );
+	char * entry = (char *)malloc( length );
+	if( entry == NULL ) { return false; }
+
+	const char * i = l;
+
+	while( true ) {
+		char * e = entry;
+		char * remap = NULL;
+		bool seenRemap = false;
+
+		// Ignore leading whitespace.
+		while( isspace( *i ) ) { ++i; }
+
+		// Find the end of the entry, which could be the end of the string,
+		// whitespace, or a comma.  Collapse escapes as we go along.
+		while( true ) {
+			if( *i == '\0' ) {
+				*e++ = *i;
+				return handleV2Entry( entry, remap, expandedList, iwd );
+			} else if( *i == '\\' ) {
+				++i;
+
+				// Treat string-ending backslashes as literal backslashes.
+				if( *i == '\0' ) {
+					*e++ = '\\'; *e = '\0';
+					return handleV2Entry( entry, remap, expandedList, iwd );
+				}
+
+				if( isspace(*i) || *i == ',' || *i == '\\' ) {
+					// If we're escaping whitespace, a comma, or a backslash,
+					// insert the appropriate literal.
+					*e++ = *i++;
+				} else if( *i == '?' || *i == '!' || *i == '@' || *i == '+' ) {
+					// Insert the literal.
+					*e++ = *i++;
+
+					// If the next character is a space, comma, or NUL,
+					// this is a trailing literal that might be confused
+					// for a suffix modifier; append a '+' to disambiguate.
+					if( isspace( *i ) || *i == ',' || *i == '\0' ) {
+						*e++ = '+';
+					}
+				} else {
+					// If the next character is not escapable, don't.
+					*e++ = '\\';
+					*e++ = *i++;
+				}
+			} else if( *i == ',' ) {
+				*e = '\0';
+				if(! handleV2Entry( entry, remap, expandedList, iwd )) { return false; }
+				break;
+			} else if( isspace( *i ) ) {
+				if( strncmp( i, " -> ", 4 ) == 0 ) {
+					if( seenRemap ) { return false; }
+					seenRemap = true;
+
+					*e = '\0';
+					for( int j = 0; j < 4; ++j ) { ++e; ++i; }
+					remap = e;
+				} else {
+					*e = '\0';
+					if(! handleV2Entry( entry, remap, expandedList, iwd )) { return false; }
+
+					// Ignore trailing whitespace and the subsequent comma.
+					// (So that the loop can assume we're starting a new
+					// entry when at its top.)
+					while( isspace( *i ) ) { ++i; }
+					if( *i == '\0' ) { return true; }
+					if( *i == ',' ) { ++i; }
+
+					break;
+				}
+			} else {
+				*e++ = *i++;
+			}
+		}
+	}
+
+	// FIXME: process the append and delete lists.
+
+	return true;
+}
+
+bool
+FileTransfer::ExpandFileTransferListV2( StringList * list, FileTransferList & expandedList ) {
+	dprintf( D_ALWAYS, "FIXME -- FileTransfer::ExpandFileTransferListV2(list, expandedList)...\n" );
+	if( list == NULL ) { return true; }
+	return eftl_v2_impl( list, expandedList, Iwd, appends, deletes );
+}
+
+bool
+FileTransfer::ExpandInputFileListV2( const char * list, const char * iwd,
+  MyString & expandedList, MyString & errorMsg ) {
+	dprintf( D_ALWAYS, "FIXME -- FileTransfer::ExpandInputFileListV2(list, iwd, expandedList, errorMsg)...\n" );
+	FileTransferList ftl;
+	StringList l( list, "," );
+	ChangesByList appends, deletes;
+	if(! eftl_v2_impl( & l, ftl, iwd, appends, deletes )) {
+		errorMsg.formatstr( "ExpandFileTransferListV2() failed." );
+		return false;
+	}
+
+	for( auto i = ftl.begin(); i != ftl.end(); i++ ) {
+		expandedList.append_to_list( i->srcName(), "," );
+	}
+	return true;
+}
+
+bool
+FileTransfer::ExpandInputFileListV2( ClassAd * jobAd, MyString & errorMsg ) {
+	dprintf( D_ALWAYS, "FIXME -- FileTransfer::ExpandInputFileListV2(jobAd, errorMsg)...\n" );
+	std::string inputList;
+	if(! jobAd->LookupString( ATTR_V2FT_INPUT_LIST, inputList )) {
+		return true;
+	}
+
+	std::string iwd;
+	if(! jobAd->LookupString( ATTR_JOB_IWD, iwd)) {
+		errorMsg.formatstr( "No IWD in job ad." );
+		return false;
+	}
+
+	MyString expandedList;
+	if(! ExpandInputFileListV2( inputList.c_str(), iwd.c_str(), expandedList, errorMsg )) {
+		return false;
+	}
+
+	if( expandedList != inputList ) {
+		dprintf( D_FULLDEBUG, "Expanded v2 input file list: %s\n", expandedList.c_str() );
+		jobAd->Assign( ATTR_V2FT_INPUT_LIST, expandedList.c_str() );
+	}
+	return true;
+}
+
+bool
+FileTransfer::ExpandFileTransferListV1( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths )
 {
 	bool rc = true;
 
@@ -5910,7 +6302,7 @@ FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &
 
 	// if this exists and is in the list do it first
 	if (X509UserProxy && input_list->contains(X509UserProxy)) {
-		if( !ExpandFileTransferList( X509UserProxy, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
+		if( !ExpandFileTransferListV1( X509UserProxy, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
 			rc = false;
 		}
 	}
@@ -5923,7 +6315,7 @@ FileTransfer::ExpandFileTransferList( StringList *input_list, FileTransferList &
 		// everything else gets expanded.  this if would short-circuit
 		// true if X509UserProxy is not defined, but i made it explicit.
 		if(!X509UserProxy || (X509UserProxy && strcmp(path, X509UserProxy) != 0)) {
-			if( !ExpandFileTransferList( path, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
+			if( !ExpandFileTransferListV1( path, "", Iwd, -1, expanded_list, preserveRelativePaths ) ) {
 				rc = false;
 			}
 		}
@@ -5978,7 +6370,7 @@ FileTransfer::ExpandParentDirectories( const char * src_path, const char * iwd, 
 			partialPath += DIR_DELIM_CHAR;
 		}
 		partialPath += splitPath.back(); splitPath.pop_back();
-		if(! ExpandFileTransferList( partialPath.c_str(), parent.c_str(), iwd, 0, expanded_list, false )) {
+		if(! ExpandFileTransferListV1( partialPath.c_str(), parent.c_str(), iwd, 0, expanded_list, false )) {
 			return false;
 		}
 		parent = partialPath;
@@ -5988,7 +6380,7 @@ FileTransfer::ExpandParentDirectories( const char * src_path, const char * iwd, 
 }
 
 bool
-FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list, bool preserveRelativePaths )
+FileTransfer::ExpandFileTransferListV1( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list, bool preserveRelativePaths )
 {
 	ASSERT( src_path );
 	ASSERT( dest_dir );
@@ -6147,7 +6539,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 		}
 		file_full_path += file_in_dir;
 
-		if( !ExpandFileTransferList( file_full_path.c_str(), destination.c_str(), iwd, max_depth, expanded_list, preserveRelativePaths ) ) {
+		if( !ExpandFileTransferListV1( file_full_path.c_str(), destination.c_str(), iwd, max_depth, expanded_list, preserveRelativePaths ) ) {
 			rc = false;
 		}
 	}
@@ -6156,7 +6548,7 @@ FileTransfer::ExpandFileTransferList( char const *src_path, char const *dest_dir
 }
 
 bool
-FileTransfer::ExpandInputFileList( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg )
+FileTransfer::ExpandInputFileListV1( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg )
 {
 	bool result = true;
 	StringList input_files(input_list,",");
@@ -6181,7 +6573,7 @@ FileTransfer::ExpandInputFileList( char const *input_list, char const *iwd, MySt
 			FileTransferList filelist;
 			// N.B.: It's only safe to flatten relative paths here because
 			// this code never calls destDir().
-			if( !ExpandFileTransferList( path, "", iwd, 1, filelist, false ) ) {
+			if( !ExpandFileTransferListV1( path, "", iwd, 1, filelist, false ) ) {
 				error_msg.formatstr_cat("Failed to expand '%s' in transfer input file list. ",path);
 				result = false;
 			}
@@ -6198,7 +6590,24 @@ FileTransfer::ExpandInputFileList( char const *input_list, char const *iwd, MySt
 }
 
 bool
-FileTransfer::ExpandInputFileList( ClassAd *job, MyString &error_msg ) {
+FileTransfer::IsAnyV2AttributeSet( ClassAd * jobAd ) {
+	std::string dummy;
+	return jobAd->LookupString( ATTR_V2FT_INPUT_LIST, dummy ) ||
+		jobAd->LookupString( ATTR_V2FT_CHECKPOINT_LIST, dummy ) ||
+		jobAd->LookupString( ATTR_V2FT_OUTPUT_LIST, dummy );
+}
+
+bool
+FileTransfer::ExpandInputFileList( ClassAd * j, MyString & e ) {
+	if(! IsAnyV2AttributeSet(j)) {
+		return ExpandInputFileListV1( j, e );
+	}
+	return ExpandInputFileListV2( j, e );
+}
+
+
+bool
+FileTransfer::ExpandInputFileListV1( ClassAd *job, MyString &error_msg ) {
 
 		// If we are spooling input files, input directories that end
 		// in a slash must be expanded to list their contents so that
@@ -6237,7 +6646,7 @@ FileTransfer::ExpandInputFileList( ClassAd *job, MyString &error_msg ) {
 	}
 
 	MyString expanded_list;
-	if( !FileTransfer::ExpandInputFileList(input_files.c_str(),iwd.c_str(),expanded_list,error_msg) )
+	if( !FileTransfer::ExpandInputFileListV1(input_files.c_str(),iwd.c_str(),expanded_list,error_msg) )
 	{
 		return false;
 	}

@@ -86,7 +86,8 @@ class FileTransfer final: public Service {
     // Used by the Condor-C GAHP, the job router, and the submit utils to
     // avoid certain problems when dealing with spooling files.
 	static bool ExpandInputFileList( ClassAd *job, MyString &error_msg );
-	static bool ExpandInputFileList( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg );
+	static bool ExpandInputFileListV1( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg );
+	static bool ExpandInputFileListV2( char const *input_list, char const *iwd, MyString &expanded_list, MyString &error_msg );
 
     // Used by the shadow.
 	static bool IsDataflowJob(ClassAd *job_ad);
@@ -326,8 +327,9 @@ class FileTransfer final: public Service {
 	void setV2CheckpointFiles();
 	void setV2FilesFromAttribute( const char * attr );
 
-    std::map< StringList *, std::vector< std::string > > appends;
-    std::map< StringList *, std::vector< std::string > > deletes;
+    typedef std::map< StringList *, std::vector< std::string > > ChangesByList;
+    ChangesByList appends;
+    ChangesByList deletes;
     void appendWithoutDuplicating( StringList * list, const char * file );
     void appendWithoutDuplicating( StringList * list, StringList * tail );
     void deleteURLs( StringList * list );
@@ -470,6 +472,13 @@ class FileTransfer final: public Service {
 	ClassAd jobAd;
 
 	bool ExpandFileTransferList( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths );
+	bool ExpandFileTransferListV1( StringList *input_list, FileTransferList &expanded_list, bool preserveRelativePaths );
+	bool ExpandFileTransferListV2( StringList *input_list, FileTransferList &expanded_list );
+
+	static bool ExpandInputFileListV1( ClassAd *job, MyString &error_msg );
+	static bool ExpandInputFileListV2( ClassAd *job, MyString &error_msg );
+
+	static bool IsAnyV2AttributeSet(ClassAd * jobAd);
 
 		// This function generates a list of files to transfer, including
 		// directories to create and their full contents.
@@ -479,9 +488,12 @@ class FileTransfer final: public Service {
 		// iwd       - relative paths are relative to this path
 		// max_depth - how deep to recurse (-1 for infinite)
 		// expanded_list - the list of files to transfer
-	static bool ExpandFileTransferList( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list, bool preserveRelativePaths );
+	static bool ExpandFileTransferListV1( char const *src_path, char const *dest_dir, char const *iwd, int max_depth, FileTransferList &expanded_list, bool preserveRelativePaths );
 
-        // Function internal to ExpandFileTransferList() -- called twice there.
+    	// Function internal to ExpandFileTransferListV2() and ExpandInputFileListV2().
+	static bool eftl_v2_impl( StringList * list, FileTransferList & ftl, const char * iwd, const ChangesByList & appends, const ChangesByList & deletes );
+
+        // Function internal to ExpandFileTransferListV1() -- called twice there.
     static bool ExpandParentDirectories( const char *src_path, const char *iwd, FileTransferList & expanded_list );
 
 		// Returns true if path is a legal path for our peer to tell us it

@@ -7463,6 +7463,11 @@ int SubmitHash::FixupTransferInputFiles()
 		return 0;
 	}
 
+    //
+    // N.B.: If you want V2 file transfer to work with remote jobs, this
+    // is where you do it.
+    //
+
 	MyString input_files;
 	if( job->LookupString(ATTR_TRANSFER_INPUT_FILES,input_files) != 1 ) {
 		return 0; // nothing to do
@@ -7472,7 +7477,7 @@ int SubmitHash::FixupTransferInputFiles()
 
 	MyString error_msg;
 	MyString expanded_list;
-	bool success = FileTransfer::ExpandInputFileList(input_files.c_str(),JobIwd.c_str(),expanded_list,error_msg);
+	bool success = FileTransfer::ExpandInputFileListV1(input_files.c_str(),JobIwd.c_str(),expanded_list,error_msg);
 	if (success) {
 		if (expanded_list != input_files) {
 			dprintf(D_FULLDEBUG,"Expanded input file list: %s\n",expanded_list.Value());
