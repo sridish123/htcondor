@@ -1,7 +1,6 @@
 #include "condor_common.h"
 #include "condor_config.h"
 #include "condor_debug.h"
-#include "condor_network.h"
 #include "spooled_job_files.h"
 #include "subsystem_info.h"
 #include "env.h"
@@ -34,7 +33,6 @@
 #include "extArray.h"
 #include "MyString.h"
 #include "string_list.h"
-#include "which.h"
 #include "sig_name.h"
 #include "print_wrapped_text.h"
 #include "dc_schedd.h"
@@ -124,7 +122,8 @@ int SimScheddQ::destroy_Cluster(int cluster_id, const char * /*reason*/) {
 
 int SimScheddQ::get_Capabilities(ClassAd & caps) {
 	caps.Assign("LateMaterialize", true);
-	return GetScheddCapabilites(0, caps);
+	caps.Assign("LateMaterializeVersion", 2);
+	return true;
 }
 
 // hack for 8.7.8 testing
@@ -178,7 +177,7 @@ int SimScheddQ::send_Itemdata(int cluster_id, SubmitForeachArgs & o)
 		fprintf(fp, "\n");
 	}
 	if (o.items.number() > 0) {
-		if (log_all_communication) {
+		if (log_all_communication && fp) {
 			fprintf(fp, "::sendItemdata(%d) %d items", cluster_id, o.items.number());
 		}
 		if (!echo_itemdata_filepath.empty()) {

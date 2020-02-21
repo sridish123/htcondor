@@ -33,6 +33,7 @@
 #include <set>
 #include <unordered_set>
 #include <unordered_map>
+#include <queue>
 
 #include "dc_collector.h"
 #include "daemon.h"
@@ -44,7 +45,6 @@
 #include "HashTable.h"
 #include "string_list.h"
 #include "list.h"
-#include "Queue.h"
 #include "write_user_log.h"
 #include "autocluster.h"
 #include "shadow_mgr.h"
@@ -188,8 +188,8 @@ struct SubmitterFlockCounters {
 struct SubmitterCounters {
   int JobsRunning;
   int JobsIdle;
-  int WeightedJobsRunning;
-  int WeightedJobsIdle;
+  double WeightedJobsRunning;
+  double WeightedJobsIdle;
   int JobsHeld;
   int JobsFlocked;
   int SchedulerJobsRunning; // Scheduler Universe (i.e dags)
@@ -530,6 +530,8 @@ private:
 	ClassAd owner_ad;
 };
 
+class JobSets; // forward reference - declared in jobsets.h
+
 class Scheduler : public Service
 {
   public:
@@ -823,6 +825,9 @@ class Scheduler : public Service
 
 	std::set<LocalJobRec> LocalJobsPrioQueue;
 
+	// Class to manage sets of Job 
+	JobSets *jobSets;
+
 private:
 
 	bool JobCanFlock(classad::ClassAd &job_ad, const std::string &pool);
@@ -831,7 +836,12 @@ private:
 	// Returns a capability that can be included in an ad sent to the collector.
 	bool SetupNegotiatorSession(unsigned duration, const std::string &remote_pool,
 		std::string &capability);
-	// Negotiator sessions have claim IDs, which includes a sequence number
+
+	// Setup a new security session for a trusted collector.
+	// As with SetupNegotiator session, it returns a capability for embedding in the schedd ad.
+	bool SetupCollectorSession(unsigned duration, std::string &capability);
+
+	// Negotiator & collector sessions have claim IDs, which includes a sequence number
 	uint64_t m_negotiator_seq{0};
 	time_t m_scheduler_startup{0};
 
@@ -915,7 +925,7 @@ private:
 	HashTable<UserIdentity, GridJobCounts> GridJobOwners;
 	time_t			NegotiationRequestTime;
 	int				ExitWhenDone;  // Flag set for graceful shutdown
-	Queue<shadow_rec*> RunnableJobQueue;
+	std::queue<shadow_rec*> RunnableJobQueue;
 	int				StartJobTimer;
 	int				timeoutid;		// daemoncore timer id for timeout()
 	int				startjobsid;	// daemoncore timer id for StartJobs()
@@ -927,7 +937,7 @@ private:
 
 		// Here we enqueue calls to 'contactStartd' when we can't just 
 		// call it any more.  See contactStartd and the call to it...
-	Queue<ContactStartdArgs*> startdContactQueue;
+	std::queue<ContactStartdArgs*> startdContactQueue;
 	int				checkContactQueue_tid;	// DC Timer ID to check queue
 	int num_pending_startd_contacts;
 	int max_pending_startd_contacts;
@@ -1017,8 +1027,8 @@ private:
 	void			initLocalStarterDir( void );
 	void	noShadowForJob( shadow_rec* srec, NoShadowFailure_t why );
 	bool			jobExitCode( PROC_ID job_id, int exit_code );
-	int			calcSlotWeight(match_rec *mrec);
-	int			guessJobSlotWeight(JobQueueJob * job);
+	double			calcSlotWeight(match_rec *mrec);
+	double			guessJobSlotWeight(JobQueueJob * job);
 	
 	// -----------------------------------------------
 	// CronTab Jobs
@@ -1047,7 +1057,7 @@ private:
 		// CronTab execution scheduling
 		// This is used by processCronTabClusterIds()
 		//
-	Queue<int> cronTabClusterIds;
+	std::set<int> cronTabClusterIds;
 	// -----------------------------------------------
 
 		/** We begin the process of opening a non-blocking ReliSock
@@ -1121,6 +1131,9 @@ private:
 
    int local_startd_reaper(int pid, int status);
    int launch_local_startd();
+
+		// Command handler for collector token requests.
+	int handle_collector_token_request(int, Stream *s);
 
 		// A bit that says wether or not we've sent email to the admin
 		// about a shadow not starting.

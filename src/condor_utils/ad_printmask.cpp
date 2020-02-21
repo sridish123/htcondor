@@ -604,7 +604,7 @@ static int calc_column_width(Formatter *fmt, classad::Value * pval)
 	switch (pval->GetType()) {
 	case classad::Value::REAL_VALUE: {
 		double realValue  = 0;
-		pval->IsRealValue(realValue);
+		(void) pval->IsRealValue(realValue);
 		if (fmt_type == PFT_FLOAT || fmt_type == PFT_INT || fmt_type == PFT_TIME || fmt_type == PFT_DATE) {
 			format_value<double>(tmp, realValue, fmt_type, *fmt);
 			return (int)tmp.length();
@@ -895,21 +895,21 @@ display (std::string & out, MyRowOfValues & rov)
 		switch (fmt->fmtKind) {
 		case CustomFormatFn::INT_CUSTOM_FMT:
 			if (col_is_valid || (fmt->options & FormatOptionAlwaysCall)) {
-				pval->IsNumber(intValue);
+				(void) pval->IsNumber(intValue);
 				pszVal = fmt->df(intValue, *fmt);
 				col_is_valid = true; printfFmt = NULL;
 			}
 			break;
 		case CustomFormatFn::FLT_CUSTOM_FMT:
 			if (col_is_valid || (fmt->options & FormatOptionAlwaysCall)) {
-				pval->IsNumber(realValue);
+				(void) pval->IsNumber(realValue);
 				pszVal = fmt->ff(realValue, *fmt);
 				col_is_valid = true; printfFmt = NULL;
 			}
 			break;
 		case CustomFormatFn::STR_CUSTOM_FMT:
 			if (col_is_valid || (fmt->options & FormatOptionAlwaysCall)) {
-				pval->IsStringValue(pszVal);
+				(void) pval->IsStringValue(pszVal);
 				pszVal = fmt->sf(pszVal, *fmt);
 				col_is_valid = true; printfFmt = NULL;
 			}
@@ -940,11 +940,11 @@ display (std::string & out, MyRowOfValues & rov)
 				case PFT_INT:
 				case PFT_POINTER:
 				case PFT_CHAR:
-					pval->IsNumber(intValue);
+					(void) pval->IsNumber(intValue);
 					pszVal = format_value<long long>(mstrValue, intValue, fmt_info.type, *fmt);
 					break;
 				case PFT_FLOAT:
-					pval->IsNumber(realValue);
+					(void) pval->IsNumber(realValue);
 					pszVal = format_value<double>(mstrValue, realValue, fmt_info.type, *fmt);
 					break;
 				case PFT_STRING:
@@ -969,7 +969,7 @@ display (std::string & out, MyRowOfValues & rov)
 				}
 			}
 		} else if ( ! pszVal) {
-			pval->IsStringValue(pszVal);
+			(void) pval->IsStringValue(pszVal);
 		}
 
 		// at this point, pszVal is the display text for the column

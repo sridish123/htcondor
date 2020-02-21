@@ -22,11 +22,12 @@
 #define SOCK_H
 
 #include "condor_common.h"
-#include "condor_socket_types.h"
 #include "stream.h"
 #include "CondorError.h"
 #include "condor_perms.h"
 #include "condor_sockaddr.h"
+
+#include <unordered_set>
 
 // retry failed connects for CONNECT_TIMEOUT seconds
 #define CONNECT_TIMEOUT 10
@@ -55,12 +56,6 @@ class SockInitializer {
 		void init();
 };
 #endif  /* of WIN32 */
-
-/*
-We want to define a callback function to be invoked when certain actions happen upon a stream.  CedarHandler is the type of a callback function.   The following notation is a little strange.  It reads: Define a new type called "CedarHandler" to be "a function returning void with single argument pointer to Stream"
-*/
-
-typedef void (CedarHandler) (Stream *s);
 
 namespace classad {
 class ClassAd;
@@ -137,9 +132,6 @@ public:
 		return connect(host,getportbyserv(service),do_not_block);
 	}
 
-
-	/** Install this function as the asynchronous handler.  When a handler is installed, it is invoked whenever data arrives on the socket.  Setting the handler to zero disables asynchronous notification.  */
-	int set_async_handler( CedarHandler *handler );
 
 	//
 	// This set of functions replaces assign().
@@ -382,6 +374,8 @@ public:
 	void setAuthenticatedName(char const *auth_name);
 	const char *getAuthenticatedName() const;
 
+	bool isAuthorizationInBoundingSet(const std::string &);
+
 	void setCryptoMethodUsed(char const *crypto_method);
 	const char* getCryptoMethodUsed() const;
 
@@ -564,6 +558,7 @@ protected:
 	bool            _tried_authentication;
 	bool            _should_try_token_request{false};
 	std::string	_trust_domain;
+	std::unordered_set<std::string> m_authz_bound;
 
 	bool ignore_connect_timeout;	// Used by HA Daemon
 

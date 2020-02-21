@@ -39,7 +39,6 @@
 #include "condor_netaddr.h"
 #include "condor_sinful.h"
 
-#include "counted_ptr.h"
 #include "ipv6_hostname.h"
 
 #include <sstream>
@@ -1187,23 +1186,21 @@ Daemon::getDaemonInfo( AdTypes adtype, bool query_collector, LocateType method )
 		} else {
 				// We were given a hostname, not an address.
 			MyString fqdn;
-			if(host) {
-				dprintf( D_HOSTNAME, "Host info \"%s\" is a hostname, "
-						 "finding IP address\n", host );
-				if (!get_fqdn_and_ip_from_hostname(host, fqdn, hostaddr)) {
-					// With a hostname, this is a fatal Daemon error.
-					formatstr( buf, "unknown host %s", host );
-					newError( CA_LOCATE_FAILED, buf.c_str() );
-					if (host) free( host );
+			dprintf( D_HOSTNAME, "Host info \"%s\" is a hostname, "
+					 "finding IP address\n", host );
+			if (!get_fqdn_and_ip_from_hostname(host, fqdn, hostaddr)) {
+				// With a hostname, this is a fatal Daemon error.
+				formatstr( buf, "unknown host %s", host );
+				newError( CA_LOCATE_FAILED, buf.c_str() );
+				free( host );
 
-						// We assume this is a transient DNS failure.  Therefore,
-						// set _tried_locate = false, so that we keep trying in
-						// future calls to locate().
-					_tried_locate = false;
+					// We assume this is a transient DNS failure.  Therefore,
+					// set _tried_locate = false, so that we keep trying in
+					// future calls to locate().
+				_tried_locate = false;
 
-					return false;
-				}
-			} else return false;
+				return false;
+			}
 			buf = generate_sinful(hostaddr.to_ip_string().Value(), _port);
 			dprintf( D_HOSTNAME, "Found IP address and port %s\n", buf.c_str() );
 			if (fqdn.Length() > 0)
@@ -1917,7 +1914,7 @@ Daemon::readLocalClassAd( const char* subsys )
 	if(!m_daemon_ad_ptr) {
 		m_daemon_ad_ptr = new ClassAd(*adFromFile);
 	}
-	counted_ptr<ClassAd> smart_ad_ptr(adFromFile);
+	std::unique_ptr<ClassAd> smart_ad_ptr(adFromFile);
 	
 	fclose(addr_fp);
 
@@ -1925,7 +1922,7 @@ Daemon::readLocalClassAd( const char* subsys )
 		return false;	// did that just leak adFromFile?
 	}
 
-	return getInfoFromAd( smart_ad_ptr );
+	return getInfoFromAd( smart_ad_ptr.get() );
 }
 
 bool
@@ -1999,13 +1996,6 @@ Daemon::getInfoFromAd( const ClassAd* ad )
 
 
 bool
-Daemon::getInfoFromAd( counted_ptr<class ClassAd>& ad )
-{
-	return getInfoFromAd( ad.get() );
-}
-
-
-bool
 Daemon::initStringFromAd( const ClassAd* ad, const char* attrname, char** value )
 {
 	if( ! value ) {
@@ -2033,13 +2023,6 @@ Daemon::initStringFromAd( const ClassAd* ad, const char* attrname, char** value 
 	tmp = NULL;
 	return true;
 }
-
-bool
-Daemon::initStringFromAd( counted_ptr<class ClassAd>& ad, const char* attrname, char** value )
-{
-	return initStringFromAd( ad.get(), attrname, value);
-}
-
 
 char*
 Daemon::New_full_hostname( char* str )
@@ -2501,6 +2484,7 @@ Daemon::getInstanceID( std::string & instanceID ) {
 	return true;
 }
 
+
 bool
 Daemon::getSessionToken( const std::vector<std::string> &authz_bounding_limit, int lifetime,
 	std::string &token, CondorError *err)
@@ -2597,9 +2581,100 @@ Daemon::getSessionToken( const std::vector<std::string> &authz_bounding_limit, i
 	return true;
 }
 
+bool
+Daemon::exchangeSciToken(const std::string &scitoken, std::string &token, CondorError &err) noexcept
+{
+	if( IsDebugLevel( D_COMMAND ) ) {
+		dprintf( D_COMMAND, "Daemon::exchangeSciToken() making connection to "
+			"'%s'\n", _addr ? _addr : "NULL" );
+	}
+
+	classad::ClassAd ad;
+	if (!ad.InsertAttr(ATTR_SEC_TOKEN, scitoken)) {
+		err.pushf("DAEMON", 1, "Failed to create SciToken exchange request ClassAd");
+		dprintf(D_FULLDEBUG, "Failed to create SciToken exchange request ClassAd\n");
+		return false;
+	}
+
+	ReliSock rSock;
+	rSock.timeout( 5 );
+	if(! connectSock( & rSock )) {
+		err.pushf("DAEMON", 1, "Failed to connect to remote daemon at '%s'",
+			_addr ? _addr : "(unknown)");
+		dprintf(D_FULLDEBUG, "Daemon::exchangeSciToken() failed to connect "
+			"to remote daemon at '%s'\n", _addr ? _addr : "NULL" );
+			return false;
+	}
+
+	if (!startCommand( DC_EXCHANGE_SCITOKEN, &rSock, 20, &err)) {
+		err.pushf("DAEMON", 1, "Failed to start command for SciToken exchange "
+			"with remote daemon at '%s'.\n", _addr ? _addr : "(unknown)");
+		dprintf(D_FULLDEBUG, "Daemon::exchangeSciToken() failed to start command for "
+			"SciToken exchange with remote daemon at '%s'.\n", _addr ? _addr : "NULL");
+		return false;
+	}
+
+	if (!putClassAd(&rSock, ad)) {
+		err.pushf("DAEMON", 1, "Failed to send ClassAd to remote daemon at"
+			" '%s'", _addr ? _addr : "(unknown)");
+		dprintf(D_FULLDEBUG, "Daemon::exchangeSciToken() Failed to send ClassAd to remote"
+			" daemon at '%s'\n", _addr ? _addr : "NULL" );
+		return false;
+	}
+
+	if(! rSock.end_of_message()) {
+		err.pushf("DAEMON", 1, "Failed to send end of message to remote daemon at"
+			" '%s'", _addr ? _addr : "(unknown)");
+		dprintf(D_FULLDEBUG, "Daemon::exchangeSciToken() failed to send "
+			"end of message to remote daemon at '%s'\n", _addr );
+		return false;
+	}
+
+	rSock.decode();
+
+	classad::ClassAd result_ad;
+	if (!getClassAd(&rSock, result_ad)) {
+		err.pushf("DAEMON", 1, "Failed to recieve response from remote daemon at"
+			" at '%s'\n", _addr ? _addr : "(unknown)" );
+		dprintf(D_FULLDEBUG, "Daemon::exchangeSciToken() failed to recieve response from "
+			"remote daemon at '%s'\n", _addr ? _addr : "(unknown)" );
+		return false;
+	}
+
+	if(!rSock.end_of_message()) {
+		err.pushf("DAEMON", 1, "Failed to read end of message to remote daemon at"
+			" '%s'", _addr ? _addr : "(unknown)");
+		dprintf( D_FULLDEBUG, "Daemon::exchangeSciToken() failed to read "
+			"end of message from remote daemon at '%s'\n", _addr );
+		return false;
+	}
+
+	std::string err_msg;
+	if (result_ad.EvaluateAttrString(ATTR_ERROR_STRING, err_msg)) {
+		int error_code = 0;
+		result_ad.EvaluateAttrInt(ATTR_ERROR_CODE, error_code);
+		if (!error_code) error_code = -1;
+
+		err.push("DAEMON", error_code, err_msg.c_str());
+		return false;
+	}
+
+	if (!result_ad.EvaluateAttrString(ATTR_SEC_TOKEN, token)) {
+		dprintf(D_FULLDEBUG, "BUG!  Daemon::exchangeToken() received a malformed ad, "
+			"containing no resulting token and no error message, from remote daemon "
+			"at '%s'\n", _addr ? _addr : "(unknown)" );
+		err.pushf("DAEMON", 1, "BUG!  Daemon::exchangeSciToken() received a "
+			"malformed ad containing no resulting token and no error message, from "
+			"remote daemon at '%s'\n", _addr ? _addr : "(unknown)" );
+		return false;
+	}
+
+	return true;
+}
+
 
 bool
-Daemon::startTokenRequest( const std::string identity,
+Daemon::startTokenRequest( const std::string &identity,
 	const std::vector<std::string> &authz_bounding_set, int lifetime,
 	const std::string &client_id, std::string &token, std::string &request_id,
 	CondorError *err ) noexcept

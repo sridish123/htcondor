@@ -20,7 +20,6 @@
 #include "condor_common.h"
 #include "condor_config.h"
 #include "condor_debug.h"
-#include "condor_network.h"
 #include "spooled_job_files.h"
 #include "subsystem_info.h"
 #include "env.h"
@@ -51,7 +50,6 @@
 #include "HashTable.h"
 #include "MyString.h"
 #include "string_list.h"
-#include "which.h"
 #include "sig_name.h"
 #include "print_wrapped_text.h"
 #include "dc_schedd.h"
@@ -211,6 +209,8 @@ FILE		*DumpFile = NULL;
 bool		DumpFileIsStdout = 0;
 
 void usage();
+// this is in submit_help.cpp
+void help_info(FILE* out, int num_topics, const char ** topics);
 void init_params();
 void reschedule();
 int submit_jobs (
@@ -233,7 +233,7 @@ int  SendLastExecutable();
 static int MySendJobAttributes(const JOB_ID_KEY & key, const classad::ClassAd & ad, SetAttributeFlags_t saflags);
 int  DoUnitTests(int options);
 
-char *owner = NULL;
+char *username = NULL;
 char *myproxy_password = NULL;
 
 int process_job_credentials();
@@ -560,10 +560,11 @@ main( int argc, const char *argv[] )
 	set_priv_initialize(); // allow uid switching if root
 	config();
 
-	//TODO:this should go away, and the owner name be placed in ad by schedd!
-	owner = my_username();
-	if( !owner ) {
-		owner = strdup("unknown");
+	// We pass this in to submit_utils, but it isn't used to set the Owner attribute for remote submits
+	// it's only used to set the default accounting user
+	username = my_username();
+	if( !username ) {
+		username = strdup("unknown");
 	}
 
 	init_params();
@@ -843,7 +844,10 @@ main( int argc, const char *argv[] )
 			} else if (is_dash_arg_prefix(ptr[0], "allow-crlf-script", 8)) {
 				allow_crlf_script = true;
 			} else if (is_dash_arg_prefix(ptr[0], "help")) {
-				usage();
+				if (!(--argc) || !(*(++ptr))) {
+					usage();
+				}
+				help_info(stdout, argc, ptr);
 				exit( 0 );
 			} else if (is_dash_arg_prefix(ptr[0], "interactive", 1)) {
 				// we don't currently support -interactive on Windows, but we parse for it anyway.
@@ -1039,13 +1043,19 @@ main( int argc, const char *argv[] )
 		fp = stdin;
 		submit_hash.insert_source("<stdin>", FileMacroSource);
 	} else {
+		const char * submit_filename = cmd_file;
+	#ifdef WIN32
+		if ( ! cmd_file && NoCmdFileNeeded) { cmd_file = "NUL"; submit_filename = "null"; }
+	#else
+		if ( ! cmd_file && NoCmdFileNeeded) { cmd_file = "/dev/null"; submit_filename = "null"; }
+	#endif
 		if( (fp=safe_fopen_wrapper_follow(cmd_file,"r")) == NULL ) {
 			fprintf( stderr, "\nERROR: Failed to open command file (%s) (%s)\n",
 						cmd_file, strerror(errno));
 			exit(1);
 		}
 		// this does both insert_source, and also gives a values to the default $(SUBMIT_FILE) expansion
-		submit_hash.insert_submit_filename(cmd_file, FileMacroSource);
+		submit_hash.insert_submit_filename(submit_filename, FileMacroSource);
 	}
 
 	// in case things go awry ...
@@ -1056,7 +1066,7 @@ main( int argc, const char *argv[] )
 	submit_hash.setFakeFileCreationChecks(DashDryRun);
 	submit_hash.setScheddVersion(MySchedd ? MySchedd->version() : CondorVersion());
 	if (myproxy_password) submit_hash.setMyProxyPassword(myproxy_password);
-	submit_hash.init_base_ad(get_submit_time(), owner);
+	submit_hash.init_base_ad(get_submit_time(), username);
 
 	if ( !DumpClassAdToFile ) {
 		if ( !CmdFileIsStdin && ! terse) {
@@ -1680,18 +1690,16 @@ bool CheckForNewExecutable(MACRO_SET& macro_set) {
 	return new_exe;
 }
 
-int send_cluster_ad(SubmitHash & hash, int ClusterId)
+int send_cluster_ad(SubmitHash & hash, int ClusterId, bool is_interactive, bool is_remote)
 {
 	int rval = 0;
 
 	// make the cluster ad.
 	//
 	// use make_job_ad for job 0 to populate the cluster ad.
-	const bool is_interactive = false; // for now, interactive jobs don't work
-	const bool dash_remote = false; // for now, remote jobs don't work.
 	void * pv_check_arg = NULL; // future?
 	ClassAd * job = hash.make_job_ad(JOB_ID_KEY(ClusterId,0),
-	                                 0, 0, is_interactive, dash_remote,
+	                                 0, 0, is_interactive, is_remote,
 	                                 check_sub_file, pv_check_arg);
 	if ( ! job) {
 		return -1;
@@ -1921,8 +1929,13 @@ int submit_jobs (
 			if (want_factory && ! MyQ->allows_late_materialize()) {
 				// if factory was required, not just preferred. then we fail the submit
 				if (need_factory) {
-					if (MyQ->has_late_materialize()) {
-						fprintf(stderr, "\nERROR: Late materialization is not allowed by this SCHEDD\n");
+					int late_ver = 0;
+					if (MyQ->has_late_materialize(late_ver)) {
+						if (late_ver < 2) {
+							fprintf(stderr, "\nERROR: This SCHEDD allows only an older Late materialization protocol\n");
+						} else {
+							fprintf(stderr, "\nERROR: Late materialization is not allowed by this SCHEDD\n");
+						}
 					} else {
 						fprintf(stderr, "\nERROR: The SCHEDD is too old to support late materialization\n");
 					}
@@ -2013,7 +2026,7 @@ int submit_jobs (
 
 			// submit the cluster ad
 			//
-			rval = send_cluster_ad(submit_hash, ClusterId);
+			rval = send_cluster_ad(submit_hash, ClusterId, dash_interactive, dash_remote);
 			if (rval < 0)
 				break;
 
@@ -2464,7 +2477,6 @@ int queue_item(int num, StringList & vars, char * item, int item_index, int opti
 				tmp->ChainToAd(JobAdsArray[JobAdsArrayLastClusterIndex]);
 			}
 			JobAdsArray.push_back(tmp);
-			return true;
 		}
 
 		submit_hash.delete_job_ad();
@@ -2556,8 +2568,9 @@ DoCleanup(int,int,const char*)
 		}
 	}
 
-	if (owner) {
-		free(owner);
+	if (username) {
+		free(username);
+		username = NULL;
 	}
 	if (myproxy_password) {
 		free (myproxy_password);
@@ -3014,7 +3027,7 @@ int SendLastExecutable()
 		int ret;
 		if ( ! hash.empty()) {
 			ClassAd tmp_ad;
-			tmp_ad.Assign(ATTR_OWNER, owner);
+			tmp_ad.Assign(ATTR_OWNER, username);
 			tmp_ad.Assign(ATTR_JOB_CMD_CHECKSUM, hash);
 			ret = MyQ->send_SpoolFileIfNeeded(tmp_ad);
 		}

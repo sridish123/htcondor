@@ -92,6 +92,7 @@ const char SecMan::sec_req_rev[][10] = {
 KeyCache SecMan::m_default_session_cache;
 std::map<std::string,KeyCache*> *SecMan::m_tagged_session_cache = NULL;
 std::string SecMan::m_tag;
+std::string SecMan::m_token;
 std::map<DCpermission, std::string> SecMan::m_tag_methods;
 std::string SecMan::m_tag_token_owner;
 KeyCache *SecMan::session_cache = &SecMan::m_default_session_cache;
@@ -104,6 +105,7 @@ char* SecMan::_my_unique_id = 0;
 char* SecMan::_my_parent_unique_id = 0;
 bool SecMan::_should_check_env_for_unique_id = true;
 IpVerify *SecMan::m_ipverify = NULL;
+classad::References SecMan::m_resume_proj;
 
 void
 SecMan::setTag(const std::string &tag) {
@@ -1854,8 +1856,9 @@ SecManStartCommand::sendAuthInfo_inner()
 	}
 
 	// send the classad
-	if (! putClassAd(m_sock, m_auth_info)) {
-		dprintf ( D_ALWAYS, "SECMAN: failed to send auth_info\n");
+	// if we are resuming, use the projection so we send the minimum number of attributes
+	if (! putClassAd(m_sock, m_auth_info, 0, m_have_session ? SecMan::getResumeProj() : NULL)) {
+		dprintf ( D_ALWAYS, "SECMAN: failed to send auth_info (resume was %i)\n", m_have_session);
 		m_errstack->push( "SECMAN", SECMAN_ERR_COMMUNICATIONS_ERROR,
 						"Failed to send auth_info." );
 		return StartCommandFailed;
@@ -2871,7 +2874,18 @@ SecMan::SecMan() :
 	m_cached_use_tmp_sec_session(false),
 	m_cached_force_authentication(false),
 	m_cached_return_value(-1) {
-	
+
+	// the list of ClassAd attributes we need to resume a session
+	if (m_resume_proj.empty()) {
+		m_resume_proj.insert(ATTR_SEC_USE_SESSION);
+		m_resume_proj.insert(ATTR_SEC_SID);
+		m_resume_proj.insert(ATTR_SEC_COMMAND);
+		m_resume_proj.insert(ATTR_SEC_AUTH_COMMAND);
+		m_resume_proj.insert(ATTR_SEC_SERVER_COMMAND_SOCK);
+		m_resume_proj.insert(ATTR_SEC_CONNECT_SINFUL);
+		m_resume_proj.insert(ATTR_SEC_COOKIE);
+	}
+
 	if ( NULL == m_ipverify ) {
 		m_ipverify = new IpVerify( );
 	}
@@ -2892,6 +2906,18 @@ SecMan::SecMan(const SecMan & rhs/* copy */) :
 const SecMan & SecMan::operator=(const SecMan & /* copy */) {
 	return *this;
 }
+
+SecMan &
+SecMan::operator=(SecMan && rhs) {
+	this->m_cached_auth_level   = rhs.m_cached_auth_level;
+	this->m_cached_raw_protocol = rhs.m_cached_raw_protocol;
+	this->m_cached_use_tmp_sec_session = rhs.m_cached_use_tmp_sec_session;
+	this->m_cached_force_authentication = rhs.m_cached_force_authentication;
+	this->m_cached_policy_ad = std::move(rhs.m_cached_policy_ad);
+	this->m_cached_return_value = rhs.m_cached_return_value;
+	return *this;
+}
+
 
 
 SecMan::~SecMan() {
@@ -3051,7 +3077,7 @@ MyString SecMan::getDefaultAuthenticationMethods(DCpermission perm) {
 
 MyString SecMan::getDefaultCryptoMethods() {
 #ifdef HAVE_EXT_OPENSSL
-	return "3DES,BLOWFISH";
+	return "BLOWFISH,3DES";
 #else
 	return "";
 #endif
@@ -3405,6 +3431,7 @@ SecMan::getSessionPolicy(const char *session_id, classad::ClassAd &policy_ad)
 	sec_copy_attribute(policy_ad, *policy, ATTR_X509_USER_PROXY_FIRST_FQAN);
 	sec_copy_attribute(policy_ad, *policy, ATTR_X509_USER_PROXY_FQAN);
 	sec_copy_attribute(policy_ad, *policy, ATTR_REMOTE_POOL);
+	sec_copy_attribute(policy_ad, *policy, "ScheddSession");
 	return true;
 }
 

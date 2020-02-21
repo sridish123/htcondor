@@ -147,7 +147,7 @@ static const char *GMStateNames[] = {
 
 #define CHECK_PROXY \
 { \
-	if ( ((PROXY_NEAR_EXPIRED( jobProxy ) && condorState != REMOVED) || \
+	if ( jobProxy && ((PROXY_NEAR_EXPIRED( jobProxy ) && condorState != REMOVED) || \
 		  (PROXY_IS_EXPIRED( jobProxy ) && condorState == REMOVED)) \
 		 && gmState != GM_PROXY_EXPIRED ) { \
 		dprintf( D_ALWAYS, "(%d.%d) proxy is about to expire, changing state to GM_PROXY_EXPIRED\n", \
@@ -3223,6 +3223,7 @@ std::string *GlobusJob::buildSubmitRSL()
 			formatstr(errorString, "Failed to read job environment: %s\n",
 					env_errors.Value());
 			delete rsl;
+			if (rsl_suffix) free(rsl_suffix);
 			return NULL;
 		}
 		char **env_vec = envobj.getStringArray();
@@ -3526,6 +3527,11 @@ GlobusJob::JmShouldSleep()
 	if ( probeNow == true ) {
 		return false;
 	}
+
+	if (!jobProxy) {
+		return false;
+	}
+
 	if ( jmProxyExpireTime < jobProxy->expiration_time ) {
 		// Don't forward the refreshed proxy if the remote proxy has more
 		// than GRIDMANAGER_PROXY_RENEW_LIMIT time left.

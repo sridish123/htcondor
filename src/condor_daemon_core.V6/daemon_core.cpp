@@ -26,8 +26,6 @@
 
 #include "condor_common.h"
 
-#include "condor_socket_types.h"
-
 #if HAVE_CLONE
 #include <sched.h>
 #include <sys/syscall.h>
@@ -72,7 +70,6 @@ static const int DC_PIPE_BUF_SIZE = 65536;
 #include "condor_version.h"
 #include "setenv.h"
 #include "my_popen.h"
-#include "../condor_privsep/condor_privsep.h"
 #ifdef WIN32
 #include "exception_handling.WINDOWS.h"
 #include "process_control.WINDOWS.h"
@@ -221,6 +218,7 @@ void zz2printf(int debug_levels, KeyInfo *k) {
 */
 
 static int _condor_fast_exit = 0;
+static int dummyGlobal;
 
 void **curr_dataptr;
 void **curr_regdataptr;
@@ -464,6 +462,7 @@ DaemonCore::DaemonCore(int ComSize,int SigSize,
 	m_ccb_listeners = NULL;
 	m_shared_port_endpoint = NULL;
 	nRegisteredSocks = 0;
+	m_iMaxUdpMsgsPerCycle = 1;
 }
 
 // DaemonCore destructor. Delete the all the various handler tables, plus
@@ -495,6 +494,7 @@ DaemonCore::~DaemonCore()
 	for (i=0;i<nCommand;i++) {
 		free( comTable[i].command_descrip );
 		free( comTable[i].handler_descrip );
+		delete comTable[i].alternate_perm;
 	}
 	if ( m_unregisteredCommand.num ) {
 		free( m_unregisteredCommand.command_descrip );
@@ -632,43 +632,47 @@ void DaemonCore::Set_Default_Reaper( int reaper_id )
 int	DaemonCore::Register_Command(int command, const char* com_descrip,
 				CommandHandler handler, const char* handler_descrip, Service* s,
 				DCpermission perm, int dprintf_flag, bool force_authentication,
-				int wait_for_payload)
+				int wait_for_payload, std::vector<DCpermission> *alternate_perm)
 {
 	return( Register_Command(command, com_descrip, handler,
 							(CommandHandlercpp)NULL, handler_descrip, s,
 							 perm, dprintf_flag, FALSE, force_authentication,
-							 wait_for_payload) );
+							 wait_for_payload, alternate_perm) );
 }
 
 int	DaemonCore::Register_Command(int command, const char *com_descrip,
 				CommandHandlercpp handlercpp, const char* handler_descrip,
 				Service* s, DCpermission perm, int dprintf_flag,
-				bool force_authentication, int wait_for_payload)
+				bool force_authentication, int wait_for_payload,
+				std::vector<DCpermission> *alternate_perm)
 {
 	return( Register_Command(command, com_descrip, NULL, handlercpp,
 							 handler_descrip, s, perm, dprintf_flag, TRUE,
-							 force_authentication, wait_for_payload) );
+							 force_authentication, wait_for_payload,
+							 alternate_perm) );
 }
 
 int	DaemonCore::Register_CommandWithPayload(int command, const char* com_descrip,
 				CommandHandler handler, const char* handler_descrip, Service* s,
 				DCpermission perm, int dprintf_flag, bool force_authentication,
-				int wait_for_payload)
+				int wait_for_payload, std::vector<DCpermission> *alternate_perm)
 {
 	return( Register_Command(command, com_descrip, handler,
 							(CommandHandlercpp)NULL, handler_descrip, s,
 							 perm, dprintf_flag, FALSE, force_authentication,
-							 wait_for_payload) );
+							 wait_for_payload, alternate_perm) );
 }
 
 int	DaemonCore::Register_CommandWithPayload(int command, const char *com_descrip,
 				CommandHandlercpp handlercpp, const char* handler_descrip,
 				Service* s, DCpermission perm, int dprintf_flag,
-				bool force_authentication, int wait_for_payload)
+				bool force_authentication, int wait_for_payload,
+				std::vector<DCpermission> *alternate_perm)
 {
 	return( Register_Command(command, com_descrip, NULL, handlercpp,
 							 handler_descrip, s, perm, dprintf_flag, TRUE,
-							 force_authentication, wait_for_payload) );
+							 force_authentication, wait_for_payload,
+							 alternate_perm) );
 }
 
 int	DaemonCore::Register_Signal(int sig, const char* sig_descrip,
@@ -1014,7 +1018,7 @@ int DaemonCore::Register_Command(int command, const char* command_descrip,
 				CommandHandler handler, CommandHandlercpp handlercpp,
 				const char *handler_descrip, Service* s, DCpermission perm,
 				int dprintf_flag, int is_cpp, bool force_authentication,
-				int wait_for_payload)
+				int wait_for_payload, std::vector<DCpermission> *alternate_perm)
 {
 	int i = -1;
 
@@ -1058,6 +1062,9 @@ int DaemonCore::Register_Command(int command, const char* command_descrip,
 	comTable[i].data_ptr = NULL;
 	comTable[i].dprintf_flag = dprintf_flag;
 	comTable[i].wait_for_payload = wait_for_payload;
+	if (alternate_perm) {
+		comTable[i].alternate_perm = new std::vector<DCpermission>(*alternate_perm);
+	}
 	free(comTable[i].command_descrip);
 	if ( command_descrip )
 		comTable[i].command_descrip = strdup(command_descrip);
@@ -1096,6 +1103,8 @@ int DaemonCore::Cancel_Command( int command )
 			comTable[i].command_descrip = NULL;
 			free(comTable[i].handler_descrip);
 			comTable[i].handler_descrip = NULL;
+			delete comTable[i].alternate_perm;
+			comTable[i].alternate_perm = NULL;
 			while ( nCommand > 0 && comTable[nCommand - 1].num == 0 &&
 					comTable[nCommand - 1].handler == NULL &&
 					comTable[nCommand - 1].handlercpp == NULL ) {
@@ -2763,8 +2772,17 @@ std::string DaemonCore::GetCommandsInAuthLevel(DCpermission perm,bool is_authent
 		// iterate through a list of this perm and all perms implied by it
 	for (perm = *(perms++); perm != LAST_PERM; perm = *(perms++)) {
 		for (i = 0; i < nCommand; i++) {
+			bool alternate_perm_match = false;
+			if (comTable[i].alternate_perm) {
+				for (auto alt_perm : *(comTable[i].alternate_perm)) {
+					if (alt_perm == perm) {
+						alternate_perm_match = true;
+						break;
+					}
+				}
+			}
 			if( (comTable[i].handler || comTable[i].handlercpp) &&
-				(comTable[i].perm == perm) &&
+				((comTable[i].perm == perm) || alternate_perm_match) &&
 				(!comTable[i].force_authentication || is_authenticated))
 			{
 				char const *comma = res.length() ? "," : "";
@@ -2937,7 +2955,7 @@ DaemonCore::thread_switch_callback(void* & incoming_contextVP)
 		// allocate an incoming context above before panicing about
 		// no outgoing context.  Whew.
 	WorkerThreadPtr_t context = CondorThreads::get_handle(last_tid);
-	if ( !context.is_null() ) {
+	if ( context ) {
 		outgoing_context = (DCThreadState *) context->user_pointer_;
 		if (!outgoing_context) {
 				EXCEPT("ERROR: daemonCore - no thread context for tid %d",
@@ -3165,7 +3183,7 @@ DaemonCore::ReloadSharedPortServerAddr()
 }
 
 int
-DaemonCore::Verify(char const *command_descrip,DCpermission perm, const condor_sockaddr& addr, const char * fqu )
+DaemonCore::Verify(char const *command_descrip,DCpermission perm, const condor_sockaddr& addr, const char * fqu, int log_level )
 {
 	MyString deny_reason; // always get 'deny' reason, if there is one
 	MyString *allow_reason = NULL;
@@ -3187,7 +3205,7 @@ DaemonCore::Verify(char const *command_descrip,DCpermission perm, const condor_s
 
 			// Note that although this says D_ALWAYS, when the result is
 			// ALLOW, we only get here if D_SECURITY is on.
-		dprintf( D_ALWAYS,
+		dprintf( log_level,
 				 "PERMISSION %s to %s from host %s for %s, "
 				 "access level %s: reason: %s\n",
 				 result_desc,
@@ -3465,12 +3483,12 @@ void DaemonCore::Driver()
         int num_timers_fired = 0;
 		timeout = t.Timeout(&num_timers_fired, &runtime);
 
-        if (num_timers_fired > 0) {
-            dprintf(D_DAEMONCORE, "Timers fired num=%d runtime=%f\n",
-                num_timers_fired, runtime);
-        }
 		num_timers_fired += num_pumpwork_fired;
-        dc_stats.TimersFired += num_timers_fired;
+		dc_stats.TimersFired = num_timers_fired;
+		if (num_timers_fired > 0) {
+			dprintf(D_DAEMONCORE, "Timers fired num=%d runtime=%f\n",
+				num_timers_fired, runtime);
+		}
 
 		if ( sent_signal == TRUE ) {
 			timeout = 0;
@@ -3968,23 +3986,6 @@ void DaemonCore::Driver()
 
 						// ok, select says this socket table entry has new data.
 
-						// if this sock is a safe_sock, then call the method
-						// to enqueue this packet into the buffers.  if a complete
-						// message is not yet ready, then do not yet call a handler.
-						if ( (*sockTable)[i].iosock->type() == Stream::safe_sock )
-						{
-							SafeSock* ss = (SafeSock *)(*sockTable)[i].iosock;
-							// call handle_incoming_packet to consume the packet.
-							// it returns true if there is a complete message ready,
-							// otherwise it returns false.
-							if ( !(ss->handle_incoming_packet()) ) {
-								// there is not yet a complete message ready.
-								// so go back to the outer for loop - do not
-								// call the user handler yet.
-								continue;
-							}
-						}
-
 						recheck_status = true;
 						CallSocketHandler( i, true );
 
@@ -4060,18 +4061,13 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 			(*sockTable)[i].iosock->type() == Stream::safe_sock ) {
 
 		unsigned msg_cnt = ( m_iMaxUdpMsgsPerCycle > 0 ) ? m_iMaxUdpMsgsPerCycle : -1;
+		unsigned frag_cnt = ( m_iMaxUdpMsgsPerCycle > 0 ) ? ( m_iMaxUdpMsgsPerCycle * 20 ) : -1;
 
-		// We don't care about the return value for UDP command sockets
-		HandleReq(i);
-		msg_cnt--;
+		Selector selector;
+		selector.set_timeout( 0, 0 );
+		selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_READ );
 
-		// Make sure we didn't leak our priv state
-		CheckPrivState();
-
-		while ( msg_cnt ) {
-			Selector selector;
-			selector.set_timeout( 0, 0 );
-			selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_READ );
+		while ( msg_cnt && frag_cnt ) {
 			selector.execute();
 
 			if ( !selector.has_ready() ) {
@@ -4082,6 +4078,7 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 			if ( !(*sockTable)[i].iosock->handle_incoming_packet() )
 			{
 				// Looks like we got a fragment, try reading some more
+				frag_cnt--;
 				continue;
 			}
 			// We don't care about the return value for UDP command sockets
@@ -4857,7 +4854,7 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	// sanity check on the pid.  we don't want to do something silly like
 	// kill pid -1 because the pid has not been initialized yet.
 	int signed_pid = (int) pid;
-	if ( signed_pid > -10 && signed_pid < 3 ) {
+	if ((signed_pid > -10) && (signed_pid < 0)){ 
 		EXCEPT("Send_Signal: sent unsafe pid (%d)",signed_pid);
 	}
 
@@ -4885,7 +4882,7 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	// if we're using priv sep, we may not have permission to send signals
 	// to our child processes; ask the ProcD to do it for us
 	//
-	if (privsep_enabled() || param_boolean("GLEXEC_JOB", false)) {
+	if (param_boolean("GLEXEC_JOB", false)) {
 		if (!target_has_dcpm && pidinfo && pidinfo->new_process_group) {
 			ASSERT(m_proc_family != NULL);
 			bool ok =  m_proc_family->signal_process(pid, sig);
@@ -5031,13 +5028,18 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 #endif
 			msg->deliveryStatus( DCMsg::DELIVERY_SUCCEEDED );
 			return;
-		} else {
+		} 
+
+// Only support multithreads on Windows
+#ifdef WIN32
+		else {
 			// send signal to same process, different thread.
 			// we will still need to go out via UDP so that our call
 			// to select() returns.
 			destination = InfoCommandSinfulString();
 			is_local = TRUE;
 		}
+#endif
 	}
 
 	// handle case of sending to a child process; get info on this pid
@@ -5667,7 +5669,7 @@ REGISTER_FAMILY_DONE:
 		runtime = dc_stats.AddRuntimeSample("DCRunregister_family", IF_VERBOSEPUB, runtime);
 	}
 
-	runtime = dc_stats.AddRuntimeSample("DCRegister_Family", IF_VERBOSEPUB, begintime);
+	(void) dc_stats.AddRuntimeSample("DCRegister_Family", IF_VERBOSEPUB, begintime);
 
 	return success;
 }
@@ -8544,13 +8546,9 @@ DaemonCore::Create_Thread(ThreadStartFunc start_func, void *arg, Stream *sock,
                 // we've already got this pid in our table! we've got
                 // to bail out immediately so our parent can retry.
             int child_errno = ERRNO_PID_COLLISION;
-            int ret = write(errorpipe[1], &child_errno, sizeof(child_errno));
+            dummyGlobal = write(errorpipe[1], &child_errno, sizeof(child_errno));
 			close( errorpipe[1] );
-			if (ret < 1) {
-				exit(4);
-			} else {
-				exit(4);
-			}
+			exit(4);
         }
 			// if we got this far, we know we don't need the errorpipe
 			// anymore, so we can close it now...
@@ -9379,7 +9377,7 @@ DaemonCore::HandleDC_SIGCHLD(int sig)
 		// HandleProcessExit(pid, status);
 		wait_entry.child_pid = pid;
 		wait_entry.exit_status = status;
-		WaitpidQueue.enqueue(wait_entry);
+		WaitpidQueue.push_back(wait_entry);
 		if (first_time) {
 			Send_Signal( mypid, DC_SERVICEWAITPIDS );
 			first_time = false;
@@ -9400,10 +9398,12 @@ DaemonCore::HandleDC_SERVICEWAITPIDS(int)
     while ( iReapsCnt )
     {
 		// pull an reap event off our queue
-		if ( WaitpidQueue.dequeue(wait_entry) < 0 ) {
+		if ( WaitpidQueue.empty() ) {
 			// queue is empty, just return cuz nothing more to do
 			return TRUE;
 		}
+		wait_entry = WaitpidQueue.front();
+		WaitpidQueue.pop_front();
 
 		// we pulled something off the queue, handle it
 		HandleProcessExit(wait_entry.child_pid, wait_entry.exit_status);
@@ -9414,7 +9414,7 @@ DaemonCore::HandleDC_SERVICEWAITPIDS(int)
 	// now check if the queue still has more entries.  if so,
 	// repost the DC_SERVICEWAITPIDS signal so we'll eventually
 	// come back here and service the next entry.
-	if ( !WaitpidQueue.IsEmpty() ) {
+	if ( !WaitpidQueue.empty() ) {
 		Send_Signal( mypid, DC_SERVICEWAITPIDS );
 	}
 
@@ -9437,7 +9437,7 @@ pidWatcherThread( void* arg )
 	int last_pidentry_exited = MAXIMUM_WAIT_OBJECTS + 5;
 	unsigned int exited_pid;
 	DWORD result;
-	Queue<DaemonCore::WaitpidEntry> MyExitedQueue;
+	std::queue<DaemonCore::WaitpidEntry> MyExitedQueue;
 	DaemonCore::WaitpidEntry wait_entry;
 
 	entry = (DaemonCore::PidWatcherEntry *) arg;
@@ -9520,11 +9520,12 @@ pidWatcherThread( void* arg )
 				// out of our thread local MyExitedQueue and into our main
 				// thread's WaitpidQueue (of course, we must have the mutex
 				// to go changing anything in WaitpidQueue).
-			if ( !MyExitedQueue.IsEmpty() ) {
+			if ( !MyExitedQueue.empty() ) {
 				daemonCore->HandleSig(_DC_RAISESIGNAL,DC_SERVICEWAITPIDS);
 			}
-			while (MyExitedQueue.dequeue(wait_entry)==0) {
-				daemonCore->WaitpidQueue.enqueue( wait_entry );
+			while (!MyExitedQueue.empty()) {
+				daemonCore->WaitpidQueue.push_back( MyExitedQueue.front() );
+				MyExitedQueue.pop();
 			}
 
 			// now wakeup the main thread so it notices our changes.
@@ -9608,7 +9609,7 @@ pidWatcherThread( void* arg )
 			// added to the main thread WaitpidQueue.
 			wait_entry.child_pid = exited_pid;
 			wait_entry.exit_status = 0;  // we'll get the status later
-			MyExitedQueue.enqueue(wait_entry);
+			MyExitedQueue.push(wait_entry);
 			must_send_signal = true;
 		}
 
@@ -10377,8 +10378,10 @@ bool DaemonCore::ProcessExitedButNotReaped(pid_t pid)
 	wait_entry.child_pid = pid;
 	wait_entry.exit_status = 0; // ignored in WaitpidEntry::operator==, avoid uninit warning
 
-	if(WaitpidQueue.IsMember(wait_entry)) {
-		return true;
+	for(auto itr = WaitpidQueue.begin(); itr != WaitpidQueue.end(); itr++ ) {
+		if ( *itr == wait_entry ) {
+			return true;
+		}
 	}
 #endif
 
@@ -10536,7 +10539,9 @@ DaemonCore::CheckConfigAttrSecurity( const char* name, Sock* sock )
 		MyString command_desc;
 		command_desc.formatstr("remote config %s",name);
 
-		if( Verify(command_desc.Value(),(DCpermission)i, sock->peer_addr(), sock->getFullyQualifiedUser())) {
+		std::string perm_name = PermString(static_cast<DCpermission>(i));
+
+		if( sock->isAuthorizationInBoundingSet(perm_name) && Verify(command_desc.Value(),(DCpermission)i, sock->peer_addr(), sock->getFullyQualifiedUser())) {
 				// now we can see if the specific attribute they're
 				// trying to set is in our list.
 			if( (SettableAttrsLists[i])->
@@ -10546,7 +10551,7 @@ DaemonCore::CheckConfigAttrSecurity( const char* name, Sock* sock )
 #if (DEBUG_SETTABLE_ATTR_LISTS)
 				dprintf( D_ALWAYS, "CheckConfigSecurity: "
 						 "found %s at access level %s\n", name,
-						 PermString((DCpermission)i) );
+						 perm_name.c_str()) );
 #endif
 
 				return true;
@@ -11212,8 +11217,8 @@ bool DaemonCore::SockPair::has_relisock(bool b) {
 	if(!b) {
 		EXCEPT("Internal error: DaemonCore::SockPair::has_relisock must never be called with false as an argument.");
 	}
-	if(m_rsock.is_null()) {
-		m_rsock = counted_ptr<ReliSock>(new ReliSock);
+	if(!m_rsock) {
+		m_rsock = std::shared_ptr<ReliSock>(new ReliSock);
 	}
 	return true;
 }
@@ -11222,8 +11227,26 @@ bool DaemonCore::SockPair::has_safesock(bool b) {
 	if(!b) {
 		EXCEPT("Internal error: DaemonCore::SockPair::has_safesock must never be called with false as an argument.");
 	}
-	if(m_ssock.is_null()) {
-		m_ssock = counted_ptr<SafeSock>(new SafeSock);
+	if(!m_ssock) {
+		m_ssock = std::shared_ptr<SafeSock>(new SafeSock);
 	}
+	return true;
+}
+
+#include "condor_daemon_client.h"
+#include "dc_collector.h"
+
+bool DaemonCore::getStartTime( int & startTime ) {
+	if(! m_collector_list) { return false; }
+	m_collector_list->rewind();
+
+	Daemon * d = NULL;
+	m_collector_list->next(d);
+	if(! d) { return false; }
+
+	DCCollector * dcc = dynamic_cast<DCCollector *>(d);
+	if(! dcc) { return false; }
+
+	startTime = dcc->getStartTime();
 	return true;
 }

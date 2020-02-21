@@ -43,7 +43,6 @@
 #include "KeyCache.h"
 #include "list.h"
 #include "extArray.h"
-#include "Queue.h"
 #include "MapFile.h"
 #ifdef WIN32
 #include "ntsysinfo.WINDOWS.h"
@@ -60,10 +59,11 @@
 #include "condor_sockaddr.h"
 #include "generic_stats.h"
 #include "filesystem_remap.h"
-#include "counted_ptr.h"
 #include "daemon_keep_alive.h"
 
 #include <vector>
+#include <memory>
+#include <deque>
 
 #include "../condor_procd/proc_family_io.h"
 class ProcFamilyInterface;
@@ -101,6 +101,8 @@ static const int DC_STD_FD_NOPIPE = -1;
 
 int dc_main( int argc, char **argv );
 bool dc_args_is_background(int argc, char** argv); // return true if we should run in background
+// set the default for -f / -b flag for this daemon, used by the master to default to backround, all other daemons default to foreground.
+bool dc_args_default_to_background(bool background);
 
 
 // External protos
@@ -358,7 +360,7 @@ class DaemonCore : public Service
         @param sin  Not_Yet_Documented
         @return Not_Yet_Documented
     */
-    int Verify (char const *command_descrip, DCpermission perm, const condor_sockaddr& addr, const char * fqu);
+    int Verify (char const *command_descrip, DCpermission perm, const condor_sockaddr& addr, const char * fqu, int log_level=D_ALWAYS);
     int AddAllowHost( const char* host, DCpermission perm );
 
     /** clear all sessions associated with the child 
@@ -391,7 +393,8 @@ class DaemonCore : public Service
                           DCpermission    perm             = ALLOW,
                           int             dprintf_flag     = D_COMMAND,
                           bool            force_authentication = false,
-						  int             wait_for_payload = 0);
+                          int             wait_for_payload = 0,
+                          std::vector<DCpermission> *alternate_perms = nullptr);
     
     /** Not_Yet_Documented
         @param command         Not_Yet_Documented
@@ -415,7 +418,8 @@ class DaemonCore : public Service
                           DCpermission       perm             = ALLOW,
                           int                dprintf_flag     = D_COMMAND,
                           bool               force_authentication = false,
-						  int                wait_for_payload = 0);
+                          int                wait_for_payload = 0,
+                          std::vector<DCpermission> * alternate_perms = nullptr);
 
     int Register_UnregisteredCommandHandler (
 		CommandHandlercpp handlercpp,
@@ -442,7 +446,9 @@ class DaemonCore : public Service
                           DCpermission    perm             = ALLOW,
                           int             dprintf_flag     = D_COMMAND,
                           bool            force_authentication = false,
-						  int             wait_for_payload = STANDARD_COMMAND_PAYLOAD_TIMEOUT);
+                          int             wait_for_payload = STANDARD_COMMAND_PAYLOAD_TIMEOUT,
+                          std::vector<DCpermission> *alternate_perms = nullptr);
+
     int Register_CommandWithPayload (
                           int                command,
                           const char *       com_descript,
@@ -452,7 +458,8 @@ class DaemonCore : public Service
                           DCpermission       perm             = ALLOW,
                           int                dprintf_flag     = D_COMMAND,
                           bool               force_authentication = false,
-						  int                wait_for_payload = STANDARD_COMMAND_PAYLOAD_TIMEOUT);
+                          int                wait_for_payload = STANDARD_COMMAND_PAYLOAD_TIMEOUT,
+                          std::vector<DCpermission> * alternate_perms = nullptr);
 
 
     /** Not_Yet_Documented
@@ -1506,6 +1513,8 @@ class DaemonCore : public Service
 
 	DCCollectorAdSequences & getUpdateAdSeq() { return m_collector_list->getAdSeq(); }
 
+	bool getStartTime(int & startTime);
+
 		/**
 		   Indicates if this daemon wants to be restarted by its
 		   parent or not.  Usually true, unless one of the
@@ -1585,7 +1594,7 @@ class DaemonCore : public Service
 	   stats_entry_recent<double> PipeRuntime;    //  total time spent handling pipe messages
 
 	   stats_entry_recent<int> Signals;        //  number of signals handlers called
-	   stats_entry_recent<int> TimersFired;    //  number of timer handlers called
+	   stats_entry_abs<int> TimersFired;    //  number of timer handlers called
 	   stats_entry_recent<int> SockMessages;   //  number of socket handlers called
 	   stats_entry_recent<int> PipeMessages;   //  number of pipe handlers called
 	   //stats_entry_recent<int64_t> SockBytes;      //  number of bytes passed though the socket (can we do this?)
@@ -1660,18 +1669,18 @@ class DaemonCore : public Service
 
 			// Strictly unnecessary, but proved helpful for debugging.
 		~SockPair() {
-			m_rsock = counted_ptr<ReliSock>(NULL);
-			m_ssock = counted_ptr<SafeSock>(NULL);
+			m_rsock = std::shared_ptr<ReliSock>(nullptr);
+			m_ssock = std::shared_ptr<SafeSock>(nullptr);
 		}
 
-		bool has_relisock() const { return !m_rsock.is_null(); }
-		bool has_safesock() const { return !m_ssock.is_null(); }
+		bool has_relisock() const { return (bool)m_rsock; }
+		bool has_safesock() const { return (bool)m_ssock; }
 		bool not_empty() const { return has_relisock() || has_safesock(); }
 
-		// If you really need a non-counted_ptr version, use .get(). Avoid
+		// If you really need a non-shared_ptr version, use .get(). Avoid
 		// doing so if possible.  If you must, keep the usage brief.
-		counted_ptr<ReliSock> rsock() { return m_rsock; }
-		counted_ptr<SafeSock> ssock() { return m_ssock; }
+		std::shared_ptr<ReliSock> rsock() { return m_rsock; }
+		std::shared_ptr<SafeSock> ssock() { return m_ssock; }
 
 		// Associate a ReliSock or SafeSock with this SockPair. Does nothing
 		// if one is already associated. b must always be true and always
@@ -1679,8 +1688,8 @@ class DaemonCore : public Service
 		bool has_relisock(bool b);
 		bool has_safesock(bool b);
 	private:
-		counted_ptr<ReliSock> m_rsock;	// tcp command socket
-		counted_ptr<SafeSock> m_ssock;	// udp command socket
+		std::shared_ptr<ReliSock> m_rsock;	// tcp command socket
+		std::shared_ptr<SafeSock> m_ssock;	// udp command socket
 	};
 	typedef std::vector<SockPair> SockPairVec;
 
@@ -1729,7 +1738,8 @@ class DaemonCore : public Service
                          int dprintf_flag,
                          int is_cpp,
                          bool force_authentication,
-						 int wait_for_payload);
+                         int wait_for_payload,
+                         std::vector<DCpermission> *alternate_perm);
 
     int Register_Signal(int sig,
                         const char *sig_descip,
@@ -1810,7 +1820,10 @@ class DaemonCore : public Service
         char*           handler_descrip;
         void*           data_ptr;
         int             dprintf_flag;
-		int             wait_for_payload;
+	int             wait_for_payload;
+		// If there are alternate permission levels where the
+		// command is permitted, they will be listed here.
+	std::vector<DCpermission> *alternate_perm{nullptr};
 
 		CommandEnt() : num(0), is_cpp(true), force_authentication(false), handler(0), handlercpp(0), perm(ALLOW), service(0), command_descrip(0), handler_descrip(0), data_ptr(0), dprintf_flag(0), wait_for_payload(0) {}
     };
@@ -2058,7 +2071,7 @@ class DaemonCore : public Service
 
 	};
 	typedef struct WaitpidEntry_s WaitpidEntry;
-	Queue<WaitpidEntry> WaitpidQueue;
+	std::deque<WaitpidEntry> WaitpidQueue;
 
     Stream *inheritedSocks[MAX_SOCKS_INHERITED+1];
 
@@ -2267,6 +2280,7 @@ public:
 		   a normal "exit".  If the exec() fails, the normal exit() will
 		   occur.
 */
+[[noreturn]]
 extern PREFAST_NORETURN void DC_Exit( int status, const char *shutdown_program = NULL ) GCC_NORETURN;
 
 /** Call this function (inside your main_pre_dc_init() function) to

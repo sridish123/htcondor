@@ -405,7 +405,6 @@ Resource::~Resource()
 	}
 
 	delete r_state; r_state = NULL;
-	delete r_classad; r_classad = NULL;
 	delete r_cur; r_cur = NULL;
 	if( r_pre ) {
 		delete r_pre; r_pre = NULL;
@@ -413,6 +412,7 @@ Resource::~Resource()
 	if( r_pre_pre ) {
 		delete r_pre_pre; r_pre_pre = NULL;
 	}
+	delete r_classad; r_classad = NULL;
 	delete r_cod_mgr; r_cod_mgr = NULL;
 	delete r_reqexp; r_reqexp = NULL;
 	delete r_attr; r_attr = NULL;
@@ -691,6 +691,41 @@ void
 Resource::killAllClaims( void )
 {
 	shutdownAllClaims( false );
+}
+
+void
+Resource::dropAdInLogFile( void )
+{
+	// potentially filter by types if the types are defined.  otherwise print all.
+	std::string dropadtypes;
+	bool will_print = false;
+	if (param(dropadtypes, "STARTD_PRINT_ADS_FILTER")) {
+		// check the filter to see if we will print
+		dprintf(D_FULLDEBUG, "Filtering ads to \n", dropadtypes.c_str());
+		StringList sl(dropadtypes.c_str());
+		switch (get_feature()) {
+			case STANDARD_SLOT:
+				if(sl.contains_anycase("static")) will_print = true;
+				break;
+			case PARTITIONABLE_SLOT:
+				if(sl.contains_anycase("partitionable")) will_print = true;
+				break;
+			case DYNAMIC_SLOT:
+				if(sl.contains_anycase("dynamic")) will_print = true;
+				break;
+		}
+	} else {
+		// no filter, always print
+		will_print = true;
+	}
+
+	dprintf(D_FULLDEBUG, "DEBUG: will_print %i, get_feature %i, types %s\n", will_print, get_feature(), dropadtypes.c_str());
+
+	if (will_print) {
+		dprintf(D_ALWAYS, "** BEGIN CLASSAD ** %lx\n", (long int)(this));
+		dPrintAd(D_ALWAYS, *r_classad);
+		dprintf(D_ALWAYS, "** END CLASSAD ** %lx\n", (long int)(this));
+	}
 }
 
 extern ExprTree * globalDrainingStartExpr;
@@ -1315,8 +1350,10 @@ Resource::do_update( void )
 #endif
 #endif
 
-		// Modifying the ClassAds we're sending in ResMgr::send_update()
-		// would be evil, so do the collector filtering here.
+	// Modifying the ClassAds we're sending in ResMgr::send_update()
+	// would be evil, so do the collector filtering here.  Also,
+	// ClassAd iterators are broken, so delay attribute deletion until
+	// after the loop.
 	std::vector< std::string > deleteList;
 	for( auto i = public_ad.begin(); i != public_ad.end(); ++i ) {
 		const std::string & name = i->first;
@@ -1328,8 +1365,45 @@ Resource::do_update( void )
 		// resource and wasn't something from somewhere else (for instance,
 		// some other startd cron job).
 		//
-		if( name.find( "Uptime" ) == 0
-		 || name.find( "StartOfJobUptime" ) == 0
+		if( name.find( "Uptime" ) == 0 ) {
+			std::string resourceName;
+			if( StartdCronJobParams::attributeIsPeakMetric( name ) ) {
+				// Convert Uptime<Resource>PeakUsage to
+				// Device<Resource>PeakUsage to match the
+				// Device<Resource>AverageUsage computed below.
+				std::string computedName = name;
+				computedName.replace( 0, 6, "Device" );
+				// There's no rename primitive, so we have to copy from the
+				// original and then delete it.
+				CopyAttribute( computedName, public_ad, name, public_ad );
+				deleteList.push_back( name );
+				continue;
+			}
+			if(! StartdCronJobParams::attributeIsSumMetric( name ) ) { continue; }
+			if(! StartdCronJobParams::getResourceNameFromAttributeName( name, resourceName )) { continue; }
+			deleteList.push_back( name );
+
+			classad::Value v;
+			double uptimeValue;
+			ExprTree * expr = i->second;
+			expr->Evaluate( v );
+			if(! v.IsNumber( uptimeValue )) {
+				dprintf( D_ALWAYS, "Metric %s is not a number, ignoring.\n", name.c_str() );
+				continue;
+			}
+
+			int birth;
+			if(! daemonCore->getStartTime(birth)) { continue; }
+			int duration = time(NULL) - birth;
+			double average = uptimeValue / duration;
+			// Since we don't have a whole-machine ad, we won't bother to
+			// include the device name in this attribute name; people will
+			// have to check the AssignedGPUs attribute.  This will suck
+			// for partitionable slots, but what can you do?  Advertise each
+			// GPU in every slot?
+			std::string computedName = "Device" + resourceName + "AverageUsage";
+			public_ad.Assign( computedName, average );
+		} else if( name.find( "StartOfJobUptime" ) == 0
 		 || (name != "LastUpdate" && name.find( "LastUpdate" ) == 0)
 		 || name.find( "FirstUpdate" ) == 0 ) {
 			deleteList.push_back( name );
@@ -1516,7 +1590,7 @@ Resource::hold_job( bool soft )
 	std::string hold_reason;
 	int hold_subcode = 0;
 
-	EvalString("WANT_HOLD_REASON", r_classad, r_cur->ad(), hold_reason);
+	(void) EvalString("WANT_HOLD_REASON", r_classad, r_cur->ad(), hold_reason);
 	if( hold_reason.empty() ) {
 		ExprTree *want_hold_expr;
 		std::string want_hold_str;
@@ -1847,7 +1921,7 @@ Resource::retirementExpired()
 		ClassAd * jobAd = r_cur->ad();
 		if( machineAd != NULL && jobAd != NULL ) {
 			// Assumes EvalBool() doesn't modify its output argument on failure.
-			EvalBool( ATTR_START, machineAd, jobAd, jobMatches );
+			(void) EvalBool( ATTR_START, machineAd, jobAd, jobMatches );
 		}
 
 		if( jobMatches || wasAcceptedWhileDraining() ) {
@@ -2477,7 +2551,7 @@ Resource::publish( ClassAd* cap, amask_t mask )
 					std::string usageName;
 					std::string uptimeName = name.substr( 10 );
 					if(! StartdCronJobParams::getResourceNameFromAttributeName( uptimeName, usageName )) { continue; }
-					usageName += "Usage";
+					usageName += "AverageUsage";
 
 					std::string lastUpdateName = "LastUpdate" + uptimeName;
 					std::string firstUpdateName = "FirstUpdate" + uptimeName;

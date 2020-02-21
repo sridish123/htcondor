@@ -199,13 +199,21 @@ CredDaemon::zkm_query_creds( int, Stream* s)
 {
 	ReliSock* r = (ReliSock*)s;
 	r->decode();
-	int numads;
-	r->code(numads);
+	int numads = 0;
+	if (!r->code(numads)) {
+		dprintf(D_ALWAYS, "zkm_query_creds: cannot read numads off wire\n");
+		r->end_of_message();
+		return CLOSE_STREAM;
+	}
 
 	std::vector<ClassAd> requests;
 	requests.resize(numads);
 	for(int i=0; i<numads; i++) {
-		getClassAd(r, requests[i]);
+		if (!getClassAd(r, requests[i])) {
+			dprintf(D_ALWAYS, "zkm_query_creds: cannot read classad off wire\n");
+			r->end_of_message();
+			return CLOSE_STREAM;
+		}
 	}
 	r->end_of_message();
 
@@ -379,7 +387,9 @@ CredDaemon::zkm_query_creds( int, Stream* s)
 
 bail:
 	r->encode();
-	r->code(URL);
+	if (!r->code(URL)) {
+		dprintf(D_ALWAYS, "query_creds: error sending URL to client\n");
+	}
 	r->end_of_message();
 
 	return CLOSE_STREAM;
@@ -391,7 +401,9 @@ CredDaemon::refresh_all_handler( int, Stream* s)
 	ReliSock* r = (ReliSock*)s;
 	r->decode();
 	ClassAd ad;
-	getClassAd(r, ad);
+	if (!getClassAd(r, ad)) {
+		dprintf(D_ALWAYS, "credd::refresh_all_handler cannot receive classad\n");
+	}
 	r->end_of_message();
 
 	// don't actually care (at the moment) what's in the ad, it's for

@@ -351,15 +351,18 @@ extern "C" {
 	#define CONFIG_OPT_OLD_COM_IN_CONT 0x04  // ignore # after \ (i.e. pre 8.1.3 comment/continue behavior)
 	#define CONFIG_OPT_SMART_COM_IN_CONT 0x08 // parse #opt:oldcomment/newcomment to decide comment behavior
 	#define CONFIG_OPT_COLON_IS_META_ONLY 0x10 // colon isn't valid for use in param assigments (only = is allowed)
+	#define CONFIG_OPT_NO_SMART_AUTO_USE  0x20 // ignore SMART_AUTO_USE_* knobs, default is to process them for CONFIG but not SUBMIT
 	#define CONFIG_OPT_DEFAULTS_ARE_PARAM_INFO 0x80 // the defaults table is the table defined in param_info.in.
 	#define CONFIG_OPT_NO_EXIT 0x100 // If a config file is missing or the config is invalid, do not abort/exit the process.
 	#define CONFIG_OPT_WANT_QUIET 0x200 // Keep printing to stdout/err to a minimum
 	#define CONFIG_OPT_DEPRECATION_WARNINGS 0x400 // warn about obsolete syntax/elements
+	#define CONFIG_OPT_USE_THIS_ROOT_CONFIG 0x800 // use the root config file specified in the last argument of real_config
 	#define CONFIG_OPT_SUBMIT_SYNTAX 0x1000 // allow +Attr and -Attr syntax like submit files do.
+	#define CONFIG_OPT_NO_INCLUDE_FILE 0x2000 // don't allow includes from files (late materialization)
 	bool config();
 	int set_priv_initialize(void); // duplicated here for 8.8.0 to minimize code churn. actual function is in uids.cpp
 	bool config_ex(int opt);
-	bool config_host(const char* host, int config_options);
+	bool config_host(const char* host, int config_options, const char * root_config); // used by condor_config_val
 	bool validate_config(bool abort_if_invalid, int opt);
 	void config_dump_string_pool(FILE * fh, const char * sep);
 	void config_dump_sources(FILE * fh, const char * sep);
@@ -526,6 +529,7 @@ BEGIN_C_DECLS
 		virtual ~MacroStream() {};
 		virtual char * getline(int gl_opt) = 0;
 		virtual MACRO_SOURCE& source() = 0;
+		virtual const char * source_name(MACRO_SET &set) = 0;
 	};
 
 	// A MacroStream that uses, but does not own a FILE* and MACRO_SOURCE
@@ -535,6 +539,11 @@ BEGIN_C_DECLS
 		virtual ~MacroStreamYourFile() { fp = NULL; src = NULL; }
 		virtual char * getline(int gl_opt);
 		virtual MACRO_SOURCE& source() { return *src; }
+		virtual const char * source_name(MACRO_SET&set) {
+			if (src && src->id >= 0 && src->id < (int)set.sources.size())
+				return set.sources[src->id];
+			return "file";
+		}
 		void set(FILE* _fp, MACRO_SOURCE& _src) { fp =  _fp; src = &_src; }
 		void reset() { fp = NULL; src = NULL; }
 	protected:
@@ -549,6 +558,11 @@ BEGIN_C_DECLS
 		virtual ~MacroStreamFile() { if (fp) fclose(fp); fp = NULL; memset(&src, 0, sizeof(src)); }
 		virtual char * getline(int gl_opt);
 		virtual MACRO_SOURCE& source() { return src; }
+		virtual const char * source_name(MACRO_SET&set) {
+			if (src.id >= 0 && src.id < (int)set.sources.size())
+				return set.sources[src.id];
+			return "file";
+		}
 		bool open(const char * filename, bool is_command, MACRO_SET& set, std::string &errmsg);
 		int  close(MACRO_SET& set, int parsing_return_val);
 	protected:
@@ -563,6 +577,11 @@ BEGIN_C_DECLS
 		virtual ~MacroStreamMemoryFile() { ls.clear(); }
 		virtual char * getline(int gl_opt);
 		virtual MACRO_SOURCE& source() { return *src; }
+		virtual const char * source_name(MACRO_SET&set) {
+			if (src && src->id >= 0 && src->id < (int)set.sources.size())
+				return set.sources[src->id];
+			return "memory";
+		}
 		void set(const char* _fp, ssize_t _cb, size_t _ix, MACRO_SOURCE& _src) { ls.init(_fp, _cb, _ix); src = &_src; }
 		void reset() { ls.clear(); src = NULL; }
 		// return a pointer to the part of the memory buffer that has not yet been read
@@ -601,6 +620,8 @@ BEGIN_C_DECLS
 		MACRO_SOURCE * src;
 	};
 
+	// A MacroStream that parses memory but does not support line continuation like MacroStreamMemoryFile does 
+	// used by transforms
 	class MacroStreamCharSource : public MacroStream {
 	public:
 		MacroStreamCharSource() 
@@ -613,6 +634,11 @@ BEGIN_C_DECLS
 		virtual ~MacroStreamCharSource() { if (input) delete input; input = NULL; }
 		virtual char * getline(int gl_opt);
 		virtual MACRO_SOURCE& source() { return src; }
+		virtual const char * source_name(MACRO_SET&set) {
+			if (src.id >= 0 && src.id < (int)set.sources.size())
+				return set.sources[src.id];
+			return "param";
+		}
 		bool open(const char * src_string, const MACRO_SOURCE & _src);
 		int  close(MACRO_SET& set, int parsing_return_val);
 		int  load(FILE* fp, MACRO_SOURCE & _src, bool preserve_linenumbers = false);
@@ -627,7 +653,6 @@ BEGIN_C_DECLS
 		// copy construction and assignment are not permitted.
 		MacroStreamCharSource(const MacroStreamCharSource&);
 		MacroStreamCharSource & operator=(MacroStreamCharSource that); 
-
 	};
 
 	// this must be C++ linkage because condor_string already has a c linkage function by this name.

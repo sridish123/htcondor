@@ -996,12 +996,6 @@ JICShadow::publishStarterInfo( ClassAd* ad )
 	ad->Assign( ATTR_OPSYS, tmp_val );
 	free( tmp_val );
 
-	tmp_val = param( "CKPT_SERVER_HOST" );
-	if( tmp_val ) {
-		ad->Assign( ATTR_CKPT_SERVER, tmp_val );
-		free( tmp_val );
-	}
-
 	ad->Assign( ATTR_HAS_RECONNECT, true );
 
 		// Finally, publish all the DC-managed attributes.
@@ -1023,6 +1017,37 @@ JICShadow::removeFromOutputFiles( const char* filename )
 		m_added_output_files.file_remove(filename);
 	}
 	m_removed_output_files.append(filename);
+}
+
+bool
+JICShadow::uploadCheckpointFiles()
+{
+	if(! filetrans) {
+		return false;
+	}
+
+	// The shadow may block on disk I/O for long periods of
+	// time, so set a big timeout on the starter's side of the
+	// file transfer socket.
+
+	int timeout = param_integer( "STARTER_UPLOAD_TIMEOUT", 200 );
+	filetrans->setClientSocketTimeout( timeout );
+
+	// The user job may have created files only readable
+	// by the user, so set_user_priv here.
+	priv_state saved_priv = set_user_priv();
+
+	// this will block
+	bool rval = filetrans->UploadCheckpointFiles( true );
+	set_priv( saved_priv );
+
+	if( !rval ) {
+		// Failed to transfer.
+		dprintf( D_ALWAYS,"JICShadow::uploadCheckpointFiles() failed.\n" );
+		return false;
+	}
+	dprintf( D_FULLDEBUG,"JICShadow::uploadCheckpointFiles() succeeded.\n" );
+	return true;
 }
 
 bool
@@ -1135,8 +1160,6 @@ JICShadow::initUserPriv( void )
 		}
 	}
 
-	CondorPrivSepHelper* privsep_helper = Starter->condorPrivSepHelper();
-
 	if( run_as_owner ) {
 			// Cool, we can try to use ATTR_OWNER directly.
 			// NOTE: we want to use the "quiet" version of
@@ -1145,9 +1168,6 @@ JICShadow::initUserPriv( void )
 			// possible this call will fail.  We don't want to fill up
 			// the logs with scary and misleading error messages.
 		if( init_user_ids_quiet(owner.c_str()) ) {
-			if (privsep_helper != NULL) {
-				privsep_helper->initialize_user(owner.c_str());
-			}
 			dprintf( D_FULLDEBUG, "Initialized user_priv as \"%s\"\n", 
 			         owner.c_str() );
 			if( checkDedicatedExecuteAccounts( owner.c_str() ) ) {
@@ -1211,10 +1231,6 @@ JICShadow::initUserPriv( void )
 						 "priv with uid %d and gid %d\n", user_uid,
 						 user_gid );
 				return false;
-			}
-
-			if (privsep_helper != NULL) {
-				privsep_helper->initialize_user((uid_t)user_uid);
 			}
 		}
 	} 
@@ -1282,9 +1298,6 @@ JICShadow::initUserPriv( void )
 			free( nobody_user );
 			return false;
 		} else {
-			if (privsep_helper != NULL) {
-				privsep_helper->initialize_user(nobody_user);
-			}
 			dprintf( D_FULLDEBUG, "Initialized user_priv as \"%s\"\n",
 				  nobody_user );
 			if( checkDedicatedExecuteAccounts( nobody_user ) ) {
@@ -2012,6 +2025,12 @@ JICShadow::publishStartdUpdates( ClassAd* ad ) {
 						formatstr( metricName, "%sUsage", resourceName );
 						m_job_update_attrs.append( metricName.c_str() );
 
+						// We could use metricType to determine if we need
+						// this attribute or the preceeding one, but for now
+						// don't bother.
+						formatstr( metricName, "%sAverageUsage", resourceName );
+						m_job_update_attrs.append( metricName.c_str() );
+
 						formatstr( metricName, "Recent%sUsage", resourceName );
 						m_job_update_attrs.append( metricName.c_str() );
 					}
@@ -2062,27 +2081,24 @@ JICShadow::publishUpdateAd( ClassAd* ad )
 	m_delayed_updates.Clear();
 
 	filesize_t execsz = 0;
+	time_t begin_time = time(NULL);
 
-	// if we are using PrivSep, we need to use that mechanism to calculate
-	// the disk usage, as we don't have privs to traverse the users's execute
-	// dir.
-	CondorPrivSepHelper* privsep_helper = Starter->condorPrivSepHelper();
-	if (privsep_helper) {
-		off_t total_usage = 0;
-		if (privsep_helper->get_exec_dir_usage( &total_usage)) {
-			ad->Assign(ATTR_DISK_USAGE, (unsigned long)((total_usage+1023)/1024) );
-		}
-	} else{
-		// if there is a filetrans object, then let's send the current
-		// size of the starter execute directory back to the shadow.  this
-		// way the ATTR_DISK_USAGE will be updated, and we won't end
-		// up on a machine without enough local disk space.
-		if ( filetrans ) {
-			// make sure this computation is done with user priv, since that who
-			// owns the directory and it may not be world-readable
-			Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
-			execsz = starter_dir.GetDirectorySize();
-			ad->Assign(ATTR_DISK_USAGE, (unsigned long)((execsz+1023)/1024) ); 
+	// if there is a filetrans object, then let's send the current
+	// size of the starter execute directory back to the shadow.  this
+	// way the ATTR_DISK_USAGE will be updated, and we won't end
+	// up on a machine without enough local disk space.
+	if ( filetrans ) {
+		// make sure this computation is done with user priv, since that who
+		// owns the directory and it may not be world-readable
+		Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
+		size_t file_count = 0;
+		execsz = starter_dir.GetDirectorySize(&file_count);
+		ad->Assign(ATTR_DISK_USAGE, (execsz+1023)/1024 );
+		ad->Assign(ATTR_SCRATCH_DIR_FILE_COUNT, file_count);
+		time_t scan_time = (time(NULL) - begin_time);
+		if (scan_time > 10) {
+			dprintf(D_ALWAYS, "It took %d seconds to determine DiskUsage: %lld for %lld dirs+files\n",
+				(int)(scan_time), (long long)execsz, (long long)file_count);
 		}
 	}
 
@@ -2121,6 +2137,7 @@ bool
 JICShadow::publishJobExitAd( ClassAd* ad )
 {
 	filesize_t execsz = 0;
+	time_t begin_time = time(NULL);
 
 	// if there is a filetrans object, then let's send the current
 	// size of the starter execute directory back to the shadow.  this
@@ -2130,10 +2147,17 @@ JICShadow::publishJobExitAd( ClassAd* ad )
 		// make sure this computation is done with user priv, since that who
 		// owns the directory and it may not be world-readable
 		Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
-		execsz = starter_dir.GetDirectorySize();
-		ad->Assign( ATTR_DISK_USAGE, (long unsigned)((execsz+1023)/1024) );
-
+		size_t file_count = 0;
+		execsz = starter_dir.GetDirectorySize(&file_count);
+		ad->Assign(ATTR_DISK_USAGE, (execsz+1023)/1024 );
+		ad->Assign(ATTR_SCRATCH_DIR_FILE_COUNT, file_count);
+		time_t scan_time = (time(NULL) - begin_time);
+		if (scan_time > 10) {
+			dprintf(D_ALWAYS, "It took %d seconds to determine final DiskUsage: %lld for %lld dirs+files\n",
+				(int)(scan_time), (long long)execsz, (long long)file_count);
+		}
 	}
+
 	std::string spooled_files;
 	if( job_ad->LookupString(ATTR_SPOOLED_OUTPUT_FILES,spooled_files) && spooled_files.length() > 0 )
 	{
@@ -2394,6 +2418,10 @@ JICShadow::beginFileTransfer( void )
 		}
 
 		filetrans = new FileTransfer();
+		auto reuse_dir = Starter->getDataReuseDirectory();
+		if (reuse_dir) {
+			filetrans->setDataReuseDirectory(*reuse_dir);
+		}
 
 		const char *cred_path = getCredPath();
 		if (cred_path) {
@@ -2704,7 +2732,7 @@ JICShadow::initUserCredentials() {
 	}
 
 
-	// OLD METHOD (used by CERN and DESY)
+	// OLD METHOD (used by people using Kerbreros/AFS)
 
 	char* cred_dir = param("SEC_CREDENTIAL_DIRECTORY");
 	if(!cred_dir) {
@@ -2840,7 +2868,7 @@ JICShadow::refreshSandboxCredentials()
 	  then, if needed, copy them to the job sandbox.
 	*/
 
-	dprintf(D_ALWAYS, "CERN: in refreshSandboxCredentials()\n");
+	dprintf(D_ALWAYS, "CREDS: in refreshSandboxCredentials()\n");
 
 	// poor, abuse return code.  used for booleans and syscalls, with
 	// opposite meanings.  assume failure.
@@ -2891,7 +2919,7 @@ JICShadow::refreshSandboxCredentials()
 	sprintf(sandboxccfilename, "%s%c%s.cc", Starter->GetWorkingDir(), DIR_DELIM_CHAR, user.c_str());
 	sprintf(sandboxcctmpfilename, "%s%c%s.cc.tmp", Starter->GetWorkingDir(), DIR_DELIM_CHAR, user.c_str());
 
-	dprintf(D_ALWAYS, "CERN: copying %s as root to %s as user %s\n",
+	dprintf(D_ALWAYS, "CREDS: copying %s as root to %s as user %s\n",
 		ccfilename, sandboxcctmpfilename, user.c_str());
 
 	// read entire ccfilename as root into ccbuf
@@ -2921,7 +2949,7 @@ JICShadow::refreshSandboxCredentials()
 		goto resettimer;
 	}
 
-	dprintf(D_ALWAYS, "CERN: renamed %s to %s\n", sandboxcctmpfilename, sandboxccfilename);
+	dprintf(D_ALWAYS, "CREDS: renamed %s to %s\n", sandboxcctmpfilename, sandboxccfilename);
 
 	// aklog now if we decide to go that route
 	// my_popen_env("aklog", KRB5CCNAME=sandbox copy of .cc)
@@ -2931,7 +2959,7 @@ JICShadow::refreshSandboxCredentials()
 
 	// only need to do this once
 	if(getCredPath() == NULL) {
-		dprintf(D_ALWAYS, "CERN: configuring job to use KRB5CCNAME %s\n", sandboxccfilename);
+		dprintf(D_ALWAYS, "CREDS: configuring job to use KRB5CCNAME %s\n", sandboxccfilename);
 		setCredPath(sandboxccfilename);
 	}
 
@@ -2959,9 +2987,9 @@ resettimer:
 			daemonCore->Reset_Timer(m_refresh_sandbox_creds_tid, sec_cred_refresh);
 		}
 		dprintf(D_ALWAYS,
-			"CERN: will check credential again in %i seconds\n", sec_cred_refresh);
+			"CREDS: will check credential again in %i seconds\n", sec_cred_refresh);
 	} else {
-		dprintf(D_ALWAYS, "CERN: cred refresh is DISABLED.\n");
+		dprintf(D_ALWAYS, "CREDS: cred refresh is DISABLED.\n");
 	}
 
 	// return boolean value true on success

@@ -25,7 +25,6 @@
 #include "condor_debug.h"
 #include "proc.h"
 #include "exit.h"
-#include "condor_collector.h"
 #include "scheduler.h"
 #include "condor_attributes.h"
 #include "condor_classad.h"
@@ -39,7 +38,6 @@
 #include "access.h"
 #include "internet.h"
 #include "spooled_job_files.h"
-#include "../condor_ckpt_server/server_interface.h"
 #include "generic_query.h"
 #include "condor_query.h"
 #include "directory.h"
@@ -77,7 +75,6 @@
 #include "set_user_priv_from_ad.h"
 #include "classad_visa.h"
 #include "subsystem_info.h"
-#include "../condor_privsep/condor_privsep.h"
 #include "authentication.h"
 #include "setenv.h"
 #include "classadHistory.h"
@@ -97,6 +94,7 @@
 #include "condor_auth_passwd.h"
 #include "condor_secman.h"
 #include "token_utils.h"
+#include "jobsets.h"
 
 #if defined(WINDOWS) && !defined(MAXINT)
 	#define MAXINT INT_MAX
@@ -120,9 +118,6 @@ extern GridUniverseLogic* _gridlogic;
 
 extern "C"
 {
-/*	int SetCkptServerHost(const char *host);
-	int RemoveLocalOrRemoteFile(const char *, const char *);
-*/
 	int prio_compar(prio_rec*, prio_rec*);
 }
 
@@ -149,16 +144,6 @@ extern DedicatedScheduler dedicated_scheduler;
 extern prio_rec *PrioRec;
 extern int N_PrioRecs;
 extern int grow_prio_recs(int);
-
-// These functions are defined in qmgmt.cpp.
-// We don't have a good schedd-internal header file, so we declare them
-// here for use in this file.
-int
-SetSecureAttribute(int cluster_id, int proc_id, const char *attr_name, const char *attr_value, SetAttributeFlags_t flags = 0);
-int
-SetSecureAttributeInt(int cluster_id, int proc_id, const char *attr_name, int attr_value, SetAttributeFlags_t flags = 0);
-int
-SetSecureAttributeString(int cluster_id, int proc_id, const char *attr_name, const char *attr_value, SetAttributeFlags_t flags = 0);
 
 bool ReadProxyFileIntoAd( const char *file, const char *owner, ClassAd &x509_attrs );
 
@@ -220,6 +205,14 @@ void AuditLogNewConnection( int cmd, Sock &sock, bool failure )
 	case DELEGATE_GSI_CRED_SCHEDD:
 	case QMGMT_WRITE_CMD:
 	case GET_JOB_CONNECT_INFO:
+	case DC_EXCHANGE_SCITOKEN:
+	case DC_GET_SESSION_TOKEN:
+	case DC_START_TOKEN_REQUEST:
+	case DC_FINISH_TOKEN_REQUEST:
+	case DC_LIST_TOKEN_REQUEST:
+	case DC_APPROVE_TOKEN_REQUEST:
+	case DC_AUTO_APPROVE_TOKEN_REQUEST:
+	case COLLECTOR_TOKEN_REQUEST:
 		break;
 	default:
 		return;
@@ -729,12 +722,16 @@ Scheduler::Scheduler() :
 	m_job_machine_attrs_history_length = 0;
 	m_history_helper_max = 0;
 	m_history_helper_rid = -1;
-	
+
+	jobSets = nullptr;
 }
 
 
 Scheduler::~Scheduler()
 {
+	delete jobSets;
+	jobSets = nullptr;
+
 	delete m_adSchedd;
     delete m_adBase;
 	if (MyShadowSockName)
@@ -906,7 +903,7 @@ Scheduler::SetupNegotiatorSession(unsigned duration, const std::string &pool, st
 	std::string id;
 
 	formatstr( id, "%s#%ld#%lu", daemonCore->publicNetworkIpAddr(),
-		m_scheduler_startup, m_negotiator_seq);
+	           m_scheduler_startup, (long unsigned)m_negotiator_seq);
 
 	// A keylength of 32 bytes = 256 bits.
 	const size_t keylen = 32;
@@ -928,6 +925,47 @@ Scheduler::SetupNegotiatorSession(unsigned duration, const std::string &pool, st
 		keybuf.get(),
 		session_info,
 		NEGOTIATOR_SIDE_MATCHSESSION_FQU,
+		nullptr,
+		duration,
+		&policy_ad
+	);
+	if (retval) {
+		capability = id + "#" + session_info + keybuf.get();
+	}
+	return retval;
+}
+
+	// Largely, this is the same as the negotiator session logic.
+bool
+Scheduler::SetupCollectorSession(unsigned duration, std::string &capability)
+{
+	if (!m_matchPasswordEnabled) {return false;}
+		// We reuse the negotiator sequence -- this way we don't have
+		// overlaps in the session names.
+	m_negotiator_seq++;
+
+	std::string id;
+	formatstr( id, "%s#%ld#%lu", daemonCore->publicNetworkIpAddr(),
+	           m_scheduler_startup, static_cast<long unsigned>(m_negotiator_seq));
+
+	const size_t keylen = 32;
+	auto keybuf = std::unique_ptr<char, decltype(free)*>{
+		Condor_Crypt_Base::randomHexKey(keylen),
+		free
+	};
+	if (!keybuf.get()) {
+		return false;
+	}
+
+	auto session_info = "[Encryption=\"YES\";Integrity=\"YES\";ValidCommands=\"523\"]";
+	classad::ClassAd policy_ad;
+	policy_ad.InsertAttr("ScheddSession", true);
+	auto retval = daemonCore->getSecMan()->CreateNonNegotiatedSecuritySession(
+		ALLOW,
+		id.c_str(),
+		keybuf.get(),
+		session_info,
+		COLLECTOR_SIDE_MATCHSESSION_FQU,
 		nullptr,
 		duration,
 		&policy_ad
@@ -1136,7 +1174,7 @@ Scheduler::fill_submitter_ad(ClassAd & pAd, const SubmitterData & Owner, const s
 	}
 
 	int JobsRunningHere = Counters.JobsRunning;
-	int WeightedJobsRunningHere = Counters.WeightedJobsRunning;
+	double WeightedJobsRunningHere = Counters.WeightedJobsRunning;
 	int JobsRunningElsewhere = Counters.JobsFlocked;
 
 	if (flock_level > 0) {
@@ -1366,7 +1404,7 @@ Scheduler::count_jobs()
 				// Sum up the # of cpus claimed by this user and advertise it as
 				// WeightedJobsRunning. 
 
-			int job_weight = calcSlotWeight(rec);
+			double job_weight = calcSlotWeight(rec);
 			
 			SubDat->num.WeightedJobsRunning += job_weight;
 			SubDat->num.JobsRunning++;
@@ -1503,8 +1541,8 @@ Scheduler::count_jobs()
 
 	cad->Assign(ATTR_SCHEDD_SWAP_EXHAUSTED, (bool)SwapSpaceExhausted);
 
-	cad->Assign(ATTR_NUM_JOB_STARTS_DELAYED, RunnableJobQueue.Length());
-	cad->Assign(ATTR_NUM_PENDING_CLAIMS, startdContactQueue.Length() + num_pending_startd_contacts);
+	cad->Assign(ATTR_NUM_JOB_STARTS_DELAYED, RunnableJobQueue.size());
+	cad->Assign(ATTR_NUM_PENDING_CLAIMS, startdContactQueue.size() + num_pending_startd_contacts);
 
 	m_xfer_queue_mgr.publish(cad);
 
@@ -1556,11 +1594,22 @@ Scheduler::count_jobs()
 	ScheddPluginManager::Update(UPDATE_SCHEDD_AD, cad);
 #endif
 
+		// This is called at most every 5 seconds, meaning this can cause
+		// up to 300 / 5 * 2 = 120 sessions to be opened at a time per
+		// collector.
+	unsigned duration = 2*param_integer( "SCHEDD_INTERVAL", 300 );
+	std::string capability;
+	if (param_boolean("SEC_ENABLE_IMPERSONATION_TOKENS", false) && SetupCollectorSession(duration, capability)) {
+		cad->InsertAttr(ATTR_CAPABILITY, capability);
+	}
+
 	int num_updates = daemonCore->sendUpdates(UPDATE_SCHEDD_AD, cad, NULL, true,
 		&m_token_requester, DCTokenRequester::default_identity, "ADVERTISE_SCHEDD");
 	dprintf( D_FULLDEBUG,
 			 "Sent HEART BEAT ad to %d collectors. Number of active submittors=%d\n",
 			 num_updates, NumSubmitters );
+
+	cad->Delete(ATTR_CAPABILITY);
 
 	// send the schedd ad to our flock collectors too, so we will
 	// appear in condor_q -global and condor_status -schedd
@@ -1602,11 +1651,6 @@ Scheduler::count_jobs()
 	pAd.ChainToAd(m_adBase);
 	pAd.Assign(ATTR_SUBMITTER_TAG,HOME_POOL_SUBMITTER_TAG);
 
-		// This is called at most every 5 seconds, meaning this can cause
-		// up to 300 / 5 * 2 = 120 sessions to be opened at a time per
-		// collector.
-	unsigned duration = 2*param_integer( "SCHEDD_INTERVAL", 300 );
-	std::string capability;
 	if (SetupNegotiatorSession(duration, HOME_POOL_SUBMITTER_TAG, capability)) {
 		pAd.InsertAttr(ATTR_CAPABILITY, capability);
 	}
@@ -1953,7 +1997,9 @@ int Scheduler::handleMachineAdsQuery( Stream * stream, ClassAd & ) {
 	int more = 1;
 	int num_ads = 0;
 
-	pcccDumpTable( D_TEST );
+	if( IsDebugLevel( D_TEST ) ) {
+		pcccDumpTable( D_TEST );
+	}
 
 	stream->encode();
 
@@ -1967,6 +2013,10 @@ int Scheduler::handleMachineAdsQuery( Stream * stream, ClassAd & ) {
 	dprintf( D_TEST, "Dumping match records (with now jobs)...\n" );
 	for( ; !(i == matches->end()); i.advance() ) {
 		match_rec * match = (*i).second;
+
+		if( match->my_match_ad == NULL ) {
+			continue;
+		}
 
 		if( !stream->code( more ) || !putClassAd( stream, * match->my_match_ad ) ) {
 			dprintf( D_ALWAYS, "Error sending query result to client, aborting.\n" );
@@ -2804,7 +2854,7 @@ clear_autocluster_id(JobQueueJob *job, const JOB_ID_KEY & /*jid*/, void *)
 
 	// This function, given a job, calculates the "weight", or cost
 	// of the slot for accounting purposes.  Usually the # of cpus
-int 
+double 
 Scheduler::calcSlotWeight(match_rec *mrec) {
 	if (!mrec) {
 		// shouldn't ever happen, but be defensive
@@ -2814,21 +2864,21 @@ Scheduler::calcSlotWeight(match_rec *mrec) {
 
 		// machine may be null	
 	ClassAd *machine = mrec->my_match_ad;
-	int job_weight = 1;
+	double job_weight = 1;
 	if (m_use_slot_weights && machine) {
 			// if the schedd slot weight expression is set and parses,
 			// evaluate it here
-		double weight = 1;
+		double weight = 1.0;
 		if ( ! machine->LookupFloat(ATTR_SLOT_WEIGHT, weight)) {
-			weight = 1;
+			weight = 1.0;
 		}
 		// PRAGMA_REMIND("TJ: fix slot weight code to use double, not int")
-		job_weight = (int)(weight + 0.0001);
+		job_weight = weight;
 	} else {
 			// slot weight isn't set, fall back to assuming cpus
 		if (machine) {
-			if(0 == machine->LookupInteger(ATTR_CPUS, job_weight)) {
-				job_weight = 1; // or fall back to one if CPUS isn't in the startds
+			if(0 == machine->LookupFloat(ATTR_CPUS, job_weight)) {
+				job_weight = 1.0; // or fall back to one if CPUS isn't in the startds
 			}
 		} else if (scheduler.m_use_slot_weights) {
 			// machine == NULL, this happens on schedd restart and reconnect
@@ -2855,7 +2905,8 @@ Scheduler::calcSlotWeight(match_rec *mrec) {
 // when there is no SCHEDD_SLOT_WIEGHT expression, try and guess the job weight
 // by building a fake STARTD ad and evaluating the startd's SLOT_WEIGHT expression
 //
-int Scheduler::guessJobSlotWeight(JobQueueJob * job)
+double
+Scheduler::guessJobSlotWeight(JobQueueJob * job)
 {
 	static bool failed_to_init_slot_weight_map_ad = false;
 	if ( ! this->slotWeightGuessAd) {
@@ -2907,8 +2958,8 @@ int Scheduler::guessJobSlotWeight(JobQueueJob * job)
 	ad->Assign(ATTR_MEMORY, req_mem);
 	ad->Assign(ATTR_DISK, req_disk);
 
-	int job_weight = req_cpus;
-	if ( ! ad->LookupInteger(ATTR_SLOT_WEIGHT, job_weight)) {
+	double job_weight = req_cpus;
+	if ( ! ad->LookupFloat(ATTR_SLOT_WEIGHT, job_weight)) {
 		job_weight = req_cpus;
 	}
 	return job_weight;
@@ -3098,7 +3149,7 @@ count_a_job(JobQueueJob* job, const JOB_ID_KEY& /*jid*/, void*)
 		    // jobs
 
 		bool sendToDS = false;
-		job->LookupBool("WantParallelScheduling", sendToDS);
+		job->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, sendToDS);
 		if( (sendToDS || universe == CONDOR_UNIVERSE_MPI ||
 			 universe == CONDOR_UNIVERSE_PARALLEL) && status == IDLE ) {
 			if( max_hosts > cur_hosts ) {
@@ -3201,7 +3252,7 @@ count_a_job(JobQueueJob* job, const JOB_ID_KEY& /*jid*/, void*)
 		int job_idle_weight;
 		if (scheduler.m_use_slot_weights && (max_hosts > cur_hosts)) {
 				// if we're biasing idle jobs by SCHEDD_SLOT_WEIGHT, eval that here
-			int job_weight = request_cpus;
+			double job_weight = request_cpus;
 			if (scheduler.slotWeightOfJob) {
 				classad::Value value;
 				int rval = EvalExprTree(scheduler.slotWeightOfJob, job, NULL, value);
@@ -3328,7 +3379,7 @@ service_this_universe(int universe, ClassAd* job)
 		default:
 
 			bool sendToDS = false;
-			job->LookupBool("WantParallelScheduling", sendToDS);
+			job->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, sendToDS);
 			if (sendToDS) {
 				return false;
 			} else {
@@ -3593,7 +3644,7 @@ abort_job_myself( PROC_ID job_id, JobAction action, bool log_hold )
 	}
 
 	bool wantPS = 0;
-	job_ad->LookupBool("WantParallelScheduling", wantPS);
+	job_ad->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, wantPS);
 
 	if( (job_universe == CONDOR_UNIVERSE_MPI) || 
 		(job_universe == CONDOR_UNIVERSE_PARALLEL) || wantPS ) {
@@ -4173,7 +4224,7 @@ Scheduler::spawnJobHandler( int cluster, int proc, shadow_rec* srec )
 		break;
 	default:
 		bool wantPS = 0;
-		GetAttributeBool( cluster, proc, "WantParallelScheduling", &wantPS );
+		GetAttributeBool( cluster, proc, ATTR_WANT_PARALLEL_SCHEDULING, &wantPS );
 		if (wantPS && (proc > 0)) {
 			return true;
 		}
@@ -4343,18 +4394,6 @@ jobIsFinishedDone( int cluster, int proc, void*, int )
 	return DestroyProc( cluster, proc );
 }
 
-namespace {
-	void InitializeMask(WriteUserLog* ulog, int c, int p)
-	{
-		MyString msk;
-		GetAttributeString(c, p, ATTR_DAGMAN_WORKFLOW_MASK, msk);
-		dprintf( D_FULLDEBUG, "DAGMan workflow Mask is \"%s\"\n",msk.Value());
-		Tokenize(msk.Value());
-		while(const char* mask = GetNextToken(",",true)) {
-			ulog->AddToMask(ULogEventNumber(atoi(mask)));
-		}
-	}
-}
 // Initialize a WriteUserLog object for a given job and return a pointer to
 // the WriteUserLog object created.  This object can then be used to write
 // events and must be deleted when you're done.  This returns NULL if
@@ -4363,40 +4402,9 @@ namespace {
 WriteUserLog*
 Scheduler::InitializeUserLog( PROC_ID job_id ) 
 {
-	std::string logfilename;
-	std::string dagmanNodeLog;
 	ClassAd *ad = GetJobAd(job_id.cluster,job_id.proc);
-	std::vector<const char*> logfiles;
-	if( getPathToUserLog(ad, logfilename) ) {
-		logfiles.push_back(logfilename.c_str());
-	}
-	if( getPathToUserLog(ad, dagmanNodeLog, ATTR_DAGMAN_WORKFLOW_LOG) ) {			
-		logfiles.push_back(dagmanNodeLog.c_str());
-	}
-	if( logfiles.empty() ) {
-			// if there is no userlog file defined, then our work is
-			// done...  
-		return NULL;
-	}
-	MyString owner;
-	MyString domain;
-	MyString iwd;
-	int use_classad = 0;
-
-	GetAttributeString(job_id.cluster, job_id.proc, ATTR_OWNER, owner);
-	GetAttributeString(job_id.cluster, job_id.proc, ATTR_NT_DOMAIN, domain);
-
-	for(std::vector<const char*>::iterator p = logfiles.begin();
-			p != logfiles.end(); ++p) {
-		dprintf( D_FULLDEBUG, "Writing record to user logfile=%s owner=%s\n",
-			*p, owner.Value() );
-	}
 
 	WriteUserLog* ULog=new WriteUserLog();
-	if (GetAttributeInt(job_id.cluster, job_id.proc, ATTR_ULOG_USE_XML, &use_classad) < 0) {
-		use_classad = 0;
-	}
-	ULog->setUseCLASSAD(use_classad);
 	ULog->setCreatorName( Name );
 
     if (m_userlog_file_cache_max > 0) {
@@ -4409,35 +4417,18 @@ Scheduler::InitializeUserLog( PROC_ID job_id )
         ULog->setLogFileCache(&m_userlog_file_cache);
     }
 
-	if (ULog->initialize(owner.Value(), domain.Value(), logfiles,
-			job_id.cluster, job_id.proc, 0)) {
-		if(logfiles.size() > 1) {
-			InitializeMask(ULog,job_id.cluster, job_id.proc);
-		}
-		return ULog;
-	} else {
-			// If the user log is in the spool directory, try writing to
-			// it as user condor. The spool directory spends some of its
-			// time owned by condor.
-		std::string SpoolDir;
-		SpooledJobFiles::getJobSpoolPath(ad, SpoolDir);
-		SpoolDir += DIR_DELIM_CHAR;
-		if ( !strncmp( SpoolDir.c_str(), logfilename.c_str(),
-					SpoolDir.length() ) && ULog->initialize( logfiles,
-					job_id.cluster, job_id.proc, 0 ) ) {
-			if(logfiles.size() > 1) {
-				InitializeMask(ULog,job_id.cluster,job_id.proc);
-			}
-			return ULog;
-		}
-		for(std::vector<const char*>::iterator p = logfiles.begin();
-				p != logfiles.end(); ++p) {
-			dprintf ( D_ALWAYS, "WARNING: Invalid user log file specified: "
-				"%s\n", *p);
-		}
+	if ( ! ULog->initialize(*ad, true) ) {
+		dprintf ( D_ALWAYS, "WARNING: Failed to initialize user log file for writing!\n");
 		delete ULog;
 		return NULL;
 	}
+	// TODO Callers can't distinguish between error and no log files to write to.
+	if ( ! ULog->willWrite() ) {
+		delete ULog;
+		return NULL;
+	}
+
+	return ULog;
 }
 
 bool
@@ -4447,8 +4438,8 @@ Scheduler::WriteSubmitToUserLog( JobQueueJob* job, bool do_fsync, const char * w
 
 		// Skip writing submit events for procid != 0 for parallel jobs
 	int universe = job->Universe();
-        bool wantPS = 0;
-        job->LookupBool("WantParallelScheduling", wantPS);
+	bool wantPS = 0;
+	job->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, wantPS);
 
 	if ( (universe == CONDOR_UNIVERSE_PARALLEL) || wantPS ) {
 		if ( job->jid.proc > 0) {
@@ -4510,7 +4501,7 @@ Scheduler::WriteAbortToUserLog( PROC_ID job_id )
 	// have gotten a ToE tag, tell the abort event about it.
 	ClassAd * ja = GetJobAd( job_id.cluster, job_id.proc );
 	if( ja ) {
-		classad::ClassAd * toeTag = dynamic_cast<classad::ClassAd*>(ja->Lookup("ToE"));
+		classad::ClassAd * toeTag = dynamic_cast<classad::ClassAd*>(ja->Lookup(ATTR_JOB_TOE));
 		event.setToeTag( toeTag );
 	}
 
@@ -6060,8 +6051,8 @@ Scheduler::actOnJobs(int, Stream* s)
 				ATTR_JOB_STATUS_ON_RELEASE,REMOVED);
 			break;
 		case JA_HOLD_JOBS:
-				// Don't hold held jobs
-			snprintf( buf, 256, "(%s!=%d) && (", ATTR_JOB_STATUS, HELD );
+				// Don't hold held jobs (but do match cluster ads - so late materialization works)
+			snprintf( buf, 256, "(ProcId is undefined || (%s!=%d)) && (", ATTR_JOB_STATUS, HELD );
 			break;
 		case JA_RELEASE_JOBS:
 				// Only release held jobs which aren't waiting for
@@ -6793,7 +6784,7 @@ Scheduler::shadowsSpawnLimit()
 		return 0;
 	}
 
-	int shadows = numShadows + RunnableJobQueue.Length() + num_pending_startd_contacts + startdContactQueue.Length();
+	int shadows = numShadows + RunnableJobQueue.size() + num_pending_startd_contacts + startdContactQueue.size();
 
 	return std::max(MaxJobsRunning - shadows, 0);
 }
@@ -6807,7 +6798,7 @@ Scheduler::shadowsSpawnLimit()
 bool
 Scheduler::canSpawnShadow()
 {
-	int shadows = numShadows + RunnableJobQueue.Length() + num_pending_startd_contacts + startdContactQueue.Length();
+	int shadows = numShadows + RunnableJobQueue.size() + num_pending_startd_contacts + startdContactQueue.size();
 
 		// First, check if we have reached our maximum # of shadows 
 	if( shadows >= MaxJobsRunning ) {
@@ -8006,11 +7997,7 @@ Scheduler::claimedStartd( DCMsgCallback *cb ) {
 bool
 Scheduler::enqueueStartdContact( ContactStartdArgs* args )
 {
-	 if( startdContactQueue.enqueue(args) < 0 ) {
-		 dprintf( D_ALWAYS, "Failed to enqueue contactStartd "
-				  "startd=%s\n", args->sinful() );
-		 return false;
-	 }
+	 startdContactQueue.push(args);
 	 dprintf( D_FULLDEBUG, "Enqueued contactStartd startd=%s\n",
 			  args->sinful() );  
 
@@ -8023,7 +8010,7 @@ Scheduler::enqueueStartdContact( ContactStartdArgs* args )
 void
 Scheduler::rescheduleContactQueue()
 {
-	if( startdContactQueue.IsEmpty() ) {
+	if( startdContactQueue.empty() ) {
 		return; // nothing to do
 	}
 		 /*
@@ -8058,10 +8045,11 @@ Scheduler::checkContactQueue()
 	while( !daemonCore->TooManyRegisteredSockets() &&
 		   (num_pending_startd_contacts < max_pending_startd_contacts
             || max_pending_startd_contacts <= 0) &&
-		   (!startdContactQueue.IsEmpty()) ) {
+		   (!startdContactQueue.empty()) ) {
 			// there's a pending registration in the queue:
 
-		startdContactQueue.dequeue ( args );
+		args = startdContactQueue.front();
+		startdContactQueue.pop();
 		dprintf( D_FULLDEBUG, "In checkContactQueue(), args = %p, "
 				 "host=%s\n", args, args->sinful() ); 
 		contactStartd( args );
@@ -8985,10 +8973,12 @@ Scheduler::StartJobHandler()
 
 	// get job from runnable job queue
 	while( 1 ) {	
-		if( RunnableJobQueue.dequeue(srec) < 0 ) {
+		if( RunnableJobQueue.empty() ) {
 				// our queue is empty, we're done.
 			return;
 		}
+		srec = RunnableJobQueue.front();
+		RunnableJobQueue.pop();
 
 		// Check to see if job ad is still around; it may have been
 		// removed while we were waiting in RunnableJobQueue
@@ -9020,35 +9010,13 @@ Scheduler::StartJobHandler()
 			continue;
 		}
 
-		if ( privsep_enabled() ) {
-			// If there is no available transferd for this job (and it 
-			// requires it), then start one and put the job back into the queue
-			if ( jobNeedsTransferd(cluster, proc, srec->universe) ) {
-				if (! availableTransferd(cluster, proc) ) {
-					dprintf(D_ALWAYS, 
-						"Deferring job start until transferd is registered\n");
-
-					// stop the running of this job
-					mark_job_stopped( job_id );
-					RemoveShadowRecFromMrec(srec);
-					delete srec;
-				
-					// start up a transferd for this job.
-					startTransferd(cluster, proc);
-
-					continue;
-				}
-			}
-		}
-			
-
 			// if we got this far, we're definitely starting the job,
 			// so deal with the aboutToSpawnJobHandler hook...
 		int universe = srec->universe;
 		callAboutToSpawnJobHandler( cluster, proc, srec );
 
 		bool wantPS = 0;
-		job_ad->LookupBool("WantParallelScheduling", wantPS);
+		job_ad->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, wantPS);
 
 		if( (universe == CONDOR_UNIVERSE_MPI) || 
 			(universe == CONDOR_UNIVERSE_PARALLEL) || wantPS ) {
@@ -9557,51 +9525,6 @@ Scheduler::spawnShadow( shadow_rec* srec )
 
 	MyString argbuf;
 
-	// send the location of the transferd the shadow should use for
-	// this user. Due to the nasty method of command line argument parsing
-	// by the shadow, this should be first on the command line.
-	if ( privsep_enabled() && 
-			jobNeedsTransferd(job_id->cluster, job_id->proc, universe) )
-	{
-		TransferDaemon *td = NULL;
-		switch( universe ) {
-			case CONDOR_UNIVERSE_VANILLA:
-			case CONDOR_UNIVERSE_JAVA:
-			case CONDOR_UNIVERSE_MPI:
-			case CONDOR_UNIVERSE_PARALLEL:
-			case CONDOR_UNIVERSE_VM:
-				if (! availableTransferd(job_id->cluster, job_id->proc, td) )
-				{
-					dprintf(D_ALWAYS,
-						"Scheduler::spawnShadow() Race condition hit. "
-						"Thought transferd was available and it wasn't. "
-						"stopping execution of job.\n");
-
-					mark_job_stopped(job_id);
-					if( FindSrecByProcID(*job_id) ) {
-						// we already added the srec to our tables..
-						delete_shadow_rec( srec );
-						srec = NULL;
-					}
-					free( shadow_path );
-					return;
-				}
-				args.AppendArg("--transferd");
-				args.AppendArg(td->get_sinful());
-				break;
-
-			case CONDOR_UNIVERSE_STANDARD:
-				/* no transferd for this universe */
-				break;
-
-		default:
-			EXCEPT( "StartJobHandler() does not support %d universe jobs",
-					universe );
-			break;
-
-		}
-	}
-
 	if ( sh_reads_file ) {
 		if( sh_is_dc ) { 
 			argbuf.formatstr("%d.%d",job_id->cluster,job_id->proc);
@@ -9715,7 +9638,7 @@ Scheduler::spawnShadow( shadow_rec* srec )
 		// dedicated scheduler we finally spawned it so it can update
 		// some of its own data structures, too.
 	bool sendToDS = false;
-	GetAttributeBool(job_id->cluster, job_id->proc, "WantParallelScheduling", &sendToDS);
+	GetAttributeBool(job_id->cluster, job_id->proc, ATTR_WANT_PARALLEL_SCHEDULING, &sendToDS);
 
 	if( (sendToDS || universe == CONDOR_UNIVERSE_MPI ) ||
 	    (universe == CONDOR_UNIVERSE_PARALLEL) ){
@@ -9759,7 +9682,7 @@ void
 Scheduler::tryNextJob()
 {
 		// Re-set timer if there are any jobs left in the queue
-	if( !RunnableJobQueue.IsEmpty() ) {
+	if( !RunnableJobQueue.empty() ) {
 		StartJobTimer = daemonCore->
 		// Queue the next job start via the daemoncore timer.  jobThrottle()
 		// implements job bursting, and returns the proper delay for the timer.
@@ -10114,9 +10037,7 @@ Scheduler::addRunnableJob( shadow_rec* srec )
 	dprintf( D_FULLDEBUG, "Queueing job %d.%d in runnable job queue\n",
 			 srec->job_id.cluster, srec->job_id.proc );
 
-	if( RunnableJobQueue.enqueue(srec) ) {
-		EXCEPT( "Cannot put job into run queue" );
-	}
+	RunnableJobQueue.push(srec);
 
 	if( StartJobTimer<0 ) {
 		// Queue the next job start via the daemoncore timer.
@@ -11611,7 +11532,7 @@ mark_job_stopped(PROC_ID* job_id)
 	GetAttributeInt(job_id->cluster, job_id->proc, ATTR_JOB_UNIVERSE,
 					&universe);
 	int wantPS = 0;
-	GetAttributeInt(job_id->cluster, job_id->proc, "WantParallelScheduling",
+	GetAttributeInt(job_id->cluster, job_id->proc, ATTR_WANT_PARALLEL_SCHEDULING,
 					&wantPS);
 	if( (universe == CONDOR_UNIVERSE_MPI) || 
 		(universe == CONDOR_UNIVERSE_PARALLEL) || wantPS ){
@@ -11930,7 +11851,7 @@ Scheduler::expand_mpi_procs(StringList *job_ids, StringList *expanded_ids) {
 		int universe = -1;
 		GetAttributeInt(p.cluster, p.proc, ATTR_JOB_UNIVERSE, &universe);
 		int wantPS = 0;
-		GetAttributeInt(p.cluster, p.proc, "WantParallelScheduling", &wantPS);
+		GetAttributeInt(p.cluster, p.proc, ATTR_WANT_PARALLEL_SCHEDULING, &wantPS);
 		if ((universe != CONDOR_UNIVERSE_MPI) && (universe != CONDOR_UNIVERSE_PARALLEL) && (!wantPS))
 			continue;
 		
@@ -12002,7 +11923,7 @@ set_job_status(int cluster, int proc, int status)
 	GetAttributeInt(cluster, proc, ATTR_JOB_UNIVERSE, &universe);
 
 	int wantPS = 0;
-	GetAttributeInt(cluster, proc, "WantParallelScheduling", &wantPS);
+	GetAttributeInt(cluster, proc, ATTR_WANT_PARALLEL_SCHEDULING, &wantPS);
 
 	BeginTransaction();
 
@@ -12951,25 +12872,10 @@ Scheduler::check_zombie(int pid, PROC_ID* job_id)
 		ClassAd *job_ad = GetJobAd( job_id->cluster, job_id->proc );
 		this->calculateCronTabSchedule( job_ad, true );
 	}
-	
+
 	dprintf( D_FULLDEBUG, "Exited check_zombie( %d, 0x%p )\n", pid,
 			 job_id );
 }
-
-#ifdef CLIPPED
-	// If clipped, we don't deal with the old ckpt server, so we stub it,
-	// thus we do not have to link in the ckpt_server_api.
-int 
-RemoveLocalOrRemoteFile(const char *, const char *, const char *)
-{
-	return 0;
-}
-int
-SetCkptServerHost(const char *)
-{
-	return 0;
-}
-#endif // of ifdef CLIPPED
 
 void
 cleanup_ckpt_files(int cluster, int proc, const char *owner)
@@ -12977,7 +12883,6 @@ cleanup_ckpt_files(int cluster, int proc, const char *owner)
 	std::string	ckpt_name;
 	MyString	owner_buf;
 	MyString	server;
-	int		universe = CONDOR_UNIVERSE_STANDARD;
 
 		/* In order to remove from the checkpoint server, we need to know
 		 * the owner's name.  If not passed in, look it up now.
@@ -12991,29 +12896,6 @@ cleanup_ckpt_files(int cluster, int proc, const char *owner)
 	}
 
 	ClassAd * ad = GetJobAd(cluster, proc);
-
-		/* Remove any checkpoint files.  If for some reason we do 
-		 * not know the owner, don't bother sending to the ckpt
-		 * server.
-		 */
-	GetAttributeInt(cluster,proc,ATTR_JOB_UNIVERSE,&universe);
-	if ( universe == CONDOR_UNIVERSE_STANDARD && owner ) {
-		SpooledJobFiles::getJobSpoolPath(ad, ckpt_name);
-
-		if (GetAttributeString(cluster, proc, ATTR_LAST_CKPT_SERVER,
-							   server) == 0) {
-			SetCkptServerHost(server.Value());
-		} else {
-			SetCkptServerHost(NULL); // no ckpt on ckpt server
-		}
-
-		RemoveLocalOrRemoteFile(owner,Name,ckpt_name.c_str());
-
-		ckpt_name += ".tmp";
-
-		RemoveLocalOrRemoteFile(owner,Name,ckpt_name.c_str());
-	}
-
 	if(ad) {
 		SpooledJobFiles::removeJobSpoolDirectory(ad);
 		FreeJobAd(ad);
@@ -13042,6 +12924,17 @@ Scheduler::Init()
 		////////////////////////////////////////////////////////////////////
 
     stats.Reconfig();
+
+	if (first_time_in_init) {
+		if (param_boolean("USE_JOBSETS", false)) {
+			ASSERT(jobSets == nullptr);
+			jobSets = new JobSets();
+			ASSERT(jobSets);
+		}
+	}
+	if (jobSets) {
+		jobSets->reconfig();
+	}
 
 	if( Spool ) free( Spool );
 	if( !(Spool = param("SPOOL")) ) {
@@ -13988,6 +13881,15 @@ Scheduler::Register()
 			"reassign_slot_handler", this, WRITE);
 
 
+		//
+		// Handles requests from a collector to issue tokens on behalf of its users.
+		// Only pre-created sessions are allowed to use this command; this is enforced
+		// in the command handler itself.
+		//
+	daemonCore->Register_CommandWithPayload( COLLECTOR_TOKEN_REQUEST, "DC_COLLECTOR_TOKEN_REQUEST",
+			(CommandHandlercpp)&Scheduler::handle_collector_token_request,
+			"handle_collector_token_request()", this, ALLOW, D_COMMAND, true );
+
 	 // reaper
 	shadowReaperId = daemonCore->Register_Reaper(
 		"reaper",
@@ -14770,7 +14672,7 @@ Scheduler::RemoveShadowRecFromMrec( shadow_rec* shadow )
 int Scheduler::AlreadyMatched(JobQueueJob * job, int universe)
 {
 	bool wantPS = 0;
-	job->LookupBool("WantParallelScheduling", wantPS);
+	job->LookupBool(ATTR_WANT_PARALLEL_SCHEDULING, wantPS);
 
 	if ( ! job || ! job->IsJob() ||
 		 (universe == CONDOR_UNIVERSE_MPI) ||
@@ -14919,6 +14821,146 @@ Scheduler::receive_startd_alive(int cmd, Stream *s)
 
 	if (claim_id) free(claim_id);
 	return TRUE;
+}
+
+
+	// For scheduler-created sessions, this will allow the collector to requests tokens.
+int
+Scheduler::handle_collector_token_request(int, Stream *stream)
+{
+		// Check: is this my session?
+	const auto &sess_id = static_cast<ReliSock*>(stream)->getSessionID();
+	classad::ClassAd policy_ad;
+	daemonCore->getSecMan()->getSessionPolicy(sess_id.c_str(), policy_ad);
+	bool is_my_session = false;
+	if (!policy_ad.EvaluateAttrBool("ScheddSession", is_my_session) || !is_my_session) {
+		dprintf(D_ALWAYS, "Ignoring a collector token request from an unknown session.\n");
+		return false;
+	}
+
+		// Check: is this the collector session?
+	if (strcmp(static_cast<Sock*>(stream)->getFullyQualifiedUser(),
+		COLLECTOR_SIDE_MATCHSESSION_FQU))
+	{
+		dprintf(D_ALWAYS, "Ignoring a collector token request from non-collector (%s).\n",
+			static_cast<Sock*>(stream)->getFullyQualifiedUser());
+		return false;
+	}
+
+	classad::ClassAd ad;
+	if (!getClassAd(stream, ad) ||
+		!stream->end_of_message())
+	{
+		dprintf(D_FULLDEBUG, "handle_collector_token_request: failed to read input from collector\n");
+		return false;
+	}
+
+	int error_code = 0;
+	std::string error_string;
+
+	std::string requested_identity;
+	if (!ad.EvaluateAttrString(ATTR_SEC_USER, requested_identity)) {
+		error_code = 1;
+		error_string = "No identity requested.";
+	}
+
+	auto peer_location = static_cast<Sock*>(stream)->peer_ip_str();
+
+	std::set<std::string> config_bounding_set;
+	std::string config_bounding_set_str;
+	if (param(config_bounding_set_str, "SEC_IMPERSONATION_TOKEN_LIMITS")) {
+		StringList config_bounding_set_list(config_bounding_set_str.c_str());
+		config_bounding_set_list.rewind();
+		const char *authz;
+		while ( (authz = config_bounding_set_list.next()) ) {
+			config_bounding_set.insert(authz);
+		}
+	}
+
+	std::vector<std::string> bounding_set;
+	std::string bounding_set_str;
+	if (ad.EvaluateAttrString(ATTR_SEC_LIMIT_AUTHORIZATION, bounding_set_str)) {
+		StringList authz_str_list(bounding_set_str.c_str());
+		authz_str_list.rewind();
+		const char *authz;
+		while ( (authz = authz_str_list.next()) ) {
+			if (config_bounding_set.empty() || (config_bounding_set.find(authz) != config_bounding_set.end())) {
+				bounding_set.emplace_back(authz);
+			}
+		}
+			// If all potential bounds were removed by the set intersection,
+			// throw an error instead of generating an "all powerful" token.
+		if (!config_bounding_set.empty() && bounding_set.empty()) {
+			error_code = 2;
+			error_string = "All requested authorizations were eliminated by the"
+				" SEC_IMPERSONATION_TOKEN_LIMITS setting";
+		}
+	} else if (!config_bounding_set.empty()) {
+		for (const auto &authz : config_bounding_set) {
+			bounding_set.push_back(authz);
+		}
+	}
+
+	int requested_lifetime = -1;
+	int max_lifetime = param_integer("SEC_ISSUED_TOKEN_EXPIRATION", -1);
+	if (!ad.EvaluateAttrInt(ATTR_SEC_TOKEN_LIFETIME, requested_lifetime)) {
+		requested_lifetime = -1;
+	}
+	if ((max_lifetime > 0) && (requested_lifetime > max_lifetime)) {
+		requested_lifetime = max_lifetime;
+	} else if ((max_lifetime > 0) && (requested_lifetime < 0)) {
+		requested_lifetime = max_lifetime;
+	}
+
+	classad::ClassAd result_ad;
+	if (error_code) {
+		result_ad.InsertAttr(ATTR_ERROR_STRING, error_string);
+		result_ad.InsertAttr(ATTR_ERROR_CODE, error_code);
+	} else {
+		CondorError err;
+		std::string final_key_name = htcondor::get_token_signing_key(err);
+		std::string token;
+		if (final_key_name.empty()) {
+			result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+			result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+		} else if (!Condor_Auth_Passwd::generate_token(
+			requested_identity,
+			final_key_name,
+			bounding_set,
+			requested_lifetime,
+			token,
+			static_cast<Sock*>(stream)->getUniqueId(),
+			&err))
+		{
+			result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+			result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+		} else if (token.empty()) { // Should never happen if we got here...
+			error_code = 2;
+			error_string = "Internal state error.";
+		} else {
+			result_ad.InsertAttr(ATTR_SEC_TOKEN, token);
+			dprintf(D_ALWAYS | D_AUDIT, *static_cast<Sock*>(stream),
+				"Collector %s token request for ID %s, bounding set %s,"
+				" and lifetime %d issued.\n", peer_location, requested_identity.c_str(),
+				bounding_set_str.empty() ? "(none)" : bounding_set_str.c_str(),
+				requested_lifetime);
+		}
+	}
+
+	if (!stream->get_encryption()) {
+		result_ad.Clear();
+		result_ad.InsertAttr(ATTR_ERROR_STRING, "Request to server was not encrypted.");
+		result_ad.InsertAttr(ATTR_ERROR_CODE, 3);
+	}
+
+	stream->encode();
+	if (!putClassAd(stream, result_ad) ||
+		!stream->end_of_message())
+	{
+		dprintf(D_FULLDEBUG, "handle_collector_token_request: failed to send response ad to collector.\n");
+		return false;
+	}
+	return true;
 }
 
 void
@@ -15221,7 +15263,7 @@ Scheduler::get_job_connect_info_handler_implementation(int, Stream* s) {
 	bool retry_is_sensible = false;
 	bool job_is_suitable = false;
 	ClassAd starter_ad;
-	int ltimeout = 300;
+	int ltimeout = 20;
 
 		// This command is called for example by condor_ssh_to_job
 		// in order to establish a security session for communication
@@ -16475,13 +16517,9 @@ Scheduler::addCronTabClassAd( JobQueueJob *jobAd )
 void
 Scheduler::addCronTabClusterId( int cluster_id )
 {
-	if ( cluster_id < 0 ||
-		 this->cronTabClusterIds.IsMember( cluster_id ) ) return;
-	if ( this->cronTabClusterIds.enqueue( cluster_id ) < 0 ) {
-		dprintf( D_FULLDEBUG,
-				 "Failed to add cluster %d to the cron jobs list\n", cluster_id );
+	if ( cluster_id >= 0 ) {
+		cronTabClusterIds.insert( cluster_id );
 	}
-	return;
 }
 
 /**
@@ -16503,7 +16541,9 @@ Scheduler::processCronTabClusterIds( )
 		// For each cluster, we will inspect the job ads of all its
 		// procs to see if they have defined crontab information
 		//
-	while ( this->cronTabClusterIds.dequeue( cluster_id ) >= 0 ) {
+	for ( auto itr = cronTabClusterIds.begin(); itr != cronTabClusterIds.end(); itr++ ) {
+		cluster_id = *itr;
+
 		int init = 1;
 		while ( ( jobAd = GetNextJobByCluster( cluster_id, init ) ) ) {
 			PROC_ID id;
@@ -16524,7 +16564,7 @@ Scheduler::processCronTabClusterIds( )
 			init = 0;
 		} // WHILE
 	} // WHILE
-	return;
+	cronTabClusterIds.clear();
 }
 
 /**
@@ -16608,7 +16648,7 @@ Scheduler::calculateCronTabSchedule( ClassAd *jobAd, bool calculate )
 		// See if we can get the cached scheduler object 
 		//
 	CronTab *cronTab = NULL;
-	this->cronTabs->lookup( id, cronTab );
+	(void) this->cronTabs->lookup( id, cronTab );
 	if ( ! cronTab ) {
 			//
 			// There wasn't a cached object, so we'll need to create

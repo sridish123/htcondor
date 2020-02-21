@@ -39,6 +39,7 @@ int vformatstr(std::string& s, const char* format, va_list pargs);
 // These return number of new chars appended.
 int formatstr_cat(std::string& s, const char* format, ...) CHECK_PRINTF_FORMAT(2,3);
 int formatstr_cat(MyString& s, const char* format, ...) CHECK_PRINTF_FORMAT(2,3);
+int vformatstr_cat(std::string& s, const char* format, va_list pargs);
 
 // Return the string form of the given integer value
 template <typename T> std::string IntToStr( T val );
@@ -80,6 +81,8 @@ void title_case(std::string &str); // capitalize each word
 // returns true if pre is non-empty and str is the same as pre up to pre.size()
 bool starts_with(const std::string& str, const std::string& pre);
 bool starts_with_ignore_case(const std::string& str, const std::string& pre);
+
+bool ends_with(const std::string& str, const std::string& post);
 
 // case insensitive sort functions for use with std::sort
 bool sort_ascending_ignore_case(std::string const & a, std::string const & b);

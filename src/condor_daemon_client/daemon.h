@@ -30,16 +30,14 @@ class Daemon;
 #include "condor_common.h"
 #include "condor_io.h"
 #include "condor_classad.h"
-#include "condor_collector.h"
 #include "condor_secman.h"
-#include "condor_network.h" // For the port numbers...
 #include "daemon_types.h"
 #include "KeyCache.h"
 #include "CondorError.h"
 #include "command_strings.h"
 #include "dc_message.h"
 
-template <class p> class counted_ptr; // Forward declaration
+#define COLLECTOR_PORT					9618
 
 /** 
   Class used to pass around and store information about a given
@@ -595,7 +593,7 @@ public:
 		 *
 		 * Returns true on success or false on failure.
 		 */
-	bool startTokenRequest( const std::string identity,
+	bool startTokenRequest( const std::string &identity,
 		const std::vector<std::string> &authz_bounding_set, int lifetime,
 		const std::string &client_id, std::string &token, std::string &request_id,
 		CondorError *err=NULL ) noexcept;
@@ -633,6 +631,11 @@ public:
 		 */
 	bool autoApproveTokens( const std::string &netblock, time_t lifetime,
 		CondorError *err=nullptr ) noexcept;
+
+		/**
+		 * Exchange a SciToken for a HTCondor token.
+		 */
+	bool exchangeSciToken( const std::string &scitoken, std::string &token, CondorError &err ) noexcept;
 
 		/**
 		 * When authentication fails - but TOKEN is a valid method - this is set to true.
@@ -801,7 +804,6 @@ protected:
 			@return true if we found everything in the ad, false if not
 		 */
 	bool getInfoFromAd( const ClassAd* ad );
-	bool getInfoFromAd( counted_ptr<class ClassAd>& ad );
 
 		/** Initialize one of our values from the given ClassAd* and
 			attribute name.  This is shared code when we query the
@@ -819,9 +821,6 @@ protected:
 		*/
 	bool initStringFromAd( const ClassAd* ad, const char* attrname,
 						   char** value_str );
-
-	bool initStringFromAd(counted_ptr<class ClassAd>& ad, const char* attrname, 
-		char** value_str );
 
 		/* 
 		   These helpers prevent memory leaks.  Whenever we want to

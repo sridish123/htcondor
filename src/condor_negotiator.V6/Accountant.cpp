@@ -1205,6 +1205,11 @@ ClassAd* Accountant::ReportState(bool rollup) {
         formatstr(tmp, "WeightedAccumulatedUsage%d", snum);
         ad->Assign(tmp.c_str(), WeightedAccumulatedUsage);
         
+        float SubmitterShare = 0;
+        if (CustomerAd->LookupFloat("SubmitterShare",SubmitterShare)==0) SubmitterShare=0;
+        formatstr(tmp, "SubmitterShare%d", snum);
+        ad->Assign(tmp.c_str(), SubmitterShare);
+
         int BeginUsageTime = 0;
         if (CustomerAd->LookupInteger(BeginUsageTimeAttr,BeginUsageTime)==0) BeginUsageTime=0;
         formatstr(tmp, "BeginUsageTime%d", snum);
@@ -1269,7 +1274,7 @@ void Accountant::ReportGroups(GroupEntry* group, ClassAd* ad, bool rollup, map<s
 	if (!rollup && cgrp) {
 		PriorityFactor = getGroupPriorityFactor( cgrp->name );
 	}
-	else if (!rollup && CustomerAd->LookupFloat(PriorityFactorAttr,PriorityFactor)==0) {
+	else if (CustomerAd->LookupFloat(PriorityFactorAttr,PriorityFactor)==0) {
 		PriorityFactor=0;
 	}
     formatstr(tmp, "PriorityFactor%d", gnum);
@@ -1527,7 +1532,7 @@ int Accountant::CheckClaimedOrMatched(ClassAd* ResourceAd, const string& Custome
 ClassAd* Accountant::GetClassAd(const string& Key)
 {
   ClassAd* ad=NULL;
-  AcctLog->table.lookup(Key,ad);
+  (void) AcctLog->table.lookup(Key,ad);
   return ad;
 }
 

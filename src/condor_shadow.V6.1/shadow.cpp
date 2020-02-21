@@ -213,6 +213,9 @@ UniShadow::gracefulShutDown( void )
 int
 UniShadow::getExitReason( void )
 {
+	if ( isDataflowJob ) {
+		return JOB_EXITED;
+	}
 	if( remRes ) {
 		return remRes->getExitReason();
 	}
@@ -264,8 +267,6 @@ UniShadow::emailTerminateEvent( int exitReason, update_style_t kind )
 
 void UniShadow::holdJob( const char* reason, int hold_reason_code, int hold_reason_subcode )
 {
-	/*int iPrevExitReason=*/ remRes->getExitReason();
-	
 	remRes->setExitReason( JOB_SHOULD_HOLD );
 	BaseShadow::holdJob(reason, hold_reason_code, hold_reason_subcode);
 }
@@ -366,7 +367,7 @@ UniShadow::getImageSize( int64_t & mem_usage, int64_t & rss, int64_t & pss )
 }
 
 
-int
+int64_t
 UniShadow::getDiskUsage( void )
 {
 	return remRes->getDiskUsage();
@@ -390,6 +391,9 @@ UniShadow::exitSignal( void )
 int
 UniShadow::exitCode( void )
 {
+	if (isDataflowJob) {
+		return 0;
+	}
 	return remRes->exitCode();
 }
 

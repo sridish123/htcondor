@@ -44,6 +44,7 @@
 #define SUBMIT_KEY_BatchName "batch_name"
 #define SUBMIT_KEY_Hold "hold"
 #define SUBMIT_KEY_Priority "priority"
+#define SUBMIT_KEY_Prio "prio"
 #define SUBMIT_KEY_Notification "notification"
 #define SUBMIT_KEY_WantRemoteIO "want_remote_io"
 #define SUBMIT_KEY_Executable "executable"
@@ -75,6 +76,7 @@
 #define SUBMIT_KEY_RequestCpus "request_cpus"
 #define SUBMIT_KEY_RequestMemory "request_memory"
 #define SUBMIT_KEY_RequestDisk "request_disk"
+#define SUBMIT_KEY_RequestGpus "request_gpus"
 #define SUBMIT_KEY_RequestPrefix "request_"
 
 #define SUBMIT_KEY_Universe "universe"
@@ -133,6 +135,8 @@
 
 #define SUBMIT_KEY_WhenToTransferOutput "when_to_transfer_output"
 #define SUBMIT_KEY_ShouldTransferFiles "should_transfer_files"
+#define SUBMIT_KEY_PreserveRelativePaths "preserve_relative_paths"
+#define SUBMIT_KEY_TransferCheckpointFiles "transfer_checkpoint_files"
 #define SUBMIT_KEY_TransferInputFiles "transfer_input_files"
 #define SUBMIT_KEY_TransferInputFilesAlt "TransferInputFiles"
 #define SUBMIT_KEY_TransferOutputFiles "transfer_output_files"
@@ -213,7 +217,7 @@
 #define SUBMIT_KEY_CheckpointExitCode "checkpoint_exit_code"
 
 // ...
-#define SUBMIT_KEY_DontAppend "erase_output_and_error_on_restart"
+#define SUBMIT_KEY_EraseOutputAndErrorOnRestart "erase_output_and_error_on_restart"
 
 //
 // CronTab Parameters
@@ -244,6 +248,9 @@
 #define SUBMIT_KEY_DockerImage "docker_image"
 #define SUBMIT_KEY_DockerNetworkType "docker_network_type"
 
+#define SUBMIT_KEY_ContainerServiceNames "container_service_names"
+#define SUBMIT_KEY_ContainerPortSuffix "_container_port"
+
 //
 // VM universe Parameters
 //
@@ -271,6 +278,9 @@
 #define SUBMIT_KEY_WantNameTag "WantNameTag"
 #define SUBMIT_KEY_EC2AccessKeyId "ec2_access_key_id"
 #define SUBMIT_KEY_EC2SecretAccessKey "ec2_secret_access_key"
+#define SUBMIT_KEY_AWSAccessKeyIdFile "aws_access_key_id_file"
+#define SUBMIT_KEY_AWSSecretAccessKeyFile "aws_secret_access_key_file"
+#define SUBMIT_KEY_AWSRegion "aws_region"
 #define SUBMIT_KEY_EC2AmiID "ec2_ami_id"
 #define SUBMIT_KEY_EC2UserData "ec2_user_data"
 #define SUBMIT_KEY_EC2UserDataFile "ec2_user_data_file"
@@ -329,6 +339,7 @@
 #define SUBMIT_KEY_JobMaterializeMaxIdle "max_idle"
 #define SUBMIT_KEY_JobMaterializeMaxIdleAlt "materialize_max_idle"
 
+#define SUBMIT_KEY_CUDAVersion "cuda_version"
 
 #define SUBMIT_KEY_REMOTE_PREFIX "Remote_"
 
@@ -544,7 +555,7 @@ public:
 
 	// establishes default job attibutes that are independent of submit file (i.e. SUBMIT_ATTRS, etc)
 	// call once before parsing the submit file and/or calling make_job_ad.
-	int init_base_ad(time_t _submit_time, const char * owner); // returns 0 on success
+	int init_base_ad(time_t _submit_time, const char * username); // returns 0 on success
 
 	// establish default attributes using a foreign ad rather than by calling init_base_ad above
 	// used by late materialization when the 'base' ad is the cluster ad in the job queue.
@@ -614,6 +625,8 @@ public:
 	const char* to_string(std::string & buf, int flags); // print (append) the hash to the supplied buffer
 	const char* make_digest(std::string & buf, int cluster_id, StringList & vars, int options);
 	void setup_macro_defaults(); // setup live defaults table
+	void setup_submit_time_defaults(time_t stime); // setup defaults table for $(SUBMIT_TIME)
+
 
 	MACRO_SET& macros() { return SubmitMacroSet; }
 	int getUniverse()  { return JobUniverse; }
@@ -635,7 +648,7 @@ protected:
 	DeltaClassAd * job; // this wraps the procAd or baseJob and tracks changes to the underlying ad.
 	JOB_ID_KEY jid; // id of the current job being built
 	time_t     submit_time;
-	MyString   submit_owner; // owner specified to init_cluster_ad
+	MyString   submit_username; // username specified to init_cluster_ad
 
 	int abort_code; // if this is non-zero, all of the SetXXX functions will just quit
 	const char * abort_macro_name; // if there is an abort_code and these are non-null, then the abort was because of this macro
@@ -764,6 +777,9 @@ protected:
 	// return value is NULL if false,
 	// otherwise it is the name of the attribute that tells us we need job deferral
 	const char * NeedsJobDeferral();
+
+    // For now, just handles port-forwarding.
+    int SetContainerSpecial();
 
 	int CheckStdFile(
 		_submit_file_role role,
@@ -992,6 +1008,9 @@ const char * init_submit_default_macros();
 #ifdef WIN32
 void publishWindowsOSVersionInfo(ClassAd & ad);
 #endif
+
+// used for utility debug code in condor_submit
+const struct SimpleSubmitKeyword * get_submit_keywords();
 
 #ifndef EXPAND_GLOBS_WARN_EMPTY
 // functions in submit_glob.cpp

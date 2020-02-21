@@ -919,7 +919,6 @@ will not be enough.
 -  NETWORK_INTERFACE
 -  NUM_CPUS
 -  PREEMPTION_REQUIREMENTS_STABLE
--  PRIVSEP_ENABLED
 -  PROCD_ADDRESS
 -  SLOT_TYPE_<N>
 -  OFFLINE_MACHINE_RESOURCE_<name>
@@ -955,8 +954,6 @@ restart of HTCondor in order to use the changed value.
     configuration should not depend on HTCondor picking any particular
     IP address for this macro; this macro's value may not even be one of
     the IP addresses HTCondor is configured to advertise.
-
-    labelparam:IPv4Address
 
 ``$(IPV4_ADDRESS)`` :index:`IPV4_ADDRESS`
     The ASCII string version of the local machine's "most public" IPv4

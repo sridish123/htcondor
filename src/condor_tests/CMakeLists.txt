@@ -45,12 +45,15 @@ if (BUILD_TESTING)
 			ParseDryRunData.pm
 			ProcInfo.pm
 			SimpleJob.pm)
+
+	if (NOT ${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
 	foreach(scriptFile ${CHECK_MODULES})
 		add_custom_command ( OUTPUT ${TEST_TARGET_DIR}/Check/${scriptFile}
 			DEPENDS ${CONDOR_SOURCE_DIR}/src/condor_tests/Check/${scriptFile}
 			COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CONDOR_SOURCE_DIR}/src/condor_tests/Check/${scriptFile} ${TEST_TARGET_DIR}/Check/${scriptFile})
 		add_custom_target(test_copy_${scriptFile} ALL DEPENDS ${TEST_TARGET_DIR}/Check/${scriptFile})
 	endforeach()
+	endif()
 
 	# 1st remove generated files.
 	file( GLOB RMV_FIRST ${TEST_TARGET_DIR}/list_* *.desc )
@@ -97,113 +100,6 @@ if (BUILD_TESTING)
 	if (NOT WINDOWS)
 	  condor_exe_test(x_trapsig.exe "x_trapsig.cpp" "" )
 	endif(NOT WINDOWS)
-
-	if (STD_UNIVERSE)
-
-		# disable any optimizations + compile with specific fla
-		set( CMAKE_BUILD_TYPE Debug )
-		add_library( stdulib STATIC EXCLUDE_FROM_ALL "x_waste_second.c" )
-		add_dependencies( stdulib condorsyscall)
-		set( STDU_LDD_FLAGS -lm;-ldl;-lcrypt;libstdulib.a )
-
-		# C-Tests
-		if(${SYS_ARCH} MATCHES "X86_64")
-			# Only x86_64 machines get to run this test. On 32-bit machines,
-			# we still have a 2GB limit for the file size. See gt2337.
-			# Mainly, the submit side AND the application both must be 64-bit
-			# applications.
-			condor_std_exe_test(job_ckpt_lfs_std "${CMAKE_C_COMPILER}" "job_ckpt_lfs_std.c" "${STDU_LDD_FLAGS}")
-		endif()
-
-		condor_std_exe_test(job_core_compressfiles "${CMAKE_C_COMPILER}" "job_core_compressfiles.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_core_coredump "${CMAKE_C_COMPILER}" "job_core_coredump.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_binary-io_std "${CMAKE_C_COMPILER}" "job_rsc_binary-io_std.c" "${STDU_LDD_FLAGS}")
-
-		#C++-Tests
-		condor_std_exe_test(job_ckpt_constructor_std "${CMAKE_CXX_COMPILER}" "job_ckpt_constructor_std.cpp" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_env_std "${CMAKE_CXX_COMPILER}" "job_ckpt_env_std.cpp" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_memory-file_std "${CMAKE_CXX_COMPILER}" "job_ckpt_memory-file_std.cpp" "${STDU_LDD_FLAGS}")
-
-		condor_std_exe_test(job_core-cpp_exception_std "${CMAKE_CXX_COMPILER}" "job_core-cpp_exception_std.cpp" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_core-cpp_mem-alloc_std "${CMAKE_CXX_COMPILER}" "job_core-cpp_mem-alloc_std.cpp" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_fstream_std "${CMAKE_CXX_COMPILER}" "job_rsc_fstream_std.cpp" "${STDU_LDD_FLAGS}")
-
-		# Common to both.  ok so here is my take on this
-		# these tests, "test" a function and it is irrelovant whether
-		# they were bound via c vs. c++
-		condor_std_exe_test(job_core_bigenv "${CMAKE_C_COMPILER}" "job_core_bigenv.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_all-syscalls_std "${CMAKE_C_COMPILER}" "job_rsc_all-syscalls_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_hello_std "${CMAKE_C_COMPILER}" "job_rsc_hello_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_fcntl_std "${CMAKE_C_COMPILER}" "job_rsc_fcntl_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_truncate_std "${CMAKE_C_COMPILER}" "job_rsc_truncate_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_getdirentries_std "${CMAKE_C_COMPILER}" "job_rsc_getdirentries_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_fgets_std "${CMAKE_C_COMPILER}" "job_rsc_fgets_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_fread_std "${CMAKE_C_COMPILER}" "job_rsc_fread_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_ftell_std "${CMAKE_C_COMPILER}" "job_rsc_ftell_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_stat_std "${CMAKE_C_COMPILER}" "job_rsc_stat_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_open-N-serial_std "${CMAKE_C_COMPILER}" "job_rsc_open-N-serial_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_atexit_std "${CMAKE_C_COMPILER}" "job_rsc_atexit_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_rsc_zero-calloc_std "${CMAKE_C_COMPILER}" "job_rsc_zero-calloc_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_combo-sanity_std "${CMAKE_C_COMPILER}" "job_ckpt_combo-sanity_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_io-async_std "${CMAKE_C_COMPILER}" "job_ckpt_io-async_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_io-buffer-async_std "${CMAKE_C_COMPILER}" "job_ckpt_io-buffer-async_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_io-buffer-async-compressed_std "${CMAKE_C_COMPILER}" "job_ckpt_io-buffer-async-compressed_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_stack_std "${CMAKE_C_COMPILER}" "job_ckpt_stack_std.c" "${STDU_LDD_FLAGS}")
-		condor_pl_test(job_ckpt_stack_with_ckpt_server_std "Test of checkpoint server" "core;quick;full;quicknolink")
-		condor_std_exe_test(job_ckpt_standalone_std "${CMAKE_C_COMPILER}" "job_ckpt_standalone_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_nscd_std "${CMAKE_C_COMPILER}" "job_ckpt_nscd_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_floats_std "${CMAKE_C_COMPILER}" "job_ckpt_floats_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_floats-async_std "${CMAKE_C_COMPILER}" "job_ckpt_floats-async_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_integers_std "${CMAKE_C_COMPILER}" "job_ckpt_integers_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_signals_std "${CMAKE_C_COMPILER}" "job_ckpt_signals_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_dup_std "${CMAKE_C_COMPILER}" "job_ckpt_dup_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_longjmp_std "${CMAKE_C_COMPILER}" "job_ckpt_longjmp_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_gettimeofday_std "${CMAKE_C_COMPILER}" "job_ckpt_gettimeofday_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_open-async-ckpt_std "${CMAKE_C_COMPILER}" "job_ckpt_open-async-ckpt_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_open-N-parallel_std "${CMAKE_C_COMPILER}" "job_ckpt_open-N-parallel_std.c" "${STDU_LDD_FLAGS}")
-		condor_std_exe_test(job_ckpt_socket-support_std "${CMAKE_C_COMPILER}" "job_ckpt_socket-support_std.c" "${STDU_LDD_FLAGS}")
-
-
-		# Fortran tests; note that the Ninja generator can't produce fortran
-		if(NOT (${CMAKE_GENERATOR} STREQUAL "Ninja"))
-			enable_language( Fortran )
-
-			condor_std_exe_test( job_ckpt_f-areauc_std "${CMAKE_Fortran_COMPILER}" "job_ckpt_f-areauc_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_ckpt_f-areauc_std "area under the curve?" "stduniv;framework;quick;full;ckpt" )
-
-			condor_std_exe_test( job_ckpt_f-floats_std "${CMAKE_Fortran_COMPILER}" "job_ckpt_f-floats_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_ckpt_f-floats_std "ckpt/restore floating point registers" "stduniv;framework;quick;full;ckpt" )
-
-			condor_std_exe_test( job_ckpt_f-integers_std "${CMAKE_Fortran_COMPILER}" "job_ckpt_f-integers_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_ckpt_f-integers_std "ckpt/restore integer registers" "stduniv;framework;quick;full;ckpt" )
-
-			condor_std_exe_test( job_ckpt_f-printer_std "${CMAKE_Fortran_COMPILER}" "job_ckpt_f-printer_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_ckpt_f-printer_std "FIXME" "stduniv;framework;quick;full;ckpt" )
-
-			condor_std_exe_test( job_ckpt_f-reader_std "${CMAKE_Fortran_COMPILER}" "job_ckpt_f-reader_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_ckpt_f-reader_std "FIXME" "stduniv;framework;quick;full;ckpt" )
-
-			condor_std_exe_test( job_rsc_f-direct-write_std "${CMAKE_Fortran_COMPILER}" "job_rsc_f-direct-write_std.f" "${STDU_LDD_FLAGS}" )
-			condor_pl_test( job_rsc_f-direct-write_std "FIXME" "stduniv;framework;quick;full;ckpt" )
-		endif()
-
-
-		if( ${SYS_ARCH} MATCHES "X86_64" )
-			if(  "${RPM_SYSTEM_NAME}" MATCHES "rhel5"
-			  OR "${RPM_SYSTEM_NAME}" MATCHES "rhel6"
-			  OR "${RPM_SYSTEM_NAME}" MATCHES "rhel7"
-			  OR "${RPM_SYSTEM_NAME}" MATCHES "sl6"
-			  OR "${RPM_SYSTEM_NAME}" MATCHES "sl7"
-			  OR "${RPM_SYSTEM_NAME}" MATCHES "centos7"
-			  OR "${SYSTEM_NAME}" MATCHES "Debian-6"
-			  OR "${SYSTEM_NAME}" MATCHES "Debian-7"
-			  OR "${SYSTEM_NAME}" MATCHES "Debian-8"
-			  OR "${SYSTEM_NAME}" MATCHES "Ubuntu-14" )
-				condor_pl_test(job_ligo_x86-64-chkpttst "Special LIGO test" "core;quick;full;quicknolink")
-			endif()
-		endif()
-
-	endif(STD_UNIVERSE)
 
 	##########################################################
 	# platform specific tests
@@ -273,8 +169,8 @@ if (BUILD_TESTING)
 		condor_pl_test (job_basic_pytest "Basic pytest suite test, runs a simple job" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest")
 
 		# Tests that require the python bindings.
-		condor_pl_test (cmd_curl_plugin "Testing various curl_plugin functions" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest")
-		condor_pl_test (cmd_curl_plugin_multifile_success "Successful multifile_curl_plugin many file download" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest")
+		condor_pl_test (cmd_curl_plugin "Testing various curl_plugin functions" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest;src/condor_tests/x_echostring.pl")
+		condor_pl_test (cmd_curl_plugin_multifile_success "Successful multifile_curl_plugin many file download" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest;src/condor_tests/cmd_curl_plugin_multifile_success.py")
 		condor_pl_test (cmd_curl_plugin_multifile_failure "Failed multifile_curl_plugin many file download" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest")
 		condor_pl_test (job_late_materialize_py "Late materialization of jobs via python" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest;src/condor_tests/x_sleep.pl")
 		condor_pl_test (cmd_drain_policies "condor_drain and job policies" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/pytest;src/condor_tests/x_sleep.pl")
@@ -310,59 +206,6 @@ if (BUILD_TESTING)
 		condor_pl_test(job_vmu_ckpt "VM Universe checkpoint test" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/job_vmu_ckpt.sh")
 	endif(HAVE_VMWARE)
 
-	if (STD_UNIVERSE)
-		# C-Tests
-
-		if(${SYS_ARCH} MATCHES "X86_64")
-			condor_pl_test(job_ckpt_lfs_std "Do we handle files with larger than 32-bit file offsets?" "stduniv;quick;full")
-		endif()
-
-		condor_pl_test(job_core_compressfiles_std "Do we handle compressed files made by standard jobs?" "stduniv;core;quick;full")
-		condor_pl_test(job_core_coredump_std "Do we handle core files made by standard jobs?" "stduniv;framework;quick;full")
-		condor_pl_test(job_rsc_binary-io_std "Do we handle binary io in standard jobs?" "stduniv;framework;quick;full")
-
-		# C++-Tests
-		condor_pl_test(job_ckpt_constructor_std "Test C++ global and local constructors" "stduniv;framework;quick;full")
-		condor_pl_test(job_ckpt_env_std "Is the environment restored after ckpt?" "stduniv;framework;quick;full")
-		condor_pl_test(job_ckpt_memory-file_std "Does the memory_file class work across ckpts?" "stduniv;framework;quick;full")
-		condor_pl_test(job_core-cpp_exception_std "C++ exception handling" "framework;quick;full")
-		condor_pl_test(job_core-cpp_mem-alloc_std "Memory allocation and constructors" "framework;quick;full")
-		condor_pl_test(job_rsc_fstream_std "Does the C++ fstream() interface work?" "stduniv;framework;quick;full")
-
-		# Common to both
-		condor_pl_test(job_core_bigenv_std "Standard job with an enormous environment" "framework;quick;full")
-		condor_pl_test(job_rsc_all-syscalls_std "Tests nearly all remote syscalls" "stduniv;framework;critical;quick;full;rsc")
-		condor_pl_test(job_rsc_hello_std "Tests various RSC I/O methods" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_fcntl_std "Does fcntl() work remotely?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_truncate_std "Can we truncate files with open() remotely?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_getdirentries_std "Does getdirentries() work remotely?" "stduniv;quick;full;rsc")
-		condor_pl_test(job_rsc_fgets_std "job_rsc_fgets_std" "stduniv;framework;long;full;rsc")
-		condor_pl_test(job_rsc_fread_std "Does fread() work remotely?" "stduniv;framework;long;full;rsc")
-		condor_pl_test(job_rsc_ftell_std "Does ftell() work remotely?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_open-N-serial_std "Can we open/close N files in serial?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_atexit_std "Does atexit() still work?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_stat_std "Does stat() work remotely?" "stduniv;framework;quick;full;rsc")
-		condor_pl_test(job_rsc_zero-calloc_std "Does calloc() allocated zero'ed-out memory?" "stduniv;framework;long;full;rsc")
-		condor_pl_test(job_ckpt_combo-sanity_std "combination of sbrk() and register inspection for overall ckpt sanity" "stduniv;long;full;rsc")
-		condor_pl_test(job_ckpt_io-async_std "file I/O during async ckpt signals" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_io-buffer-async_std "file buffing during async ckpt/restore" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_io-buffer-async-compressed_std "file buffing during async ckpt/restore with compression" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_stack_std "ckpt/restore function call stack" "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_standalone_std "standalone ckpt/restore function call stack" "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_nscd_std "Test if we handle nscd correctly." "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_floats_std "ckpt/restore floating point registers" "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_floats-async_std "checks floating point ops with async ckpts" "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_integers_std "ckpt/restore integer registers" "stduniv;framework;quick;full;ckpt")
-		condor_pl_test(job_ckpt_signals_std "ckpt/restore signal state" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_dup_std "ckpt/restore file table state with dup() calls" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_longjmp_std "Can we ckpt while longjmp()'ing around?" "stduniv;long;full;ckpt")
-		condor_pl_test(job_ckpt_gettimeofday_std "ckpt/restore current time-of-day" "stduniv;long;full;ckpt")
-		condor_pl_test(job_ckpt_open-async-ckpt_std "async ckpt/restore of open file table" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_open-N-parallel_std "ckpt/restore of N files open at once" "stduniv;quick;full;ckpt")
-		#condor_pl_test(job_ckpt_getrusage-loop_std "async ckpt/restore of open file table" "stduniv;quick;full;ckpt")
-		condor_pl_test(job_ckpt_socket-support_std "Do we support sockets around ckpt/restore?" "stduniv;long;full;ckpt")
-	endif(STD_UNIVERSE)
-
 	##########################################################
 	# now all the common tests.
 
@@ -371,7 +214,8 @@ if (BUILD_TESTING)
 	add_dependencies(lib_unit_tests condor_unit_tests)
 	condor_pl_test(classad_unit_test "Run classads Unit Tests" "core;quick;full;quicknolink" CTEST DEPENDS "${CMAKE_BINARY_DIR}/src/condor_tests/classad_unit_tester")
 	add_dependencies(classad_unit_test classad_unit_tester)
-	#condor_pl_test(classad_cache_unit_test "Run classads parse test with and without classad caching" "core;quick;full;quicknolink")
+	condor_pl_test(classad_cache_unit_test "Run classads parse test with and without classad caching" "core;quick;full;quicknolink" CTEST DEPENDS "${CMAKE_BINARY_DIR}/src/condor_tests/_test_classad_parse")
+	add_dependencies(classad_unit_test _test_classad_parse)
 	condor_pl_test(unit_test_async_fread "Run MyAsyncFileReader Unit Tests" "core;quick;full;quicknolink" CTEST DEPENDS "${CMAKE_BINARY_DIR}/src/condor_tests/async_freader_tests")
 	add_dependencies(unit_test_async_fread async_freader_tests)
 	#need to copy the underlying exe into condor_tests directory before these tests can be run
@@ -840,6 +684,8 @@ if (BUILD_TESTING)
 	condor_pl_test(lib_ccb_schedd "Test of submit daemons using CCB." "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/x_sleep.pl")
 	condor_pl_test(lib_ccb_schedd_privnet "Test of submit daemons using CCB in private net." "core;quick;full;quicknolink" CTEST)
 	condor_pl_test(lib_job_router_local "Test of JobRouter routing to local universe." "core;quick;full;quicknolink" CTEST)
+	condor_pl_test(job_router_basic "Basic test of JobRouter routing." "core;quick;full;quicknolink" CTEST)
+	condor_pl_test(job_router_xform "Test of JobRouter transforms." "core;quick;full;quicknolink" CTEST)
 	condor_pl_test(condor_view_classad_types "CONDOR_VIEW_CLASSAD_TYPES test" "core;quick;full;quicknolink" CTEST)
 	condor_pl_test(job_partitionable_basic_van "Test basic partitionable slot capability" "core;quick;full;quicknolink" CTEST)
 	condor_pl_test(job_hgq_negfail_basic_van "Test basic Hierarchical Group Quota behavior" "core;quick;full;quicknolink" CTEST DEPENDS "src/condor_tests/x_sleep.pl")

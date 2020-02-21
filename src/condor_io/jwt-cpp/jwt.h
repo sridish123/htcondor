@@ -13,8 +13,14 @@
 #include <openssl/err.h>
 
 //If openssl version less than 1.1
-#if OPENSSL_VERSION_NUMBER < 269484032
+#if OPENSSL_VERSION_NUMBER < 269484032 || defined(LIBRESSL_VERSION_NUMBER)
 #define OPENSSL10
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x01000000L
+#define RSA_padding_add_PKCS1_PSS_mgf1(rsa, EM, mHash, Hash, mgf1Hash, sLen) \
+    RSA_padding_add_PKCS1_PSS(rsa, EM, mHash, Hash, sLen)
+#define RSA_verify_PKCS1_PSS_mgf1(rsa, mHash, Hash, mgf1Hash, EM, sLen) \
+    RSA_verify_PKCS1_PSS(rsa, mHash, Hash, EM, sLen)
 #endif
 
 #ifndef JWT_CLAIM_EXPLICIT
@@ -1092,25 +1098,13 @@ namespace jwt {
 				switch (str.size() % 4) {
 				case 1:
 					str += alphabet::base64url::fill();
-#ifdef __cpp_attributes
-#if __has_cpp_attribute(fallthrough)
-					[[fallthrough]];
-#endif
-#endif
+					//@fallthrough@
 				case 2:
 					str += alphabet::base64url::fill();
-#ifdef __cpp_attributes
-#if __has_cpp_attribute(fallthrough)
-					[[fallthrough]];
-#endif
-#endif
+					//@fallthrough@
 				case 3:
 					str += alphabet::base64url::fill();
-#ifdef __cpp_attributes  
-#if __has_cpp_attribute(fallthrough)
-					[[fallthrough]];
-#endif
-#endif
+					//@fallthrough@
 				default:
 					break;
 				}

@@ -1444,7 +1444,7 @@ Parse_macros(
 
 	bool is_submit = (fnSubmit != NULL);
 	MACRO_SOURCE& FileSource = ms.source();
-	const char * source_file = macro_source_filename(FileSource, macro_set);
+	const char * source_file = ms.source_name(macro_set);
 	const char * source_type = is_submit ? "Submit file" : "Config source";
 
 	while (true) {
@@ -1741,6 +1741,15 @@ Parse_macros(
 				goto cleanup;
 			}
 		} else if (is_include) {
+			// if the caller disables the include keyword (late materialization), then just fail here
+			if (options & CONFIG_OPT_NO_INCLUDE_FILE) {
+				macro_set.push_error(stderr, retval, source_type,
+					"Error \"%s\", Line %d, include statement is not allowed in this context\n",
+					source_file, FileSource.line);
+				retval = -1;
+				goto cleanup;
+			}
+
 			MACRO_SOURCE InnerSource;
 			FILE* fp = NULL;
 			bool is_into    = 0 != (is_include & CONFIG_INCLUDE_OPTION_INTO);
@@ -2235,7 +2244,7 @@ void insert_macro(const char *name, const char *value, MACRO_SET & set, const MA
 				pmeta->matches_default = same_param_value(def_value, pitem->raw_value, is_path);
 			}
 		}
-		if (tvalue) free(tvalue);
+		free(tvalue);
 		return;
 	}
 
@@ -3342,23 +3351,23 @@ static const char * evaluate_macro_func (
 			if (len_arg) *len_arg++ = 0;
 
 			int start_pos = 0;
-			if (start_arg) {
-				const char * arg = lookup_macro(start_arg, macro_set, ctx);
-				if ( ! arg) arg = start_arg;
 
-				char * tmp3 = NULL;
-				if (strchr(arg, '$')) {
-					tmp3 = expand_macro(arg, macro_set, ctx);
-					arg = tmp3;
-				}
+			const char * arg = lookup_macro(start_arg, macro_set, ctx);
+			if ( ! arg) arg = start_arg;
 
-				long long index = -1;
-				if ( ! string_is_long_param(arg, index) || index < INT_MIN || index >= INT_MAX) {
-					EXCEPT( "$SUBSTR() macro: %s is invalid start index!", arg );
-				}
-				start_pos = (int)index;
-				if (tmp3) {free(tmp3);} tmp3 = NULL;
+			char * tmp3 = NULL;
+			if (strchr(arg, '$')) {
+				tmp3 = expand_macro(arg, macro_set, ctx);
+				arg = tmp3;
 			}
+
+			long long index = -1;
+			if ( ! string_is_long_param(arg, index) || index < INT_MIN || index >= INT_MAX) {
+				EXCEPT( "$SUBSTR() macro: %s is invalid start index!", arg );
+			}
+			start_pos = (int)index;
+			if (tmp3) {free(tmp3);} tmp3 = NULL;
+
 
 			int sub_len = INT_MAX/2;
 			if (len_arg) {

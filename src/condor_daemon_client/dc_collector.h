@@ -105,6 +105,15 @@ public:
 
 	bool useTCPForUpdates() { return use_tcp; }
 
+	time_t getStartTime() { return startTime; }
+	time_t getReconfigTime() { return reconfigTime; }
+
+		/** Request that the collector get an identity token from the specified
+		 *  schedd.
+		 */
+	bool requestScheddToken(const std::string &schedd_name,
+		const std::vector<std::string> &authz_bounding_set,
+		int lifetime, std::string &token, CondorError &err);
 
 private:
 

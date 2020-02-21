@@ -353,8 +353,8 @@ void TimerManager::CancelAllTimers()
 int
 TimerManager::Timeout(int * pNumFired /*= NULL*/, double * pruntime /*=NULL*/)
 {
-	int				result, timer_check_cntr;
-	time_t			now, time_sample;
+	int				result;
+	time_t			now;
 	int				num_fires = 0;	// num of handlers called in this timeout
 
     if (pNumFired) *pNumFired = 0;
@@ -379,7 +379,6 @@ TimerManager::Timeout(int * pNumFired /*= NULL*/, double * pruntime /*=NULL*/)
 	}
 
 	time(&now);
-	timer_check_cntr = 0;
 
 	DumpTimerList(D_DAEMONCORE | D_FULLDEBUG);
 
@@ -443,31 +442,6 @@ TimerManager::Timeout(int * pNumFired /*= NULL*/, double * pruntime /*=NULL*/)
         }  // end of block if max_timer_events_per_cycle == INT_MAX
 
         num_fires++;
-
-		// In some cases, resuming from a suspend can cause the system
-		// clock to become temporarily skewed, causing crazy things to 
-		// happen with our timers (particularly for sending updates to
-		// the collector). So, to correct for such skews, we routinely
-		// check to make sure that 'now' is not in the future.
-
-		timer_check_cntr++; 
-
-			// since time() is somewhat expensive, we 
-			// only check every 10 times we loop 
-			
-		if ( timer_check_cntr > 10 ) {
-
-			timer_check_cntr = 0;
-
-			time(&time_sample);
-			if (now > time_sample) {
-				dprintf(D_ALWAYS, "DaemonCore: Clock skew detected "
-					"(time=%ld; now=%ld). Resetting TimerManager's "
-					"notion of 'now'\n", (long) time_sample, 
-					(long) now);
-				now = time_sample;
-			}
-		}
 
 		// Update curr_dataptr for GetDataPtr()
 		curr_dataptr = &(in_timeout->data_ptr);

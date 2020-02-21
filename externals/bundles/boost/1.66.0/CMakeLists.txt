@@ -58,7 +58,7 @@ else (WINDOWS)
 	endif()
 
 	# The following is helpful if you are trying to debug cmake find module
-	set (Boost_DEBUG TRUE)
+    # set (Boost_DEBUG TRUE)
 	message (STATUS "Boost components: ${BOOST_COMPONENTS}" )
 
     message (STATUS "SYSTEM_NAME: ${SYSTEM_NAME}" )
@@ -76,7 +76,7 @@ else (WINDOWS)
                 set(USE_SYSTEM_BOOST True)
             endif()
         endif()
-        if (${SYSTEM_NAME} MATCHES "Debian" OR ${SYSTEM_NAME} MATCHES "Ubuntu")
+        if (${SYSTEM_NAME} MATCHES "Debian" OR ${SYSTEM_NAME} MATCHES "Ubuntu" OR ${SYSTEM_NAME} MATCHES "rhel8" OR ${SYSTEM_NAME} MATCHES "centos8")
             set(USE_SYSTEM_BOOST True)
         endif()
         if (${SYSTEM_NAME} MATCHES "fc")

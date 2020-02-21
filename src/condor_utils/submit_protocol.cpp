@@ -20,7 +20,6 @@
 #include "condor_common.h"
 #include "condor_config.h"
 #include "condor_debug.h"
-#include "condor_network.h"
 #include "spooled_job_files.h"
 #include "subsystem_info.h"
 #include "env.h"
@@ -53,7 +52,6 @@
 #include "extArray.h"
 #include "MyString.h"
 #include "string_list.h"
-#include "which.h"
 #include "sig_name.h"
 #include "print_wrapped_text.h"
 #include "dc_schedd.h"
@@ -129,12 +127,19 @@ int ActualScheddQ::init_capabilities() {
 			allows_late = has_late = false;
 		} else {
 			has_late = true; // schedd knows about late materialize
+			int version = 1;
+			if (capabilities.LookupInteger("LateMaterializeVersion", version) && version < 128) {
+				late_ver = (char)version;
+			} else {
+				late_ver = 1;
+			}
 		}
 	}
 	return rval;
 }
-bool ActualScheddQ::has_late_materialize() {
+bool ActualScheddQ::has_late_materialize(int &ver) {
 	init_capabilities();
+	ver = late_ver;
 	return has_late;
 }
 bool ActualScheddQ::allows_late_materialize() {

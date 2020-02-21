@@ -18,7 +18,11 @@
 
 
 install ( FILES condor_top DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
-#install ( FILES Condor.pm CondorUtils.pm CondorTest.pm CondorPersonal.pm DESTINATION ${C_LIB} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
+install ( FILES classad_eval DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
+
+if (WINDOWS)
+  install ( FILES box_plugin.py gdrive_plugin.py onedrive_plugin.py DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
+endif(WINDOWS)
 
 if (NOT WINDOWS)
 
@@ -45,12 +49,6 @@ if (NOT WINDOWS)
         install ( FILES linux_kernel_tuning DESTINATION ${C_LIBEXEC} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
         install ( FILES condor_aklog DESTINATION ${C_SBIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
     endif(LINUX)
-
-	if (STD_UNIVERSE)
-		install ( FILES condor_compile DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
-		install ( FILES ld DESTINATION ${C_LIB} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
-		install ( FILES ld DESTINATION ${C_LIB} RENAME real-ld PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
-	endif(STD_UNIVERSE)
 
 	install ( FILES condor_qsub DESTINATION ${C_BIN} PERMISSIONS ${CONDOR_SCRIPT_PERMS} )
 

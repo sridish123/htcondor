@@ -316,7 +316,7 @@ UNIX_GET_CRED(const char *user, const char *domain)
 	// create filenames
 	MyString filename;
 	filename.formatstr("%s%c%s.cred", cred_dir.ptr(), DIR_DELIM_CHAR, user);
-	dprintf(D_ALWAYS, "CERN: reading data from %s\n", filename.c_str());
+	dprintf(D_ALWAYS, "CREDS: reading data from %s\n", filename.c_str());
 
 	// read the file (fourth argument "true" means as_root)
 	unsigned char *buf = 0;
@@ -840,7 +840,7 @@ int store_cred_handler(void *, int /*i*/, Stream *s)
 {
 	char *user = NULL;
 	char *pw = NULL;
-	int mode;
+	int mode = STORE_CRED_FIRST_MODE - 1;
 	int result;
 	int answer = FAILURE;
 	int cred_modified = false;
@@ -873,7 +873,13 @@ int store_cred_handler(void *, int /*i*/, Stream *s)
 
 	if( result == FALSE ) {
 		dprintf(D_ALWAYS, "store_cred: code_store_cred failed.\n");
-		return FALSE;
+		goto cleanup_and_exit;
+	}
+
+	if (mode < STORE_CRED_FIRST_MODE || mode > STORE_CRED_LAST_MODE) {
+		dprintf(D_ALWAYS, "store_cred: %d is not a valid mode\n", mode);
+		answer = FAILURE;
+		goto cleanup_and_exit;
 	}
 
 	if ( user ) {
@@ -990,6 +996,7 @@ int store_cred_handler(void *, int /*i*/, Stream *s)
 	}
 #endif // WIN32
 
+cleanup_and_exit:
 	if (pw) {
 		SecureZeroMemory(pw, strlen(pw));
 		free(pw);

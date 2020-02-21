@@ -27,7 +27,6 @@
 #include "status_types.h"
 #include "totals.h"
 
-#include "condor_collector.h"
 #include "collector_engine.h"
 #include "hashkey.h"
 
@@ -35,6 +34,9 @@
 #include "condor_universe.h"
 #include "ipv6_hostname.h"
 #include "condor_threads.h"
+
+#include "condor_claimid_parser.h"
+#include "authentication.h"
 
 #include "collector.h"
 
@@ -47,6 +49,8 @@
 #ifdef TRACK_QUERIES_BY_SUBSYS
 #include "subsystem_info.h" // so we can track query by client subsys
 #endif
+
+#include "dc_schedd.h"
 
 using std::vector;
 using std::string;
@@ -89,7 +93,6 @@ int CollectorDaemon::startdNumAds;
 
 ClassAd* CollectorDaemon::ad = NULL;
 CollectorList* CollectorDaemon::collectorsToUpdate = NULL;
-DCCollector* CollectorDaemon::worldCollector = NULL;
 int CollectorDaemon::UpdateTimerId;
 
 OfflineCollectorPlugin CollectorDaemon::offline_plugin_;
@@ -98,9 +101,10 @@ StringList *viewCollectorTypes;
 
 CCBServer *CollectorDaemon::m_ccb_server;
 bool CollectorDaemon::filterAbsentAds;
+bool CollectorDaemon::forwardClaimedPrivateAds = true;
 
-Queue<CollectorDaemon::pending_query_entry_t *> CollectorDaemon::query_queue_high_prio;
-Queue<CollectorDaemon::pending_query_entry_t *> CollectorDaemon::query_queue_low_prio;
+std::queue<CollectorDaemon::pending_query_entry_t *> CollectorDaemon::query_queue_high_prio;
+std::queue<CollectorDaemon::pending_query_entry_t *> CollectorDaemon::query_queue_low_prio;
 int CollectorDaemon::ReaperId = -1;
 int CollectorDaemon::max_query_workers = 4;
 int CollectorDaemon::reserved_for_highprio_query_workers = 1;
@@ -123,6 +127,177 @@ extern "C"
 {
 	void schedule_event ( int month, int day, int hour, int minute, int second, SIGNAL_HANDLER );
 }
+
+
+struct TokenRequestContinuation {
+	std::unique_ptr<DCSchedd> m_schedd;
+	std::string m_peer_location;
+	ReliSock *m_requester;
+
+	static
+	void finish(bool success, const std::string &token, const CondorError &err, void *misc_data)
+	{
+		auto continuation_ptr = static_cast<TokenRequestContinuation*>(misc_data);
+		std::unique_ptr<TokenRequestContinuation> continuation(continuation_ptr);
+		classad::ClassAd result_ad;
+		if (!success) {
+			result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+			result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+			if (!putClassAd(continuation->m_requester, result_ad) ||
+				!continuation->m_requester->end_of_message())
+			{
+				dprintf(D_FULLDEBUG, "schedd_token_request: failed to send error"
+					" response ad to client.\n");
+			}
+			return;
+		}
+
+		result_ad.InsertAttr(ATTR_SEC_TOKEN, token);
+		dprintf(D_ALWAYS, "Token issued for user %s from %s for schedd %s.\n",
+			continuation->m_requester->getFullyQualifiedUser(),
+			continuation->m_peer_location.c_str(),
+			continuation->m_schedd->addr());
+
+		if (!putClassAd(continuation->m_requester, result_ad) ||
+			!continuation->m_requester->end_of_message())
+		{
+			dprintf(D_FULLDEBUG, "schedd_token_request: failed to send token back "
+				"to peer %s.\n",
+				continuation->m_peer_location.c_str());
+			return;
+		}
+		return;
+	}
+};
+
+
+int
+CollectorDaemon::schedd_token_request(Service *, int, Stream *stream)
+{
+	classad::ClassAd ad;
+	if (!getClassAd(stream, ad) ||
+		!stream->end_of_message())
+	{
+		dprintf(D_FULLDEBUG, "schedd_token_request: failed to read input from client\n");
+		return false;
+	}
+
+	int error_code = 0;
+	std::string error_string;
+
+	const char *fqu = static_cast<Sock*>(stream)->getFullyQualifiedUser();
+	if (!fqu || !strlen(fqu)) {
+		error_code = 1;
+		error_string = "Missing requester identity.";
+	}
+
+	std::string authz_list_str;
+	ad.EvaluateAttrString(ATTR_SEC_LIMIT_AUTHORIZATION, authz_list_str);
+	std::vector<std::string> authz_bounding_set;
+	if (!authz_list_str.empty())
+	{
+		StringList authz_list(authz_list_str.c_str());
+		authz_list.rewind();
+		const char *authz_name;
+		while ( (authz_name = authz_list.next()) ) {
+			authz_bounding_set.push_back(authz_name);
+		}
+	}
+	int requested_lifetime = -1;
+	if (!ad.EvaluateAttrInt(ATTR_SEC_TOKEN_LIFETIME, requested_lifetime)) {
+		requested_lifetime = -1;
+	}
+
+	if (!stream->get_encryption()) {
+		error_code = 3;
+		error_string = "Request to server was not encrypted.";
+	}
+
+		// Lookup schedd ad
+	std::string schedd_name;
+	if (!ad.EvaluateAttrString(ATTR_NAME, schedd_name)) {
+		error_code = 4;
+		error_string = "No schedd target specified.";
+	}
+	std::string capability, schedd_addr;
+	if (!error_code && !collector.walkConcreteTable(SCHEDD_AD, [&](compat_classad::ClassAd *ad) -> int {
+			std::string local_schedd_name;
+			if (!ad ||
+				!ad->EvaluateAttrString(ATTR_NAME, local_schedd_name) ||
+				(schedd_name != local_schedd_name) ||
+				!ad->EvaluateAttrString(ATTR_CAPABILITY, capability) ||
+				!ad->EvaluateAttrString(ATTR_MY_ADDRESS, schedd_addr))
+			{
+				return 1;
+			}
+			return 0;
+		}))
+	{
+		error_code = 4;
+		error_string = "Failed to walk the schedd table.";
+	}
+	if (!error_code && schedd_addr.empty()) {
+		error_code = 5;
+		formatstr(error_string, "Schedd %s is not known to the collector.",
+			schedd_name.c_str());
+	}
+
+	auto peer_location = static_cast<Sock*>(stream)->peer_ip_str();
+
+	classad::ClassAd result_ad;
+	classad::ClassAd request_ad;
+	if (error_code) {
+		result_ad.InsertAttr(ATTR_ERROR_STRING, error_string);
+		result_ad.InsertAttr(ATTR_ERROR_CODE, error_code);
+		// Bail out early if we had an error.
+		if (!putClassAd(stream, result_ad) ||
+			!stream->end_of_message())
+		{
+			dprintf(D_FULLDEBUG, "schedd_token_request: failed to send response ad to client.\n");
+			return false;
+		}
+		return true;
+	}
+
+		// Install the capability for this session.
+	ClaimIdParser cidp(capability.c_str());
+	auto secman = daemonCore->getSecMan();
+	secman->CreateNonNegotiatedSecuritySession(
+		CLIENT_PERM,
+		cidp.secSessionId(),
+		cidp.secSessionKey(),
+		cidp.secSessionInfo(),
+		SUBMIT_SIDE_MATCHSESSION_FQU,
+		schedd_addr.c_str(),
+		1200,
+		nullptr
+	);
+
+
+	std::unique_ptr<DCSchedd> schedd(new DCSchedd(schedd_addr.c_str()));
+	std::unique_ptr<TokenRequestContinuation> continuation(new TokenRequestContinuation());
+	continuation->m_schedd = std::move(schedd);
+	continuation->m_peer_location = peer_location;
+	continuation->m_requester = static_cast<ReliSock*>(stream);
+
+	CondorError err;
+	if (!continuation->m_schedd->requestImpersonationTokenAsync(fqu, authz_bounding_set,
+		requested_lifetime,
+		static_cast<ImpersonationTokenCallbackType*>(&TokenRequestContinuation::finish),
+		continuation.get(), err))
+	{
+		result_ad.InsertAttr(ATTR_ERROR_CODE, err.code());
+		result_ad.InsertAttr(ATTR_ERROR_STRING, err.getFullText());
+		if (!putClassAd(stream, result_ad) || !stream->end_of_message())
+		{
+			dprintf(D_FULLDEBUG, "schedd_token_request: failed to send error response"
+				" ad to client.\n");
+		}
+		return false;
+	}
+	continuation.release();
+	return KEEP_STREAM;
+}
  
 //----------------------------------------------------------------
 
@@ -136,21 +311,7 @@ void CollectorDaemon::Init()
 	viewCollectorTypes = NULL;
 	UpdateTimerId=-1;
 	collectorsToUpdate = NULL;
-	worldCollector = NULL;
 	Config();
-
-	/* TODO: Eval notes and refactor when time permits.
-	 * 
-	 * per-review <tstclair> this is a really unintuive and I would consider unclean.
-	 * Maybe if we care about cron like events we should develop a clean mechanism
-	 * which doesn't indirectly hook into daemon-core timers. */
-
-    // setup routine to report to condor developers
-    // schedule reports to developers
-	schedule_event( -1, 1,  0, 0, 0, reportToDevelopers );
-	schedule_event( -1, 8,  0, 0, 0, reportToDevelopers );
-	schedule_event( -1, 15, 0, 0, 0, reportToDevelopers );
-	schedule_event( -1, 23, 0, 0, 0, reportToDevelopers );
 
 	// install command handlers for queries
 	daemonCore->Register_CommandWithPayload(QUERY_STARTD_ADS,"QUERY_STARTD_ADS",
@@ -256,11 +417,17 @@ void CollectorDaemon::Init()
 		(CommandHandler)receive_update,"receive_update",NULL,DAEMON);
 	daemonCore->Register_CommandWithPayload(UPDATE_ACCOUNTING_AD,"UPDATE_ACCOUNTING_AD",
 		(CommandHandler)receive_update,"receive_update",NULL,NEGOTIATOR);
+	std::vector<DCpermission> allow_perms{ALLOW};
 		// Users may advertise their own submitter ads.  If they do, there are additional
 		// restrictions to their contents (such as the user must be authenticated, not
 		// unmapped, and must match the Owner attribute).
 	daemonCore->Register_CommandWithPayload(UPDATE_OWN_SUBMITTOR_AD,"UPDATE_OWN_SUBMITTOR_AD",
-		(CommandHandler)receive_update,"receive_update",NULL,ALLOW);
+		(CommandHandler)receive_update,"receive_update", nullptr , DAEMON, D_COMMAND, false,
+		0, &allow_perms);
+		//
+	daemonCore->Register_CommandWithPayload(IMPERSONATION_TOKEN_REQUEST, "IMPERSONATION_TOKEN_REQUEST",
+		(CommandHandler)schedd_token_request, "schedd_token_request", nullptr, DAEMON,
+		D_COMMAND, true, 0, &allow_perms);
 
     // install command handlers for updates with acknowledgement
 
@@ -478,13 +645,13 @@ int CollectorDaemon::receive_query_cedar(Service* /*s*/,
 			  (active_query_workers + pending_query_workers <  max_query_workers + max_pending_query_workers - reserved_for_highprio_query_workers))
 			 ||
 			 ((high_prio_query==true) &&
-			  (active_query_workers - reserved_for_highprio_query_workers + query_queue_high_prio.Length() <  max_query_workers + max_pending_query_workers))
+			  (active_query_workers - reserved_for_highprio_query_workers + (int)query_queue_high_prio.size() <  max_query_workers + max_pending_query_workers))
 		   )
 		{
 			if ( high_prio_query ) {
-				query_queue_high_prio.enqueue( query_entry );
+				query_queue_high_prio.push( query_entry );
 			} else {
-				query_queue_low_prio.enqueue( query_entry );
+				query_queue_low_prio.push( query_entry );
 			}
 			did_we_fork = QueryReaper(NULL, -1, -1);
 			cad = NULL; // set this to NULL so we won't delete it below; our reaper will remove it
@@ -550,24 +717,25 @@ int CollectorDaemon::QueryReaper(Service *, int pid, int /* exit_status */ )
 		// Pull of an entry from our high_prio queue; if nothing there, grab
 		// one from our low prio queue.  Ignore "stale" (old) requests.
 
-		high_prio_query = query_queue_high_prio.Length() > 0;
+		high_prio_query = query_queue_high_prio.size() > 0;
 
 		// Dequeue a high priority entry if worker slots available.
+		// If high priority queue is empty, dequeue a low priority entry
+		// if a worker slot (minus those reserved only for high prioirty) is available.
 		if ( active_query_workers < max_query_workers ) {
-			query_queue_high_prio.dequeue(query_entry);
-			// If high priority queue is empty, dequeue a low priority entry
-			// if a worker slot (minus those reserved only for high prioirty) is available.
-			if ((query_entry == NULL) &&
-			    (active_query_workers < (max_query_workers - reserved_for_highprio_query_workers)))
-			{
-				query_queue_low_prio.dequeue(query_entry);
+			if ( !query_queue_high_prio.empty() ) {
+				query_entry = query_queue_high_prio.front();
+				query_queue_high_prio.pop();
+			} else if ( !query_queue_low_prio.empty() && active_query_workers < (max_query_workers - reserved_for_highprio_query_workers) ) {
+				query_entry = query_queue_low_prio.front();
+				query_queue_low_prio.pop();
 			}
 		}
 
 		// Update our pending stats counters.  Note we need to do this regardless
 		// of if query_entry==NULL, since we may be here because something was either
 		// recently added into the queue, or recently removed from the queue.
-		pending_query_workers = query_queue_high_prio.Length() + query_queue_low_prio.Length();
+		pending_query_workers = query_queue_high_prio.size() + query_queue_low_prio.size();
 		collectorStats.global.PendingQueries = pending_query_workers;
 
 		// If query_entry==NULL, we are not forking anything now, so we're done for now
@@ -674,7 +842,9 @@ int CollectorDaemon::receive_query_cedar_worker_thread(void *in_query_entry, Str
 	auto *verinfo = sock->get_peer_version();
 	if (verinfo && verinfo->built_since_version(8, 9, 3)) {
 		auto addr = static_cast<ReliSock*>(sock)->peer_addr();
-		if (USER_AUTH_SUCCESS == daemonCore->Verify("send private ads", NEGOTIATOR, addr, static_cast<ReliSock*>(sock)->getFullyQualifiedUser())) {
+			// Given failure here is non-fatal, do not log at D_ALWAYS.
+		if (static_cast<Sock*>(sock)->isAuthorizationInBoundingSet("NEGOTIATOR") &&
+			(USER_AUTH_SUCCESS == daemonCore->Verify("send private ads", NEGOTIATOR, addr, static_cast<ReliSock*>(sock)->getFullyQualifiedUser(), D_SECURITY|D_FULLDEBUG))) {
 			filter_private_ads = false;
 		}
 	}
@@ -1042,18 +1212,22 @@ int CollectorDaemon::receive_invalidation(Service* /*s*/,
 
 
 collector_runtime_probe CollectorEngine_receive_update_runtime;
+#ifdef PROFILE_RECEIVE_UPDATE
 collector_runtime_probe CollectorEngine_ru_pre_collect_runtime;
 collector_runtime_probe CollectorEngine_ru_collect_runtime;
 collector_runtime_probe CollectorEngine_ru_plugins_runtime;
 collector_runtime_probe CollectorEngine_ru_forward_runtime;
 collector_runtime_probe CollectorEngine_ru_stash_socket_runtime;
+#endif
 
 int CollectorDaemon::receive_update(Service* /*s*/, int command, Stream* sock)
 {
     int	insert;
 	ClassAd *cad;
 	_condor_auto_accum_runtime<collector_runtime_probe> rt(CollectorEngine_receive_update_runtime);
+#ifdef PROFILE_RECEIVE_UPDATE
 	double rt_last = rt.begin;
+#endif
 
 	daemonCore->dc_stats.AddToAnyProbe("UpdatesReceived", 1);
 
@@ -1063,7 +1237,9 @@ int CollectorDaemon::receive_update(Service* /*s*/, int command, Stream* sock)
 	// get endpoint
 	condor_sockaddr from = ((Sock*)sock)->peer_addr();
 
+#ifdef PROFILE_RECEIVE_UPDATE
 	CollectorEngine_ru_pre_collect_runtime += rt.tick(rt_last);
+#endif
     // process the given command
 	if (!(cad = collector.collect (command,(Sock*)sock,from,insert)))
 	{
@@ -1086,10 +1262,18 @@ int CollectorDaemon::receive_update(Service* /*s*/, int command, Stream* sock)
 				command);
 		}
 
+		if (insert == -4)
+		{
+			// Rejected by COLLECTOR_REQUIREMENTS in validateClassad(),
+			// which already does all the necessary logging.
+		}
+
 		return FALSE;
 
 	}
+#ifdef PROFILE_RECEIVE_UPDATE
 	CollectorEngine_ru_collect_runtime += rt.tick(rt_last);
+#endif
 
 	/* let the off-line plug-in have at it */
 	offline_plugin_.update ( command, *cad );
@@ -1098,7 +1282,9 @@ int CollectorDaemon::receive_update(Service* /*s*/, int command, Stream* sock)
 	CollectorPluginManager::Update(command, *cad);
 #endif
 
+#ifdef PROFILE_RECEIVE_UPDATE
 	CollectorEngine_ru_plugins_runtime += rt.tick(rt_last);
+#endif
 
 	if (viewCollectorTypes) {
 		forward_classad_to_view_collector(command,
@@ -1108,12 +1294,16 @@ int CollectorDaemon::receive_update(Service* /*s*/, int command, Stream* sock)
         send_classad_to_sock(command, cad);
 	}
 
+#ifdef PROFILE_RECEIVE_UPDATE
 	CollectorEngine_ru_forward_runtime += rt.tick(rt_last);
+#endif
 
 	if( sock->type() == Stream::reli_sock ) {
 			// stash this socket for future updates...
 		int rv = stashSocket( (ReliSock *)sock );
+#ifdef PROFILE_RECEIVE_UPDATE
 		CollectorEngine_ru_stash_socket_runtime += rt.tick(rt_last);
+#endif
 		return rv;
 	}
 
@@ -1557,82 +1747,6 @@ int CollectorDaemon::reportMiniStartdScanFunc( ClassAd *cad )
     return iRet;
 }
 
-void CollectorDaemon::reportToDevelopers (void)
-{
-	char	buffer[128];
-	FILE	*mailer;
-	TrackTotals	totals( PP_STARTD_NORMAL );
-
-    // compute machine information
-    machinesTotal = 0;
-    machinesUnclaimed = 0;
-    machinesClaimed = 0;
-    machinesOwner = 0;
-    startdNumAds = 0;
-	ustatsAccum.Reset( );
-
-    if (!collector.walkHashTable (STARTD_AD, reportMiniStartdScanFunc)) {
-            dprintf (D_ALWAYS, "Error counting machines in devel report \n");
-    }
-
-	// If we don't have any machines reporting to us, bail out early
-	if (machinesTotal == 0) return;
-
-	// Accumulate our monthly maxes
-	ustatsMonthly.setMax( ustatsAccum );
-
-	sprintf( buffer, "Collector (%s):  Monthly report",
-			 get_local_fqdn().Value() );
-	if( ( mailer = email_developers_open(buffer) ) == NULL ) {
-		dprintf (D_ALWAYS, "Didn't send monthly report (couldn't open mailer)\n");		
-		return;
-	}
-
-	fprintf( mailer , "This Collector has the following IDs:\n");
-	fprintf( mailer , "    %s\n", CondorVersion() );
-	fprintf( mailer , "    %s\n\n", CondorPlatform() );
-
-	normalTotals = &totals;
-
-	if (!collector.walkHashTable (STARTD_AD, reportStartdScanFunc)) {
-		dprintf (D_ALWAYS, "Error making monthly report (startd scan) \n");
-	}
-
-	normalTotals = NULL;
-
-	// output totals summary to the mailer
-	totals.displayTotals( mailer, 20 );
-
-	// now output information about submitted jobs
-	submittorRunningJobs = 0;
-	submittorIdleJobs = 0;
-	submittorNumAds = 0;
-	if( !collector.walkHashTable( SUBMITTOR_AD, reportSubmittorScanFunc ) ) {
-		dprintf( D_ALWAYS, "Error making monthly report (submittor scan)\n" );
-	}
-	fprintf( mailer , "%20s\t%20s\n" , ATTR_RUNNING_JOBS , ATTR_IDLE_JOBS );
-	fprintf( mailer , "%20d\t%20d\n" , submittorRunningJobs,submittorIdleJobs );
-
-	// If we've got any, find the maxes
-	if ( ustatsMonthly.getCount( ) ) {
-		fprintf( mailer , "\n%20s\t%20s\n" , "Universe", "Max Running Jobs" );
-		int		univ;
-		for( univ=0;  univ<CONDOR_UNIVERSE_MAX;  univ++) {
-			const char	*name = ustatsMonthly.getName( univ );
-			if ( name ) {
-				fprintf( mailer, "%20s\t%20d\n",
-						 name, ustatsMonthly.getValue(univ) );
-			}
-		}
-		fprintf( mailer, "%20s\t%20d\n",
-				 "All", ustatsMonthly.getCount( ) );
-	}
-	ustatsMonthly.Reset( );
-	
-	email_close( mailer );
-	return;
-}
-	
 void CollectorDaemon::Config()
 {
 	dprintf(D_ALWAYS, "In CollectorDaemon::Config()\n");
@@ -1703,8 +1817,6 @@ void CollectorDaemon::Config()
 		EXCEPT( "Unable to determine my own address, aborting rather than hang.  You may need to make sure the shared port daemon is running first." );
 	}
 	Sinful mySinful( myself );
-	Sinful mySharedPortDaemonSinful = mySinful;
-	mySharedPortDaemonSinful.setSharedPortID( NULL );
 	while( collectorsToUpdate->next( daemon ) ) {
 		const char * current = daemon->addr();
 		if( current == NULL ) { continue; }
@@ -1714,57 +1826,8 @@ void CollectorDaemon::Config()
 			collectorsToUpdate->deleteCurrent();
 			continue;
 		}
-
-		// addressPointsToMe() doesn't know that the shared port daemon
-		// forwards connections that otherwise don't ask to be forwarded
-		// to the collector.  This means that COLLECTOR_HOST doesn't need
-		// to include ?sock=collector, but also that mySinful has a
-		// shared port address and currentSinful may not.  Since we know
-		// that we're trying to contact the collector here -- that is, we
-		// can tell we're not contacting the shared port daemon in the
-		// process of doing something else -- we can safely assume that
-		// any currentSinful without a shared port ID intends to connect
-		// to the default collector.
-		dprintf( D_FULLDEBUG, "checking for self: '%s', '%s, '%s'\n", mySinful.getSharedPortID(), mySharedPortDaemonSinful.getSinful(), currentSinful.getSinful() );
-		if( mySinful.getSharedPortID() != NULL && mySharedPortDaemonSinful.addressPointsToMe( currentSinful ) ) {
-			// Check to see if I'm the default collector.
-			std::string collectorSPID;
-			param( collectorSPID, "SHARED_PORT_DEFAULT_ID" );
-			if(! collectorSPID.size()) { collectorSPID = "collector"; }
-			if( strcmp( mySinful.getSharedPortID(), collectorSPID.c_str() ) == 0 ) {
-				dprintf( D_FULLDEBUG, "Skipping sending update to myself via my shared port daemon.\n" );
-				collectorsToUpdate->deleteCurrent();
-			}
-		}
 	}
 
-	tmp = param ("CONDOR_DEVELOPERS_COLLECTOR");
-	if (tmp == NULL) {
-#ifdef NO_PHONE_HOME
-		tmp = strdup("NONE");
-#else
-		tmp = strdup("condor.cs.wisc.edu");
-#endif
-	}
-	if (strcasecmp(tmp,"NONE") == 0 ) {
-		free(tmp);
-		tmp = NULL;
-	}
-
-	if( worldCollector ) {
-		// FIXME: WTF does this mean w/r/t using TCP for collectorsToUpdate?
-		// we should just delete it.  since we never use TCP
-		// for these updates, we don't really loose anything
-		// by destroying the object and recreating it...
-		delete worldCollector;
-		worldCollector = NULL;
-	}
-	if ( tmp ) {
-		worldCollector = new DCCollector( tmp, DCCollector::UDP );
-	}
-
-	free( tmp );
-	
 	int i = param_integer("COLLECTOR_UPDATE_INTERVAL",900); // default 15 min
 	if( UpdateTimerId < 0 ) {
 		UpdateTimerId = daemonCore->
@@ -1919,6 +1982,7 @@ void CollectorDaemon::Config()
 		filterAbsentAds = false;
 	}
 
+	forwardClaimedPrivateAds = param_boolean("COLLECTOR_FORWARD_CLAIMED_PRIVATE_ADS", true);
 	return;
 }
 
@@ -1940,7 +2004,6 @@ void CollectorDaemon::Exit()
 	free( CollectorName );
 	delete ad;
 	delete collectorsToUpdate;
-	delete worldCollector;
 	delete m_ccb_server;
 	return;
 }
@@ -1963,7 +2026,6 @@ void CollectorDaemon::Shutdown()
 	free( CollectorName );
 	delete ad;
 	delete collectorsToUpdate;
-	delete worldCollector;
 	delete m_ccb_server;
 	return;
 }
@@ -2037,20 +2099,6 @@ void CollectorDaemon::sendCollectorAd()
 	if ( num_updated != collectorsToUpdate->number() ) {
 		dprintf( D_ALWAYS, "Unable to send UPDATE_COLLECTOR_AD to all configured collectors\n");
 	}
-
-	// update the world ad, but only if there are some machines. You oftentimes
-	// see people run a collector on each macnine in their pool. Duh.
-	if ( worldCollector && machinesTotal > 0) {
-		char update_addr_default [] = "(null)";
-		const char *update_addr = worldCollector->addr();
-		if (!update_addr) update_addr = update_addr_default;
-		if( ! worldCollector->sendUpdate(UPDATE_COLLECTOR_AD, ad, collectorsToUpdate->getAdSeq(), NULL, false) ) {
-			dprintf( D_ALWAYS, "Can't send UPDATE_COLLECTOR_AD to collector "
-					 "(%s): %s\n", update_addr,
-					 worldCollector->error() );
-		}
-	}
-
 
 }
 
@@ -2135,6 +2183,12 @@ void CollectorDaemon::send_classad_to_sock(int cmd, ClassAd* theAd) {
 		AdNameHashKey hk;
 		ASSERT( makeStartdAdHashKey (hk, theAd) );
 		pvtAd = collector.lookup(STARTD_PVT_AD,hk);
+		if (pvtAd && !forwardClaimedPrivateAds){
+			std::string state;
+			if (theAd->LookupString(ATTR_STATE, state) && state == "Claimed") {
+				pvtAd = NULL;
+			}
+		}
 	}
 
 	bool should_forward = true;

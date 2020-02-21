@@ -22,6 +22,8 @@
 #ifndef __TOKEN_UTILS_H
 #define __TOKEN_UTILS_H
 
+class CondorError;
+
 namespace htcondor {
 
 	// Append a given token's contents to a given token file.
@@ -29,6 +31,13 @@ namespace htcondor {
 	// HTCondor configuration.
 int
 write_out_token(const std::string &token_name, const std::string &token, const std::string &identity);
+
+	// Generate a client ID appropriate for a token request
+std::string generate_client_id();
+
+	// Determine the preferred key name for signing
+std::string
+get_token_signing_key(CondorError &err);
 
 }
 

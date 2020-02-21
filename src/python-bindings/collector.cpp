@@ -162,7 +162,7 @@ struct Collector {
         boost::python::list attrlist;
         attrlist.append("MyAddress");
         attrlist.append("AddressV1");
-        attrlist.append("CondorVersion");
+        attrlist.append(ATTR_CONDOR_VERSION);
         attrlist.append("CondorPlatform");
         attrlist.append("Name");
         attrlist.append("Machine");
@@ -176,7 +176,7 @@ struct Collector {
         boost::python::list attrlist;
         attrlist.append("MyAddress");
         attrlist.append("AddressV1");
-        attrlist.append("CondorVersion");
+        attrlist.append(ATTR_CONDOR_VERSION);
         attrlist.append("CondorPlatform");
         attrlist.append("Name");
         attrlist.append("Machine");
@@ -474,9 +474,9 @@ void export_collector()
             :param constraint: A constraint for the collector query; only ads matching this constraint are returned.
                 If not specified, all matching ads of the given type are returned.
             :type constraint: str or :class:`~classad.ExprTree`
-            :param attrs: A list of attributes to use for the projection.  Only these attributes, plus a few server-managed,
+            :param projection: A list of attributes to use for the projection.  Only these attributes, plus a few server-managed,
                 are returned in each :class:`~classad.ClassAd`.
-            :type attrs: list[str]
+            :type projection: list[str]
             :param list[str] statistics: Statistics attributes to include, if they exist for the specified daemon.
             :return: A list of matching ads.
             :rtype: list[:class:`~classad.ClassAd`]

@@ -312,12 +312,11 @@ VanillaProc::StartJob()
 	//
 	gid_t tracking_gid = 0;
 	if (param_boolean("USE_GID_PROCESS_TRACKING", false)) {
-		if (!can_switch_ids() &&
-		    (Starter->condorPrivSepHelper() == NULL))
+		if (!can_switch_ids())
 		{
 			EXCEPT("USE_GID_PROCESS_TRACKING enabled, but can't modify "
 			           "the group list of our children unless running as "
-			           "root or using PrivSep");
+			           "root");
 		}
 		fi.group_ptr = &tracking_gid;
 	}
@@ -615,17 +614,20 @@ VanillaProc::StartJob()
 			args.AppendArg(cmd);
 			if (!args.AppendArgsFromClassAd(JobAd, &arg_errors)) {
 				dprintf(D_ALWAYS, "Cannot Append args from classad so cannot run condor_pid_ns_init\n");
+				delete fs_remap;
 				return 0;
 			}
 
 			if (!args.InsertArgsIntoClassAd(JobAd, NULL, & arg_errors)) {
 				dprintf(D_ALWAYS, "Cannot Insert args into classad so cannot run condor_pid_ns_init\n");
+				delete fs_remap;
 				return 0;
 			}
 	
 			std::string libexec;
 			if( !param(libexec,"LIBEXEC") ) {
 				dprintf(D_ALWAYS, "Cannot find LIBEXEC so can not run condor_pid_ns_init\n");
+				delete fs_remap;
 				return 0;
 			}
 			std::string c_p_n_i = libexec + "/condor_pid_ns_init";
@@ -866,7 +868,7 @@ void VanillaProc::restartCheckpointedJob() {
 	// and then add the running total to the current when we publish the
 	// update ad.  FIXME (#4971)
 
-	if( Starter->jic->uploadWorkingFiles() ) {
+	if( Starter->jic->uploadCheckpointFiles() ) {
 			notifySuccessfulPeriodicCheckpoint();
 	} else {
 			// We assume this is a transient failure and will try
@@ -1154,7 +1156,7 @@ VanillaProc::outOfMemoryEvent(int /* fd */)
 		// will be killed, and when it does, this job will get unfrozen
 		// and continue running.
 
-		if (usage < m_memory_limit) {
+		if (usage < (0.9 * m_memory_limit)) {
 			long long oomData = 0xdeadbeef;
 			int efd = -1;
 			ASSERT( daemonCore->Get_Pipe_FD(m_oom_efd, &efd) );

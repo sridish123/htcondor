@@ -13,8 +13,8 @@ There is a distinction between the kinds of resource attacks HTCondor
 can defeat, and the kinds of attacks HTCondor cannot defeat. HTCondor
 cannot prevent security breaches of users that can elevate their
 privilege to the root or administrator account. HTCondor does not run
-user jobs in sandboxes (standard universe jobs are a partial exception
-to this), so HTCondor cannot defeat all malicious actions by user jobs.
+user jobs in sandboxes (possibly excepting Docker or Singularity jobs)
+so HTCondor cannot defeat all malicious actions by user jobs.
 An example of a malicious job is one that launches a distributed denial
 of service attack. HTCondor assumes that users are trustworthy. HTCondor
 can prevent unauthorized access to the HTCondor pool, to help ensure
@@ -753,7 +753,7 @@ GSI Authentication
 The GSI (Grid Security Infrastructure) protocol provides an avenue for
 HTCondor to do PKI-based (Public Key Infrastructure) authentication
 using X.509 certificates. The basics of GSI are well-documented
-elsewhere, such as `http://www.globus.org/ <http://www.globus.org/>`_.
+elsewhere, such as `https://gridcf.org/gct-docs/latest/gsic/key/index.html <https://gridcf.org/gct-docs/latest/gsic/key/index.html>`_.
 
 A simple introduction to this type of authentication defines HTCondor's
 use of terminology, and it illuminates the needed items that HTCondor
@@ -1058,17 +1058,21 @@ the HTCondor UID domain.
 
 The configuration variable ``KERBEROS_SERVER_PRINCIPAL``
 :index:`KERBEROS_SERVER_PRINCIPAL` defines the name of a Kerberos
-principal. If ``KERBEROS_SERVER_PRINCIPAL`` is not defined, then the
-default value used is host. A principal specifies a unique name to which
-a set of credentials may be assigned.
+principal, to override the default ``host/<hostname>@<realm>.
+A principal specifies a unique name to which a set of
+credentials may be assigned.
 
-HTCondor takes the specified (or default) principal and appends a slash
-character, the host name, an '@' (at sign character), and the Kerberos
-realm. As an example, the configuration
+The configuration variable ``KERBEROS_SERVER_SERVICE``
+:index:`KERBEROS_SERVER_SERVICE` defines a Kerberos service to override
+the default ``host``. HTCondor prefixes this to ``/<hostname>@<realm>``
+to obtain the default Kerberos principal.  Configuration variable
+``KERBEROS_SERVER_PRINCIPAL`` overrides ``KERBEROS_SERVER_SERVICE``.
+
+As an example, the configuration
 
 ::
 
-    KERBEROS_SERVER_PRINCIPAL = condor-daemon
+    KERBEROS_SERVER_SERVICE = condor-daemon
 
 results in HTCondor's use of
 
@@ -1316,6 +1320,7 @@ without a client certificate; configure the collector using a host certificate.
 Using the SSL authentication, the client can request a new authentication token:
 
 ::
+
     # condor_token_request
     Token request enqueued.  Ask an administrator to please approve request 9235785.
 
@@ -1640,7 +1645,7 @@ required of further communication.
 
 Note at this time, integrity checks are not performed upon job data
 files that are transferred by HTCondor via the File Transfer Mechanism
-described in :ref:`users-manual/submitting-a-job:submitting jobs without a
+described in :ref:`users-manual/file-transfer:submitting jobs without a
 shared file system: htcondor's file transfer mechanism`.
 
 The client uses one of two macros to enable or disable an integrity
@@ -2822,9 +2827,6 @@ Under Unix, HTCondor runs jobs as one of
 
 Notes:
 
-#. Currently, none of these configuration settings apply to standard
-   universe jobs. Normally, standard universe jobs do not create
-   additional processes.
 #. Under Windows, HTCondor by default runs jobs under a dynamically
    created local account that exists for the duration of the job, but it
    can optionally run the job as the user account that owns the job if
@@ -2866,25 +2868,5 @@ different working directories. This is useful when submitting large
 numbers of jobs. This submit-side current working directory remains
 unchanged for the entire life of a job. The submit-side current working
 directory is also the working directory of the *condor_shadow* daemon.
-This is particularly relevant for standard universe jobs, since file
-system access for the job goes through the *condor_shadow* daemon, and
-therefore all accesses behave as if they were executing without
-HTCondor.
 
-There is also an execute-side current working directory. For standard
-universe jobs, it is set to the ``execute`` subdirectory of HTCondor's
-home directory. This directory is world-writable, since an HTCondor job
-usually runs as user nobody. Normally, standard universe jobs would
-never access this directory, since all I/O system calls are passed back
-to the *condor_shadow* daemon on the submit machine. In the event,
-however, that a job crashes and creates a core dump file, the
-execute-side current working directory needs to be accessible by the job
-so that it can write the core file. The core file is moved back to the
-submit machine, and the *condor_shadow* daemon is informed. The
-*condor_shadow* daemon sends e-mail to the job owner announcing the
-core file, and provides a pointer to where the core file resides in the
-submit-side current working directory.
-:index:`UIDs in HTCondor`
-:index:`in HTCondor<single: in HTCondor; security>`
-
-
+There is also an execute-side current working directory.

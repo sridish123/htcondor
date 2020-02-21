@@ -22,20 +22,7 @@
 #define CONDOR_SECMAN_H
 
 #include "condor_common.h"
-// #include "condor_debug.h"
-// #include "condor_config.h"
-// #include "condor_ver_info.h"
-
-// #include "daemon.h"
-// #include "condor_string.h"
-// #include "condor_attributes.h"
-// #include "condor_adtypes.h"
-// #include "condor_query.h"
-// #include "my_hostname.h"
-// #include "internet.h"
-// #include "HashTable.h"
 #include "KeyCache.h"
-// #include "condor_daemon_core.h"
 #include "classy_counted_ptr.h"
 #include "reli_sock.h"
 
@@ -100,6 +87,9 @@ public:
 	// Manage the pool password
 	static std::string m_pool_password;
 
+		// Manage the in-memory token override
+	static std::string m_token;
+
 		// The following is indexed by session index name ( "addr,<cmd>" )
 	static HashTable<MyString, classy_counted_ptr<SecManStartCommand> > tcp_auth_in_progress;
 
@@ -107,6 +97,7 @@ public:
 	SecMan(const SecMan &);
 	~SecMan();
 	const SecMan & operator=(const SecMan &);
+	SecMan &operator=(SecMan &&);
 
 		// A struct to order all the startCommand parameters below (as opposed
 		// to having 10 parameters to a single function).
@@ -182,6 +173,11 @@ public:
 	static void setPoolPassword(const std::string &pool) {m_pool_password = pool;}
 	// An empty pool indicates this is not used.
 	static const std::string &getPoolPassword() {return m_pool_password;}
+
+		// Get and set the in-memory token.  See comments for similar approach in
+		// setPoolPassword
+	static void setToken(const std::string &token) {m_token = token;}
+	static const std::string &getToken() {return m_token;}
 
 	// Setup the current authentication methods for a tag; these are considered overrides
 	// and are cleared when the tag is changed.
@@ -261,6 +257,8 @@ public:
 	static IpVerify *getIpVerify();
 	static int Verify(DCpermission perm, const condor_sockaddr& addr, const char * fqu, MyString *allow_reason=NULL, MyString *deny_reason=NULL );
 
+	static classad::References* getResumeProj() { return &m_resume_proj; };
+
 		// Create a security session from scratch (without doing any
 		// security negotation with the peer).  The session id and
 		// key will presumably be communicated to the peer using some
@@ -303,6 +301,7 @@ public:
 	static bool			_should_check_env_for_unique_id;
 
 	static IpVerify *m_ipverify;
+	static classad::References m_resume_proj;
 
 	friend class SecManStartCommand;
 
