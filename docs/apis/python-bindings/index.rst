@@ -4,6 +4,9 @@ Python Bindings
 The HTCondor Python bindings expose a Pythonic interface to the HTCondor client libraries.
 They utilize the same C++ libraries as HTCondor itself, meaning they have nearly the same behavior as the command line tools.
 
+:doc:`users/index`
+    These tutorials cover the features that users who want to submit and manage jobs will find most useful.
+    Start here if you're a user who wants to submit and manage jobs from Python.
 
 :doc:`introductory/index`
     These tutorials cover the basics of the Python bindings and how to use them through a quick overview of the major components.
@@ -25,6 +28,7 @@ They utilize the same C++ libraries as HTCondor itself, meaning they have nearly
    :maxdepth: 2
    :hidden:
 
+   users/index
    introductory/index
    advanced/index
    api/htcondor
