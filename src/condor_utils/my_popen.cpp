@@ -440,6 +440,36 @@ my_popenv_impl( const char *const args[],
 		/* The child */
 	if( pid == 0 ) {
 
+#if defined(LINUX)
+
+		/* Close all the FDs in /proc/self/fd except for the ones that
+		   we know and love.  Note that this only works because we're
+		   single-threaded (and therefore the contents of the directory
+		   can't chagne as we iterate). */
+		DIR * dir = opendir( "/proc/self/fd" );
+		ASSERT( dir != NULL );
+
+		std::vector<int> fds;
+		char * endptr = NULL;
+		struct dirent * d = NULL;
+		while( (d = readdir(dir)) != NULL ) {
+		    if( strcmp( d->d_name, "." ) == 0 || strcmp( d->d_name, ".." ) == 0 ) { continue; }
+			int fd = (int)strtol( d->d_name, & endptr, 10 );
+			ASSERT( * endptr == '\0' );
+			if( fd != pipe_d[0]  && fd != pipe_d[1]
+			 && fd != pipe_d2[0] && fd != pipe_d2[1]
+			 && fd != pipe_writedata[0] && fd != pipe_writedata[1] ) {
+				fds.push_back(fd);
+			}
+		}
+		(void)closedir(dir);
+
+		for( auto i : fds ) {
+			(void)close( i );
+		}
+
+#else /* defined(LINUX) */
+
 		/* Don't leak out fds from the parent to our child.
 		 * Wish there was a more efficient way to do this, but
 		 * this is how we do it in daemoncore CreateProcess...
@@ -458,6 +488,8 @@ my_popenv_impl( const char *const args[],
 				close(jj);
 			}
 		}
+
+#endif /* LINUX */
 
 		close(pipe_d2[0]);
 
