@@ -21,11 +21,18 @@ Release Notes:
 
 New Features:
 
--  None.
+-  *classad_eval* now allows its first (ClassAd) argument to be just the
+   interior of a single ClassAd.  That is, you no longer need to surround
+   the first argument with square brackets.  This means that
+   ``classad_eval 'x = y; y = 7' 'x'`` will now correctly return ``7``.
+   :ticket:`7621`
 
 Bugs Fixed:
 
--  None.
+- *classad_eval* no longer ignores trailing garbage in its first (ClassAd)
+  argument.  This prevents  ``classad_eval 'x = y; y = 7' 'x'`` from
+  incorrectly returning ``undefined``.
+  :ticket:`7621`
 
 Version 8.9.7
 -------------
@@ -106,6 +113,10 @@ New Features:
   history file.  This works for both local and remote queries.
   :ticket:`7538`
 
+- The ``-submitters`` argument to ``condor_q`` now correctly shows jobs for the
+  given submitter name, even when the submittor name is an accounting group.
+  :ticket:`7616`
+
 - Docker universe now works inside an unprivileged personal HTCondor,
   if you give the user starting the personal condor rights to run the
   docker commands.
@@ -138,7 +149,7 @@ New Features:
   and LocalSysCpu
   :ticket:`7546`
 
-- *condor_submit* now treats ``request_gpu`` as an type and suggests
+- *condor_submit* now treats ``request_gpu`` as a typo and suggests
   that ``request_gpus`` may have been what was intended.  This is the 
   same way that it treats ``request_cpu``.
   :ticket:`7421`
@@ -179,6 +190,11 @@ New Features:
   the Startd ClassAd. It contains the number of file in the job sandbox for the curent job.
   This attribute will be refreshed as the same time that ``DiskUsage`` is refreshed.
   :ticket:`7486`
+
+- A new configuration macro ``SUBMIT_GENERATE_CUSTOM_RESOURCE_REQUIREMENTS`` can be
+  used to disable the behavior of *condor_submit* to generate Requirements clauses
+  for job attributes that begin with Request
+  :ticket:`7513`
 
 Bugs Fixed:
 
