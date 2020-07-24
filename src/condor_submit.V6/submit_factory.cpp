@@ -88,7 +88,9 @@
 
 const char * is_queue_statement(const char * line); // return ptr to queue args of this is a queue statement
 void SetSendCredentialInAd( ClassAd *job_ad ); 
+#if 0 // moved to submit_utils
 void set_factory_submit_info(int cluster, int num_procs);
+#endif
 int ParseDashAppendLines(List<const char> &exlines, MACRO_SOURCE& source, MACRO_SET& macro_set);
 void init_vars(SubmitHash & hash, int cluster_id, StringList & vars);
 
@@ -109,7 +111,7 @@ extern int DashDryRun;
 extern int DumpSubmitHash;
 extern int default_to_factory;
 
-
+#if 0 // moved to submit_utils
 int write_factory_file(const char * filename, const void* data, int cb, mode_t access)
 {
 	int fd = safe_open_wrapper_follow(filename, O_WRONLY|_O_BINARY|O_CREAT|O_TRUNC|O_APPEND, access);
@@ -128,6 +130,7 @@ int write_factory_file(const char * filename, const void* data, int cb, mode_t a
 	close(fd);
 	return 0;
 }
+#endif
 
 // callback passed to make_job_ad on the submit_hash that gets passed each input or output file
 // so we can choose to do file checks. 
@@ -359,6 +362,7 @@ int convert_to_foreach_file(SubmitHash & hash, SubmitForeachArgs & o, int Cluste
 	return rval;
 }
 
+#if 0 // moved to submit_utils
 int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o)
 {
 	int rval = 0;
@@ -377,6 +381,7 @@ int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o)
 
 	return rval;
 }
+#endif
 
 
 #if 0 // no longer used.

@@ -569,6 +569,9 @@ direct_condor_submit(const Dagman &dm, Job* node,
 	}
 	int rval = 0;
 	bool success = false;
+	bool want_factory = false;
+	long long max_idle = INT_MAX;
+	long long max_materialize = INT_MAX;
 	std::string errmsg;
 	Qmgr_connection * qmgr = NULL;
 	auto_free_ptr owner(my_username());
@@ -617,6 +620,17 @@ direct_condor_submit(const Dagman &dm, Job* node,
 		submitHash = node->GetSubmitDesc();
 	}
 
+	// Check if we want late materialization
+	if (submitHash->submit_param_long_exists(SUBMIT_KEY_JobMaterializeLimit, ATTR_JOB_MATERIALIZE_LIMIT, max_materialize, true)) {
+		want_factory = true;
+	} 
+	else if (submitHash->submit_param_long_exists(SUBMIT_KEY_JobMaterializeMaxIdle, ATTR_JOB_MATERIALIZE_MAX_IDLE, max_idle, true) ||
+				submitHash->submit_param_long_exists(SUBMIT_KEY_JobMaterializeMaxIdleAlt, ATTR_JOB_MATERIALIZE_MAX_IDLE, max_idle, true)) {
+		max_materialize = INT_MAX; // no max materialize specified, so set it to number of jobs
+		want_factory = true;
+	}
+	debug_printf(DEBUG_NORMAL, "MRC [dagman_direct_submit] want_factory = %s\n", want_factory ? "true" : "false");
+
 	// set submit keywords defined by dagman and VARS
 	init_dag_vars(submitHash, dm, node, workflowLogFile, parents, batchName);
 
@@ -624,6 +638,7 @@ direct_condor_submit(const Dagman &dm, Job* node,
 
 	qmgr = ConnectQ(NULL);
 	if (qmgr) {
+
 		int cluster_id = NewCluster();
 		if (cluster_id <= 0) {
 			errmsg = "failed to get a ClusterId";
@@ -631,53 +646,134 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			goto finis;
 		}
 
-		int proc_id = 0, item_index = 0, step = 0;
+		if (want_factory) { // factory submit
 
-		SubmitStepFromQArgs ssi(*submitHash);
-		JOB_ID_KEY jid(cluster_id, proc_id);
-		rval = ssi.begin(jid, queue_args);
-		if (rval < 0) {
-			goto finis;
-		}
+			const char* token_seps = ", \t";
+			const char* token_ws = " \t";
+			int	GotNonEmptyQueueCommand = 0;
+			std::string submit_digest;
+			SubmitForeachArgs o;
 
-		rval = ssi.load_items(ms, false, errmsg);
-		if (rval < 0) {
-			goto finis;
-		}
+			// load the foreach data
+			rval = submitHash->load_inline_q_foreach_items(ms, o, errmsg);
+			if (rval == 1) { // 1 means forech data is external
+				rval = submitHash->load_external_q_foreach_items(o, true, errmsg);
+			}
+			if (rval < 0)
+				goto finis;
 
-		while ((rval = ssi.next(jid, item_index, step)) > 0) {
-			proc_id = NewProc(cluster_id);
-			if (proc_id != jid.proc) {
-				formatstr(errmsg, "expected next ProcId to be %d, but Schedd says %d", jid.proc, proc_id);
+			// turn the submit hash into a submit digest
+			submitHash->make_digest(submit_digest, cluster_id, o.vars, 0);
+			if (submit_digest.empty()) {
 				rval = -1;
 				goto finis;
 			}
-
-			ClassAd *proc_ad = submitHash->make_job_ad(jid, item_index, step, false, false, NULL, NULL);
-			if ( ! proc_ad) {
-				errmsg = "failed to create job classad";
-				rval = -1;
+			debug_printf(DEBUG_NORMAL, "MRC [dagman_direct_submit] cluster_id = %d, submit_digest = %s\n", cluster_id, submit_digest.c_str());
+			
+			// append the revised queue statement to the submit digest
+			rval = append_queue_statement(submit_digest, o);
+			if (rval < 0)
 				goto finis;
+			
+			// write the submit digest to the current working directory.
+			//PRAGMA_REMIND("todo: force creation of local factory file if schedd is version < 8.7.3?")
+			const char* create_local_factory_file = "/scratch/condor/dagman-direct-default/submit_digest"; // MRC: debug, remove this
+			if (create_local_factory_file) {
+				MyString factory_path = submitHash->full_path(create_local_factory_file, false);
+				rval = write_factory_file(factory_path.c_str(), submit_digest.data(), (int)submit_digest.size(), 0644);
+				if (rval < 0)
+					goto finis;
 			}
 
-			if (rval == 2) { // we need to send the cluster ad
-				classad::ClassAd * clusterad = proc_ad->GetChainedParentAd();
-				if (clusterad) {
-					rval = SendJobAttributes(JOB_ID_KEY(cluster_id, -1), *clusterad, SetAttribute_NoAck, submitHash->error_stack(), "Submit");
-					if (rval < 0) {
-						errmsg = "failed to send cluster classad";
-						goto finis;
-					}
-				}
-				condorID._cluster = jid.cluster;
-				condorID._proc = jid.proc;
-				condorID._subproc = 0;
-			}
+			
+			// materialize all of the jobs unless the user requests otherwise.
+			// (the admin can also set a limit which is applied at the schedd)
+			int total_procs = (o.queue_num ? o.queue_num : 1) * o.item_len();
+			if (total_procs > 0) GotNonEmptyQueueCommand = 1;
+			if (max_materialize <= 0) max_materialize = INT_MAX;
+			max_materialize = MIN(max_materialize, total_procs);
+			max_materialize = MAX(max_materialize, 1);
 
+			
+			// send the submit digest to the schedd. the schedd will parse the digest at this point
+			// and return success or failure.
+			rval = SetJobFactory(cluster_id, (int)max_materialize, "", submit_digest.c_str()); //qmgr->set_Factory(ClusterId, (int)max_materialize, "", submit_digest.c_str());
+			if (rval < 0)
+				goto finis;
+			
+			init_vars(*submitHash, cluster_id, o.vars);
+
+			// stuff foreach data for the first item before we make the cluster ad.
+			char* item = o.items.first();
+			JOB_ID_KEY jid(cluster_id, 0);
+			rval = set_vars(*submitHash, o.vars, item, 0, 0, token_seps, token_ws, false, false);
+			if (rval < 0)
+				goto finis;
+
+			// submit the cluster ad
+			//
+			//rval = send_cluster_ad(submitHash, cluster_id, false, false);
+			ClassAd *proc_ad = submitHash->make_job_ad(jid, 0, 0, false, false, NULL, NULL);
 			rval = SendJobAttributes(jid, *proc_ad, SetAttribute_NoAck, submitHash->error_stack(), "Submit");
-			if (rval < 0) {
-				errmsg = "failed to send proc ad";
+			if (rval < 0)
 				goto finis;
+
+			cleanup_vars(*submitHash, o.vars);
+
+			// tell main what cluster was submitted and how many jobs.
+			set_factory_submit_info(cluster_id, total_procs);
+		}
+		
+		else { // non-factory submit
+
+			int proc_id = 0, item_index = 0, step = 0;
+
+			SubmitStepFromQArgs ssi(*submitHash);
+			JOB_ID_KEY jid(cluster_id, proc_id);
+			rval = ssi.begin(jid, queue_args);
+			if (rval < 0) {
+				goto finis;
+			}
+
+			rval = ssi.load_items(ms, false, errmsg);
+			if (rval < 0) {
+				goto finis;
+			}
+
+			while ((rval = ssi.next(jid, item_index, step)) > 0) {
+				proc_id = NewProc(cluster_id);
+				if (proc_id != jid.proc) {
+					formatstr(errmsg, "expected next ProcId to be %d, but Schedd says %d", jid.proc, proc_id);
+					rval = -1;
+					goto finis;
+				}
+
+				ClassAd *proc_ad = submitHash->make_job_ad(jid, item_index, step, false, false, NULL, NULL);
+				if ( ! proc_ad) {
+					errmsg = "failed to create job classad";
+					rval = -1;
+					goto finis;
+				}
+
+				if (rval == 2) { // we need to send the cluster ad
+					classad::ClassAd * clusterad = proc_ad->GetChainedParentAd();
+					if (clusterad) {
+						rval = SendJobAttributes(JOB_ID_KEY(cluster_id, -1), *clusterad, SetAttribute_NoAck, submitHash->error_stack(), "Submit");
+						if (rval < 0) {
+							errmsg = "failed to send cluster classad";
+							goto finis;
+						}
+					}
+					condorID._cluster = jid.cluster;
+					condorID._proc = jid.proc;
+					condorID._subproc = 0;
+				}
+
+				rval = SendJobAttributes(jid, *proc_ad, SetAttribute_NoAck, submitHash->error_stack(), "Submit");
+				if (rval < 0) {
+					errmsg = "failed to send proc ad";
+					goto finis;
+				}
 			}
 		}
 

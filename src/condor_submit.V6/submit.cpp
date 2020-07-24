@@ -223,9 +223,11 @@ void check_umask();
 void setupAuthentication();
 const char * is_queue_statement(const char * line); // return ptr to queue args of this is a queue statement
 int allocate_a_cluster();
+#if 0 // moved to submit_utils
 void init_vars(SubmitHash & hash, int cluster_id, StringList & vars);
 int set_vars(SubmitHash & hash, StringList & vars, char * item, int item_index, int options, const char * delims, const char * ws);
 void cleanup_vars(SubmitHash & hash, StringList & vars);
+#endif
 bool IsNoClusterAttr(const char * name);
 int  check_sub_file(void*pv, SubmitHash * sub, _submit_file_role role, const char * name, int flags);
 bool is_crlf_shebang(const char * path);
@@ -271,18 +273,19 @@ void ReportSubmitException(const char * msg, int /*src_line*/, const char * /*sr
 	}
 }
 
-
+#if 0 // moved to submit_utils
 struct SubmitRec {
 	int cluster;
 	int firstjob;
 	int lastjob;
 };
-
+#endif
 std::vector <SubmitRec> SubmitInfo;
 
 std::vector <ClassAd*> JobAdsArray;
 size_t JobAdsArrayLastClusterIndex = 0;
 
+#if 0 // moved to submit_utils
 // called by the factory submit to fill out the data structures that
 // we use to print out the standard messages on complection.
 void set_factory_submit_info(int cluster, int num_procs)
@@ -292,6 +295,7 @@ void set_factory_submit_info(int cluster, int num_procs)
 	SubmitInfo.back().firstjob = 0;
 	SubmitInfo.back().lastjob = num_procs-1;
 }
+#endif
 
 void TestFilePermissions( const char *scheddAddr = NULL )
 {
@@ -1724,7 +1728,6 @@ int send_cluster_ad(SubmitHash & hash, int ClusterId, bool is_interactive, bool 
 }
 
 
-
 int submit_jobs (
 	FILE * fp,
 	MACRO_SOURCE & source,
@@ -2013,7 +2016,7 @@ int submit_jobs (
 
 			// stuff foreach data for the first item before we make the cluster ad.
 			char * item = o.items.first();
-			rval = set_vars(submit_hash, o.vars, item, 0, queue_item_opts, token_seps, token_ws);
+			rval = set_vars(submit_hash, o.vars, item, 0, queue_item_opts, token_seps, token_ws, DashDryRun, DumpSubmitHash);
 			if (rval < 0)
 				break;
 
@@ -2179,8 +2182,9 @@ int queue_connect()
 	return MyQ ? 0 : -1;
 }
 
-// buffers used while processing the queue statement to inject $(Cluster) and $(Process) into the submit hash table.
 static char ClusterString[20]="1", ProcessString[20]="0", EmptyItemString[] = "";
+#if 0 // moved to submit_utils
+// buffers used while processing the queue statement to inject $(Cluster) and $(Process) into the submit hash table.
 void init_vars(SubmitHash & hash, int cluster_id, StringList & vars)
 {
 	sprintf(ClusterString, "%d", cluster_id);
@@ -2199,7 +2203,9 @@ void init_vars(SubmitHash & hash, int cluster_id, StringList & vars)
 	// optimize the macro set for lookups if we inserted anything.  we expect this to happen only once.
 	hash.optimize();
 }
+#endif
 
+#if 0 // moved to submit_utils
 // DESTRUCTIVELY! parse 'item' and store the fields into the submit hash as 'live' variables.
 //
 int set_vars(SubmitHash & hash, StringList & vars, char * item, int item_index, int options, const char * delims, const char * ws)
@@ -2284,6 +2290,7 @@ void cleanup_vars(SubmitHash & hash, StringList & vars)
 		while ((var = vars.next())) { hash.set_live_submit_variable(var, "<Queue_item>", false); }
 	}
 }
+#endif
 
 MACRO_ITEM* find_submit_item(const char * name) { return submit_hash.lookup_exact(name); }
 #define set_live_submit_variable submit_hash.set_live_submit_variable
@@ -2341,7 +2348,7 @@ int queue_item(int num, StringList & vars, char * item, int item_index, int opti
 	if ( ! MyQ)
 		return -1;
 
-	int rval = set_vars(submit_hash, vars, item, item_index, options, delims, ws);
+	int rval = set_vars(submit_hash, vars, item, item_index, options, delims, ws, DashDryRun, DumpSubmitHash);
 	if (rval < 0)
 		return rval;
 

@@ -1031,5 +1031,24 @@ const	int			SCHEDD_INTERVAL_DEFAULT = 300;
 const	int			JOB_DEFERRAL_PREP_TIME_DEFAULT = 300; // seconds
 const	int			JOB_DEFERRAL_WINDOW_DEFAULT = 0; // seconds
 
+// Factory and late materialization, moved from submit and submit_factory
+// MRC: Reorder and reorganize these statements. For now it's helpful to have
+// them in chronological order of import, but needs to be cleaned up.
+int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o);
+int write_factory_file(const char * filename, const void* data, int cb, mode_t access);
+void init_vars(SubmitHash & hash, int cluster_id, StringList & vars);
+int SendLastExecutable();
+int set_vars(SubmitHash & hash, StringList & vars, char * item, int item_index, int options, const char * delims, const char * ws, int DashDryRun, int DumpSubmitHash);
+void cleanup_vars(SubmitHash & hash, StringList & vars);
+// option flags for queue_item.
+#define QUEUE_OPT_WARN_EMPTY_FIELDS (1<<0)
+#define QUEUE_OPT_FAIL_EMPTY_FIELDS (1<<1)
+void set_factory_submit_info(int cluster, int num_procs);
+struct SubmitRec {
+	int cluster;
+	int firstjob;
+	int lastjob;
+};
+
 #endif // _SUBMIT_UTILS_H
 

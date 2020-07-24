@@ -46,9 +46,11 @@ int queue_begin(StringList & vars, bool new_cluster); // called before iterating
 void queue_end(StringList & vars, bool fEof); // called when done iterating items for a single queue statement, and at end of file
 
 int queue_item(int num, StringList & vars, char * item, int item_index, int options, const char * delims, const char * ws);
+#if 0 // moved to submit_utils
 // option flags for queue_item.
 #define QUEUE_OPT_WARN_EMPTY_FIELDS (1<<0)
 #define QUEUE_OPT_FAIL_EMPTY_FIELDS (1<<1)
+#endif
 
 class SimScheddQ : public AbstractScheddQ {
 public:
@@ -112,7 +114,9 @@ int submit_factory_job (
 	std::string & queueCommandLine);  // queue statement passed in via -q argument
 #endif
 
+#if 0 // moved to submit_utils
 int write_factory_file(const char * filename, const void* data, int cb, mode_t access);
+#endif
 
 // used by refactoring of main submit loop.
 
@@ -120,7 +124,9 @@ int write_factory_file(const char * filename, const void* data, int cb, mode_t a
 // if the foreach mode is foreach_not, then this function does nothing.
 //
 int convert_to_foreach_file(SubmitHash & hash, SubmitForeachArgs & o, int ClusterId, bool spill_items);
+#if 0 // moved to submit_utils
 int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o);
+#endif
 int SendClusterAd (ClassAd * ad);
 
 

@@ -9047,4 +9047,158 @@ const char* SubmitHash::make_digest(std::string & out, int cluster_id, StringLis
 	return out.c_str();
 }
 
+int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o)
+{
+	int rval = 0;
 
+	// append the digest of the queue statement to the submit digest.
+	//
+	submit_digest += "\n";
+	submit_digest += "Queue ";
+	if (o.queue_num) { formatstr_cat(submit_digest, "%d ", o.queue_num); }
+	auto_free_ptr submit_vars(o.vars.print_to_delimed_string(","));
+	if (submit_vars.ptr()) { submit_digest += submit_vars.ptr(); submit_digest += " "; }
+	char slice_str[16*3+1];
+	if (o.slice.to_string(slice_str, COUNTOF(slice_str))) { submit_digest += slice_str; submit_digest += " "; }
+	if ( ! o.items_filename.empty()) { submit_digest += "from "; submit_digest += o.items_filename.c_str(); }
+	submit_digest += "\n";
+
+	return rval;
+}
+
+int write_factory_file(const char * filename, const void* data, int cb, mode_t access)
+{
+	int fd = safe_open_wrapper_follow(filename, O_WRONLY|_O_BINARY|O_CREAT|O_TRUNC|O_APPEND, access);
+	if (fd == -1) {
+		dprintf(D_ALWAYS, "ERROR: write_factory_file(%s): open() failed: %s (%d)\n", filename, strerror(errno), errno);
+		return -1;
+	}
+
+	int cbwrote = write(fd, data, cb);
+	if (cbwrote != cb) {
+		dprintf(D_ALWAYS, "ERROR: write_factory_file(%s): write() failed: %s (%d)\n", filename, strerror(errno), errno);
+		close(fd);
+		return -1;
+	}
+
+	close(fd);
+	return 0;
+}
+
+// buffers used while processing the queue statement to inject $(Cluster) and $(Process) into the submit hash table.
+static char ClusterString[20]="1", ProcessString[20]="0", EmptyItemString[] = "";
+void init_vars(SubmitHash & hash, int cluster_id, StringList & vars)
+{
+	sprintf(ClusterString, "%d", cluster_id);
+	strcpy(ProcessString, "0");
+
+	// establish live buffers for $(Cluster) and $(Process), and other loop variables
+	// Because the user might already be using these variables, we can only set the explicit ones
+	// unconditionally, the others we must set only when not already set by the user.
+	hash.set_live_submit_variable(SUBMIT_KEY_Cluster, ClusterString);
+	hash.set_live_submit_variable(SUBMIT_KEY_Process, ProcessString);
+	
+	vars.rewind();
+	char * var;
+	while ((var = vars.next())) { hash.set_live_submit_variable(var, EmptyItemString, false); }
+
+	// optimize the macro set for lookups if we inserted anything.  we expect this to happen only once.
+	hash.optimize();
+}
+
+// DESTRUCTIVELY! parse 'item' and store the fields into the submit hash as 'live' variables.
+//
+int set_vars(SubmitHash & hash, StringList & vars, char * item, int item_index, int options, const char * delims, const char * ws,  int DashDryRun, int DumpSubmitHash)
+{
+	int rval = 0;
+
+	bool check_empty = options & (QUEUE_OPT_WARN_EMPTY_FIELDS|QUEUE_OPT_FAIL_EMPTY_FIELDS);
+	bool fail_empty = options & QUEUE_OPT_FAIL_EMPTY_FIELDS;
+
+	// UseStrict = condor_param_bool("Submit.IsStrict", "Submit_IsStrict", UseStrict);
+
+	// If there are loop variables, destructively tokenize item and stuff the tokens into the submit hashtable.
+	if ( ! vars.isEmpty())  {
+
+		if ( ! item) {
+			item = EmptyItemString;
+			EmptyItemString[0] = '\0';
+		}
+
+		// set the first loop variable unconditionally, we set it initially to the whole item
+		// we may later truncate that item when we assign fields to other loop variables.
+		vars.rewind();
+		char * var = vars.next();
+		char * data = item;
+		hash.set_live_submit_variable(var, data, false);
+
+		// if there is more than a single loop variable, then assign them as well
+		// we do this by destructively null terminating the item for each var
+		// the last var gets all of the remaining item text (if any)
+		while ((var = vars.next())) {
+			// scan for next token separator
+			while (*data && ! strchr(delims, *data)) ++data;
+			// null terminate the previous token and advance to the start of the next token.
+			if (*data) {
+				*data++ = 0;
+				// skip leading separators and whitespace
+				while (*data && strchr(ws, *data)) ++data;
+				hash.set_live_submit_variable(var, data, false);
+			}
+		}
+
+		if (DashDryRun && DumpSubmitHash) {
+			fprintf(stdout, "----- submit hash changes for ItemIndex = %d -----\n", item_index);
+			char * var;
+			vars.rewind();
+			while ((var = vars.next())) {
+				MACRO_ITEM* pitem = hash.lookup_exact(var);
+				fprintf (stdout, "  %s = %s\n", var, pitem ? pitem->raw_value : "");
+			}
+			fprintf(stdout, "-----\n");
+		}
+
+		if (check_empty) {
+			vars.rewind();
+			std::string empties;
+			while ((var = vars.next())) {
+				MACRO_ITEM* pitem = hash.lookup_exact(var);
+				if ( ! pitem || (pitem->raw_value != EmptyItemString && 0 == strlen(pitem->raw_value))) {
+					if ( ! empties.empty()) empties += ",";
+					empties += var;
+				}
+			}
+			if ( ! empties.empty()) {
+				fprintf (stderr, "\n%s: Empty value(s) for %s at ItemIndex=%d!", fail_empty ? "ERROR" : "WARNING", empties.c_str(), item_index);
+				if (fail_empty) {
+					return -4;
+				}
+			}
+		}
+
+	}
+
+	return rval;
+}
+
+void cleanup_vars(SubmitHash & hash, StringList & vars)
+{
+	// set live submit variables to generate reasonable unused-item messages.
+	if ( ! vars.isEmpty())  {
+		vars.rewind();
+		char * var;
+		while ((var = vars.next())) { hash.set_live_submit_variable(var, "<Queue_item>", false); }
+	}
+}
+
+
+// called by the factory submit to fill out the data structures that
+// we use to print out the standard messages on complection.
+std::vector <SubmitRec> SubmitInfo;
+void set_factory_submit_info(int cluster, int num_procs)
+{
+	SubmitInfo.push_back(SubmitRec());
+	SubmitInfo.back().cluster = cluster;
+	SubmitInfo.back().firstjob = 0;
+	SubmitInfo.back().lastjob = num_procs-1;
+}
