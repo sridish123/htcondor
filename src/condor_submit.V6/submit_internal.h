@@ -114,9 +114,7 @@ int submit_factory_job (
 	std::string & queueCommandLine);  // queue statement passed in via -q argument
 #endif
 
-#if 0 // moved to submit_utils
 int write_factory_file(const char * filename, const void* data, int cb, mode_t access);
-#endif
 
 // used by refactoring of main submit loop.
 

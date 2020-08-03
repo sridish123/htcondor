@@ -673,16 +673,6 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			if (rval < 0)
 				goto finis;
 
-			// write the submit digest to the current working directory.
-			//PRAGMA_REMIND("todo: force creation of local factory file if schedd is version < 8.7.3?")
-			const char* create_local_factory_file = "/scratch/condor/dagman-direct-default/submit_digest"; // MRC: debug, remove this
-			if (create_local_factory_file) {
-				MyString factory_path = submitHash->full_path(create_local_factory_file, false);
-				rval = write_factory_file(factory_path.c_str(), submit_digest.data(), (int)submit_digest.size(), 0644);
-				if (rval < 0)
-					goto finis;
-			}
-
 			// materialize all of the jobs unless the user requests otherwise.
 			// (the admin can also set a limit which is applied at the schedd)
 			int total_procs = (o.queue_num ? o.queue_num : 1) * o.item_len();
@@ -707,17 +697,12 @@ direct_condor_submit(const Dagman &dm, Job* node,
 				goto finis;
 
 			// submit the cluster ad
-			//
-			//rval = send_cluster_ad(submitHash, cluster_id, false, false);
 			ClassAd *proc_ad = submitHash->make_job_ad(jid, 0, 0, false, false, NULL, NULL);
 			rval = SendJobAttributes(jid, *proc_ad, SetAttribute_NoAck, submitHash->error_stack(), "Submit");
 			if (rval < 0)
 				goto finis;
 
 			cleanup_vars(*submitHash, o.vars);
-
-			// tell main what cluster was submitted and how many jobs.
-			set_factory_submit_info(cluster_id, total_procs);
 		}
 
 		else { // non-factory submit

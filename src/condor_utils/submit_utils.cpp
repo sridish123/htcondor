@@ -9066,25 +9066,6 @@ int append_queue_statement(std::string & submit_digest, SubmitForeachArgs & o)
 	return rval;
 }
 
-int write_factory_file(const char * filename, const void* data, int cb, mode_t access)
-{
-	int fd = safe_open_wrapper_follow(filename, O_WRONLY|_O_BINARY|O_CREAT|O_TRUNC|O_APPEND, access);
-	if (fd == -1) {
-		dprintf(D_ALWAYS, "ERROR: write_factory_file(%s): open() failed: %s (%d)\n", filename, strerror(errno), errno);
-		return -1;
-	}
-
-	int cbwrote = write(fd, data, cb);
-	if (cbwrote != cb) {
-		dprintf(D_ALWAYS, "ERROR: write_factory_file(%s): write() failed: %s (%d)\n", filename, strerror(errno), errno);
-		close(fd);
-		return -1;
-	}
-
-	close(fd);
-	return 0;
-}
-
 // buffers used while processing the queue statement to inject $(Cluster) and $(Process) into the submit hash table.
 static char ClusterString[20]="1", ProcessString[20]="0", EmptyItemString[] = "";
 void init_vars(SubmitHash & hash, int cluster_id, StringList & vars)
@@ -9189,16 +9170,4 @@ void cleanup_vars(SubmitHash & hash, StringList & vars)
 		char * var;
 		while ((var = vars.next())) { hash.set_live_submit_variable(var, "<Queue_item>", false); }
 	}
-}
-
-
-// called by the factory submit to fill out the data structures that
-// we use to print out the standard messages on complection.
-std::vector <SubmitRec> SubmitInfo;
-void set_factory_submit_info(int cluster, int num_procs)
-{
-	SubmitInfo.push_back(SubmitRec());
-	SubmitInfo.back().cluster = cluster;
-	SubmitInfo.back().firstjob = 0;
-	SubmitInfo.back().lastjob = num_procs-1;
 }

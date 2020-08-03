@@ -285,7 +285,6 @@ std::vector <SubmitRec> SubmitInfo;
 std::vector <ClassAd*> JobAdsArray;
 size_t JobAdsArrayLastClusterIndex = 0;
 
-#if 0 // moved to submit_utils
 // called by the factory submit to fill out the data structures that
 // we use to print out the standard messages on complection.
 void set_factory_submit_info(int cluster, int num_procs)
@@ -295,7 +294,6 @@ void set_factory_submit_info(int cluster, int num_procs)
 	SubmitInfo.back().firstjob = 0;
 	SubmitInfo.back().lastjob = num_procs-1;
 }
-#endif
 
 void TestFilePermissions( const char *scheddAddr = NULL )
 {

@@ -111,7 +111,6 @@ extern int DashDryRun;
 extern int DumpSubmitHash;
 extern int default_to_factory;
 
-#if 0 // moved to submit_utils
 int write_factory_file(const char * filename, const void* data, int cb, mode_t access)
 {
 	int fd = safe_open_wrapper_follow(filename, O_WRONLY|_O_BINARY|O_CREAT|O_TRUNC|O_APPEND, access);
@@ -130,7 +129,6 @@ int write_factory_file(const char * filename, const void* data, int cb, mode_t a
 	close(fd);
 	return 0;
 }
-#endif
 
 // callback passed to make_job_ad on the submit_hash that gets passed each input or output file
 // so we can choose to do file checks. 
