@@ -629,7 +629,6 @@ direct_condor_submit(const Dagman &dm, Job* node,
 		max_materialize = INT_MAX; // no max materialize specified, so set it to number of jobs
 		want_factory = true;
 	}
-	debug_printf(DEBUG_NORMAL, "MRC [dagman_direct_submit] want_factory = %s\n", want_factory ? "true" : "false");
 
 	// set submit keywords defined by dagman and VARS
 	init_dag_vars(submitHash, dm, node, workflowLogFile, parents, batchName);
@@ -645,7 +644,6 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			rval = cluster_id;
 			goto finis;
 		}
-
 		if (want_factory) { // factory submit
 
 			const char* token_seps = ", \t";
@@ -656,6 +654,7 @@ direct_condor_submit(const Dagman &dm, Job* node,
 
 			// load the foreach data
 			rval = submitHash->load_inline_q_foreach_items(ms, o, errmsg);
+
 			if (rval == 1) { // 1 means forech data is external
 				rval = submitHash->load_external_q_foreach_items(o, true, errmsg);
 			}
@@ -668,13 +667,12 @@ direct_condor_submit(const Dagman &dm, Job* node,
 				rval = -1;
 				goto finis;
 			}
-			debug_printf(DEBUG_NORMAL, "MRC [dagman_direct_submit] cluster_id = %d, submit_digest = %s\n", cluster_id, submit_digest.c_str());
-			
+
 			// append the revised queue statement to the submit digest
 			rval = append_queue_statement(submit_digest, o);
 			if (rval < 0)
 				goto finis;
-			
+
 			// write the submit digest to the current working directory.
 			//PRAGMA_REMIND("todo: force creation of local factory file if schedd is version < 8.7.3?")
 			const char* create_local_factory_file = "/scratch/condor/dagman-direct-default/submit_digest"; // MRC: debug, remove this
@@ -685,7 +683,6 @@ direct_condor_submit(const Dagman &dm, Job* node,
 					goto finis;
 			}
 
-			
 			// materialize all of the jobs unless the user requests otherwise.
 			// (the admin can also set a limit which is applied at the schedd)
 			int total_procs = (o.queue_num ? o.queue_num : 1) * o.item_len();
@@ -694,7 +691,6 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			max_materialize = MIN(max_materialize, total_procs);
 			max_materialize = MAX(max_materialize, 1);
 
-			
 			// send the submit digest to the schedd. the schedd will parse the digest at this point
 			// and return success or failure.
 			rval = SetJobFactory(cluster_id, (int)max_materialize, "", submit_digest.c_str()); //qmgr->set_Factory(ClusterId, (int)max_materialize, "", submit_digest.c_str());
@@ -723,7 +719,7 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			// tell main what cluster was submitted and how many jobs.
 			set_factory_submit_info(cluster_id, total_procs);
 		}
-		
+
 		else { // non-factory submit
 
 			int proc_id = 0, item_index = 0, step = 0;
