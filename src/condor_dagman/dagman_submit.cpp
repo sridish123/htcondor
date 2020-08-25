@@ -568,6 +568,7 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			directory, errMsg.Value());
 		return false;
 	}
+	int jobProcCount = 0;
 	int rval = 0;
 	bool success = false;
 	bool want_factory = false;
@@ -661,6 +662,8 @@ direct_condor_submit(const Dagman &dm, Job* node,
 			}
 			if (rval < 0)
 				goto finis;
+
+			jobProcCount = o.item_len();
 
 			// turn the submit hash into a submit digest
 			submitHash->make_digest(submit_digest, cluster_id, o.vars, 0);
@@ -756,6 +759,8 @@ direct_condor_submit(const Dagman &dm, Job* node,
 					errmsg = "failed to send proc ad";
 					goto finis;
 				}
+
+				jobProcCount++;
 			}
 		}
 
@@ -791,6 +796,14 @@ finis:
 			}
 			submitHash->error_stack()->clear();
 		}
+	}
+
+	// Check for multiple job procs if configured to disallow that.
+	if (dm.prohibitMultiJobs && (jobProcCount > 1)) {
+		debug_printf(DEBUG_NORMAL, "Submit generated %d job procs; "
+					"disallowed by DAGMAN_PROHIBIT_MULTI_JOBS setting\n",
+					jobProcCount);
+		main_shutdown_rescue(EXIT_ERROR, DagStatus::DAG_STATUS_ERROR);
 	}
 
 	if (!tmpDir.Cd2MainDir(errMsg)) {

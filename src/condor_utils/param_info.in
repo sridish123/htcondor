@@ -791,6 +791,12 @@ customization=normal
 tags=dagman,dagman_main
 restart=never
 
+[DAGMAN_USE_CONDOR_SUBMIT]
+default=false
+type=bool
+tags=dagman,condor_submit
+restart=never
+
 [LIBEXEC]
 default=$(RELEASE_DIR)/libexec
 win32_default=$(BIN)
