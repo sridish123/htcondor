@@ -14,6 +14,9 @@ matrix:
         - os: linux
           env: UW_BUILD=OFF PROPER=ON  VOMS=ON  GLOBUS=ON SCITOKENS=OFF
         - os: linux
+          arch: arm64
+          env: UW_BUILD=OFF PROPER=ON  VOMS=ON  GLOBUS=ON SCITOKENS=OFF
+        - os: linux
           env: UW_BUILD=ON  PROPER=OFF VOMS=ON  GLOBUS=ON SCITOKENS=ON
         - os: linux
           env: UW_BUILD=ON  PROPER=OFF VOMS=ON  GLOBUS=ON  DOCKER_IMAGE=centos:centos7 SCITOKENS=ON
